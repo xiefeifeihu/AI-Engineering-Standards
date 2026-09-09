@@ -13,7 +13,7 @@
 - **仓库根路径**：`[ABSOLUTE_OR_RELATIVE_PATH]`
 - **遵循的标准规范版本**：`RESOURCE_SPEC_VERSION=V0.1` (`RESOURCE_SPEC_STATUS=PRE_RELEASE`)
 - **规范标准 Commit 引用**：`[CANONICAL_RESOURCE_SPEC_COMMIT_SHA]`
-- **核心调度服务 / 模块**：`[ROUTER_OR_SERVICE_NAME]` (如 `app/services/router.py`)
+- **核心调度服务 / 模块**：`[ROUTER_OR_SERVICE_NAME]` (例如项目中负责推理调度的模块)
 
 ---
 
@@ -23,9 +23,9 @@
 
 | 资源标识 (Resource ID) | 类型 | 部署端点 (Endpoint) | 本工程准入状态 (Status) | 接入通道与方式 |
 | :--- | :--- | :--- | :--- | :--- |
-| `ollama-local` | `ollama` | `127.0.0.1:11434` | `ENABLED` | 本地宿主 / 容器直连 (全离线安全) |
-| `cpa-local` | `cpa` | `127.0.0.1:8317` | `ENABLED` | 本地 CPA 代理 (国内低时延直连) |
-| `cpa-cloud` | `cpa` | `127.0.0.1:18317` | `OPTIONAL` | SSH 本地端口映射 (按需海外直连) |
+| `ollama-local` | `ollama` | `127.0.0.1:11434` | `ENABLED` | 本地宿主 / 容器网关直连 (全离线安全) |
+| `cpa-local` | `cli_proxy_api` | `127.0.0.1:8317` | `ENABLED` | 本地 CPA / CLIProxyAPI 网关 (国内低时延直连) |
+| `cpa-cloud` | `cli_proxy_api` | `127.0.0.1:18317` | `OPTIONAL` | SSH 本地端口映射 (按需海外直连) |
 
 ---
 
@@ -34,7 +34,7 @@
 根据本工程的业务特性定义节点调度优先级：
 1. **默认主选规则**：`[例如：优先使用 cpa-local 直连，离线或高密任务使用 ollama-local]`
 2. **海外服务免代理通道**：`[例如：海外模型如 Gemini 优先经由 cpa-cloud (18317) 访问]`
-3. **熔断与降级机制**：`[例如：单节点连续失败 3 次触发熔断隔离，自动退避降级]`
+3. **退避与降级机制**：`[例如：单节点连续失败 3 次触发熔断隔离，按策略评估降级候选]`
 
 ---
 
@@ -48,12 +48,14 @@
 | `[task_key_2]` | `[任务名称 2]` | `[model_2]` | `[offering_2] @ [node_2]` | `[fallback_model_2]` | `[local_fallback_2]` |
 | `[multimodal_task]` | `[多模态任务]`| `[vision_model]`| `[vision_offering]` | `[vision_fallback]` | `capability_unavailable (阻断纯文本降级)` |
 
+> **降级守卫约束**：Fallback 必须校验策略允许、数据敏感度合规、`production_approved=true` 且具备必要 capability。严禁未经校验无条件回退。
+
 ---
 
 ## 5. 数据敏感度策略 (Sensitivity Policy)
 
 - **公开级 (Public)**：允许分派至任意经评测的外部商业 API 与云端节点。
-- **内部级 (Internal)**：仅允许调度至已签署企业协议的受控服务（如百炼 CodingPlan 或本地模型）。
+- **内部级 (Internal)**：仅允许调度至已签署企业协议的受控服务或本地模型。
 - **绝密/离线级 (Secret/Offline)**：**严格禁止任何外网调用**，强制锁定 `ollama-local` 本地离线节点执行。
 
 ---
@@ -79,7 +81,7 @@
    - 必须具备 `vision` / `multimodal` 能力。
    - **阻断策略**：若无可用多模态模型，返回 `capability_unavailable`，**严禁静默降级为文本模型导致图表数据被忽略**。
 2. **严格结构化输出**：
-   - 必须具备 `structured_json` 能力与 100% 契约合规率。
+   - 必须具备 `structured_json` 能力并符合项目 schema 契约。
 
 ---
 
@@ -93,15 +95,21 @@
 
 ## 9. 健康探测与可观测契约 (Health Contract)
 
-- **资源传输探测**：`[例如：每 30 秒执行一次 TCP/HTTP 端点存活探测]`
+- **资源传输探测**：`[例如：周期性探测 TCP/HTTP 端点存活]`
 - **动态模型发现**：`[例如：调用 GET /api/tags 与 GET /v1/models，下线模型保留评测历史]`
-- **审计日志要求**：每次路由决策记录 `RouteDecisionRecord`（包含 Canonical Model、选定 Instance、决策理由、是否命中熔断降级）。
+- **审计日志要求**：每次路由决策记录审计日志（包含 Canonical Model、选定 Instance、决策理由、降级状态等）。
 
 ---
 
-## 10. 凭据引用规范 (Credential Reference)
+## 10. 凭据引用声明 (Credential Reference Declaration)
 
-- **严禁记录明文凭证**。
-- **凭证外部路径规范**：
-  - 本地 CPA 凭证：`[例如：引用宿主机 D:\AI-KB\LocalConfig\cpa-client-api.key 或环境变量 CPA_API_KEY]`
-  - 其他第三方凭据：`[例如：从系统级安全钥匙串或隔离配置目录读取]`
+遵循 Credential Reference Contract 声明，**严禁记录明文凭证**：
+
+```yaml
+credentials:
+  - credential_ref_id: "[local_cpa_key]"
+    credential_type: "api_key"        # api_key | bearer_token | basic_auth | none
+    injection_contract: "header"      # header | env | query | none
+    secret_owner: "project_local_config" # project_local_config | secret_store | env_var
+```
+

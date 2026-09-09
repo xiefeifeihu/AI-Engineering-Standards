@@ -4,7 +4,7 @@
 > 当前规范：**V0.2 PRE-RELEASE**  
 > Canonical Git：`git@github.com:xiefeifeihu/AI-Engineering-Standards.git`  
 > 用途：交给新的 ChatGPT / Antigravity / Codex / 其它工程会话，快速恢复本机网络架构、验证机制、当前事实与禁止事项。  
-> Source of Truth：Canonical Standards Git 中的网络规范；Project 内 `docs/AI-NETWORK-STANDARD.md` 是同步快照。
+> Source of Truth：Canonical Standards Git 中的网络规范；Project 内 `docs/AI-NETWORK-STANDARD.md` 为 Thin Canonical Reference（瘦引用），指向标准仓 Commit SHA，严禁全量复制代码正文或跨盘建立 symlink/junction。
 
 ---
 
@@ -173,15 +173,17 @@ Optional SKIP 不阻断 Project Ready。
 
 ---
 
-# 7. 每个 Project 应有本地规范快照与 Profile
+# 7. 每个 Project 应有 Thin Canonical Reference 与 Profile
+
+AI-Engineering-Standards 仓库是唯一真源。项目废弃全量复制 61KB/15KB 规范文档的旧模式，采用 Thin Reference + Project Profile：
 
 推荐 Project 结构：
 
 ```text
 <project>/
 ├─ docs/
-│  ├─ AI-NETWORK-STANDARD.md
-│  └─ AI-NETWORK-PROFILE.md
+│  ├─ AI-NETWORK-STANDARD.md   # Thin Reference (规范版本、Commit SHA、标准仓指针)
+│  └─ AI-NETWORK-PROFILE.md    # 专属网络画像 (项目差异、配置来源、Gate 入口)
 ├─ scripts/
 │  └─ network/
 │     ├─ network-gate.cmd
@@ -192,10 +194,10 @@ Optional SKIP 不阻断 Project Ready。
 
 其中：
 
-- `docs/AI-NETWORK-STANDARD.md`：Canonical 网络规范的项目本地同步快照；
+- `docs/AI-NETWORK-STANDARD.md`：Thin Canonical Reference，记录标准库 Commit SHA 与规范摘要，指向 Canonical Source，严禁全量拷贝正文；
 - `docs/AI-NETWORK-PROFILE.md`：只描述本 Project 的差异、配置来源、Runtime/Build/Provider、Gate 入口；
 - Project Profile 尽量引用配置键，而不是复制真实 Endpoint；
-- Project Snapshot 应记录 Canonical Repo / Version / Commit，便于发现漂移。
+- **严禁使用跨项目 Windows symlink / directory junction / hard link**，避免在跨系统、解压或 CI 构建中失效。
 
 ---
 
@@ -628,7 +630,7 @@ AI-Engineering-Standards/
    └─ AI-NETWORK-HANDOFF.md
 ```
 
-AI-KB / VTIP 等 Project 各自保存同步快照，方便 Agent 在项目内直接读取。
+AI-KB / VTIP 等 Project 各自保存 Thin Canonical Reference（瘦引用）与专属 Profile，方便 Agent 在项目内快速溯源。
 
 日志不进 Git。
 

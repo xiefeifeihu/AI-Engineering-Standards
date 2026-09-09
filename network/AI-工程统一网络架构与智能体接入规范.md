@@ -1139,12 +1139,15 @@ AI-Engineering-Standards/
 
 OneDrive、ChatGPT 下载件、聊天粘贴文本只能作为副本，不是 Source of Truth。
 
-### 11.2 每个 Project 的必需结构
+### 11.2 每个 Project 的必需结构与 Canonical 引用规范
+
+AI-Engineering-Standards 仓库是本机唯一的 **Canonical Source of Truth**。
+为防止跨项目文档冗余、版本漂移与事实割裂，**正式废弃向各项目完整复制 61KB/15KB 全量规范正文的旧做法**，全面采用 **“Thin Markdown Reference（瘦引用）+ Project Profile（项目画像）”** 的分层治理架构：
 
 ```text
 <project-root>/
 ├─ docs/
-│  ├─ AI-NETWORK-STANDARD.md   # Canonical 规范的项目本地同步快照
+│  ├─ AI-NETWORK-STANDARD.md   # Thin Canonical Reference（记录规范版本、Commit SHA、引用路径）
 │  └─ AI-NETWORK-PROFILE.md    # 仅描述本 Project 的差异、配置来源与 Gate
 ├─ scripts/
 │  └─ network/
@@ -1154,7 +1157,10 @@ OneDrive、ChatGPT 下载件、聊天粘贴文本只能作为副本，不是 Sou
    └─ network/                 # 运行生成，必须 gitignore
 ```
 
-项目内 `docs/AI-NETWORK-STANDARD.md` 必须在头部记录 Canonical Repository、规范版本和同步 Commit；它是可离线读取的快照，不是第二个独立真源。
+**关键约束**：
+1. **Thin Markdown Reference**：项目内 `docs/AI-NETWORK-STANDARD.md`（或其软链接名称对应文件）只需记录标准库地址、规范版本、同步 Commit SHA 与核心原则摘要，指向 Canonical Source，严禁全量拷贝正文；
+2. **严禁跨项目文件系统链接**：**严禁使用 Windows symlink、directory junction 或 hard link 跨工程跨盘引用文档**，避免在跨盘、跨系统、压缩包打包/解压或 CI 构建时失效；
+3. **Project Profile 专注自身事实**：项目特有网络拓扑、出站网关映射、差异化 Gate 检查记录在 `docs/AI-NETWORK-PROFILE.md`。
 
 ### 11.3 Project Network Module 职责
 
@@ -2012,18 +2018,18 @@ AI-Engineering-Standards/
 
 规范和交接必须进入 Git；OneDrive 与聊天附件只作为副本。
 
-### 第二层：每 Repo 保存同步快照与 Profile
+### 第二层：每 Repo 保存 Thin Canonical Reference 与 Project Profile
 
 每个 Project：
 
 ```text
-docs/AI-NETWORK-STANDARD.md
-docs/AI-NETWORK-PROFILE.md
+docs/AI-NETWORK-STANDARD.md   # Thin Reference (规范版本、Commit SHA、指向标准仓指针)
+docs/AI-NETWORK-PROFILE.md    # 记录本 Project 的专属网络拓扑、网关映射与 Gate
 scripts/network/network-gate.cmd
 scripts/network/network-gate.sh
 ```
 
-项目本地 `AI-NETWORK-STANDARD.md` 应标记 Canonical Repo / Version / Commit，便于 Agent 离线读取与发现版本漂移。
+项目本地 `AI-NETWORK-STANDARD.md` 作为瘦引用（Thin Canonical Reference），必须标记 Canonical Repo / Version / Commit，使 Agent 能够溯源真源与发现版本漂移，**严禁跨工程复制全量正文，严禁使用 Windows symlink / junction 跨盘链接**。
 
 `AI-NETWORK-PROFILE.md` 只记录本 Project 的差异和配置来源，不复制可从 config 自动读取的 Endpoint。
 
