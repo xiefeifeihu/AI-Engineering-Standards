@@ -583,6 +583,29 @@ WSL Docker Egress Gateway
 
 实现优先：已有 OS/标准组件 -> Python 标准库等最小可审计实现 -> 经用户批准的第三方组件。Agent 不得为了省事静默安装新的代理 daemon。
 
+### 3.2.1 Docker Shared Inference Gateway (容器共享推理网关)
+
+除了出站代理中继之外，跨工程 Docker 容器访问宿主机共享 AI 推理资源（Ollama、Local CPA、Cloud CPA 隧道）同样受到宿主安全回环（127.0.0.1）隔离保护。
+
+```text
+Host Loopback Only (安全核心)
+127.0.0.1: 8317 (cpa-local) / 18317 (cpa-cloud) / 11434 (ollama)
+        ▲
+        │ 本地回环转发
+Machine Docker Shared Inference Gateway
+<Docker Bridge Interfaces Only: docker0 / br-*>
+        ▲
+        │ host.docker.internal / host-gateway
+Docker Consumer Container (VTIP / AI Sidecar / Agents)
+```
+
+约束：
+- **安全红线**：禁止为跨项目容器通信将宿主机服务的端口扩大至 `0.0.0.0`；
+- **接口约束**：网关只动态发现并监听 Docker 网桥内部接口（`docker0` / `br-*`），严禁绑定 LAN（`192.168.x.x`）或外网接口；
+- **客户端 ACL**：只允许本机回环与 Docker 网桥地址（`127.0.0.0/8`、`172.16.0.0/12`、`10.0.0.0/8`）；
+- **固定资源映射**：只允许白名单内的三个标准推理端口（`8317`, `18317`, `11434`），禁止任意动态转发或 shell 命令；
+- **Cloud OFFLINE 契约**：Cloud CPA 隧道未启动时快速返回 HTTP 502 / 连接拒绝，网关不得越权自动启动外部隧道。
+
 ### 3.3 Docker Build
 
 BuildKit 是另一套网络上下文。

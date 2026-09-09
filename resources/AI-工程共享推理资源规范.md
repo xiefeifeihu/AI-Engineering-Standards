@@ -80,10 +80,36 @@ FINAL_RELEASE_PENDING=true
 
 ### 3.2 容器环境访问契约 (Container Runtime Access)
 - **定位**：运行在 Docker 容器内部的应用访问宿主机共享推理资源的网络契约。
-- **规范原则**：
-  1. 容器访问宿主机服务必须经由项目配置的宿主网关，推荐使用 Docker 标准的 `host.docker.internal`（需配置 `extra_hosts: ["host.docker.internal:host-gateway"]`）或项目自定义的内部反向代理；
-  2. **严禁在通用规范中固化特定容器别名**（如假定所有项目都能解析 `http://ollama:11434` 或 `http://cpa-local:8317`，这些仅是特定 Compose 内部的私有服务名）；
-  3. **严禁硬编码动态网桥 IP**（如 `172.17.x.x` 或 `172.18.x.x`），网桥 IP 会随 WSL/Docker 网络重构动态改变，不是稳定契约。
+- **物理安全底线与网关必要性**：
+  1. **宿主绝对回环保护**：宿主机上的核心共享推理服务（`cpa-local: 8317`、`cpa-cloud: 18317`）在宿主网络栈上**严格仅绑定 127.0.0.1**，严禁扩大至 `0.0.0.0`，严禁向局域网（LAN）或公网暴露任何推理与管理端口；
+  2. **跨项目容器访问网关 (Machine Docker Shared Inference Gateway)**：
+     - 因宿主端口保持 `127.0.0.1`，处于独立 Docker 网络命名空间（如 `vtip-platform-catalog_default`）的容器无法直接经由宿主网关访问回环端口；
+     - 本机提供常驻轻量网关（`Machine Docker Shared Inference Gateway`），**仅动态发现并监听 Docker 网桥内部接口（`docker0`、`br-*`，如 `172.17.0.1`）**，严禁监听任何 LAN/WAN 接口；
+     - 网关仅转发固定推理端口（`8317`、`18317`、`11434`）至宿主 `127.0.0.1`，并强制执行客户端 ACL（仅放行 `127.0.0.0/8`、`172.16.0.0/12`、`10.0.0.0/8` 等容器网桥地址，阻断任何外网或局域网连接）；
+     - 网关对可选资源（如 `cpa-cloud`）遵循 **Cloud OFFLINE** 语义：上游未就绪时立即返回 HTTP 502 / 连接拒绝，**绝不越权自动拉起外部隧道**。
+- **容器标准接入契约**：
+  1. 容器访问宿主机服务经由统一宿主网关别名 `host.docker.internal`，容器编排文件必须声明：
+     ```yaml
+     extra_hosts:
+       - "host.docker.internal:host-gateway"
+     ```
+  2. 容器内标准化服务端点：
+     - `ollama-local`: `http://host.docker.internal:11434`
+     - `cpa-local`: `http://host.docker.internal:8317`
+     - `cpa-cloud`: `http://host.docker.internal:18317`
+  3. **严禁在通用规范中固化特定私有容器别名**（如假定所有项目都能解析 `http://ollama:11434` 或 `http://cpa-local:8317`，这些仅是特定 Compose 内部的私有服务名）；
+  4. **严禁硬编码动态网桥 IP**（如 `172.17.x.x` 或 `172.18.x.x`），网桥 IP 会随 WSL/Docker 网络重构动态改变，不是稳定契约。
+
+### 3.3 跨项目容器准入门禁 (Cross-Project Container Access Gate)
+任何依赖共享推理资源的 Docker 工程，在集成或构建前必须在自身运行时命名空间执行实机验证门禁：
+1. **DNS 解析门禁**：`host.docker.internal` 解析必须匹配 Docker 网桥网关（非外网公共 DNS）；
+2. **传输通道门禁**：
+   - `http://host.docker.internal:11434/api/tags` -> HTTP 200 (耗时 < 200ms)；
+   - `http://host.docker.internal:8317/` -> HTTP 200 (耗时 < 50ms)；
+   - `http://host.docker.internal:18317/` -> 隧道开启时 HTTP 200，隧道关闭时返回 HTTP 502 / Connection Refused (耗时 < 100ms，快速失败)；
+3. **认证语义隔离**：消费者无凭据时验证端点鉴权拦截（HTTP 401），标记 `AUTH_NOT_CONFIGURED`，严禁判网络传输失败；
+4. **局域网零暴露验证**：局域网物理 IP（`192.168.x.x`）严禁对外响应 `8317` / `18317`。
+
 
 ---
 
