@@ -29,7 +29,8 @@
 
 4. 推理资源与服务调用守卫：
 - 共享推理资源（ollama: 11434, cpa-local: 8317, cpa-cloud: 18317）只读消费，严禁冲突抢占端口；
-- 严禁未经策略检查的无条件本地 fallback；云端模型离线且备选模型无相应 capability（如视觉 Vision）时必须明确阻断（capability_unavailable）。
+- 严禁未经策略检查的无条件本地 fallback；云端模型离线且备选模型无相应 capability（如视觉 Vision）时必须明确阻断（capability_unavailable）；
+- 容器消费契约守卫：修改容器配置前必须查验项目的消费声明（shared_inference_consumption）。严禁向声明为 NONE 的项目（如 vtip-platform-catalog 核心容器）随意注入 host.docker.internal 或强制绑定共享推理资源；仅对声明为 REQUIRED 或 OPTIONAL 的项目/组件（如 vtip-ai-sidecar、ai-kb）按需注入契约。
 
 5. 凭据隔离与绝不上屏原则 (Zero Secrets)：
 - 严禁在代码、注释、提交历史、交接文档或模型提示词中记录任何明文 API Key、Token 或密码；

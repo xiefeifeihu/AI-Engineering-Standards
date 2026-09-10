@@ -100,8 +100,35 @@ FINAL_RELEASE_PENDING=true
   3. **严禁在通用规范中固化特定私有容器别名**（如假定所有项目都能解析 `http://ollama:11434` 或 `http://cpa-local:8317`，这些仅是特定 Compose 内部的私有服务名）；
   4. **严禁硬编码动态网桥 IP**（如 `172.17.x.x` 或 `172.18.x.x`），网桥 IP 会随 WSL/Docker 网络重构动态改变，不是稳定契约。
 
-### 3.3 跨项目容器准入门禁 (Cross-Project Container Access Gate)
-任何依赖共享推理资源的 Docker 工程，在集成或构建前必须在自身运行时命名空间执行实机验证门禁：
+### 3.3 消费者声明契约 (Consumer Declaration Contract)
+各项目在自身工程目录中的 `Project AI Resource Profile`（例如 `docs/AI-KB-共享推理资源画像.md`、`docs/VTIP-AI-RESOURCE-PROFILE.md`）中必须明确声明 `shared_inference_consumption` 属性：
+- **`NONE`（无消费依赖）**：
+  - 项目核心业务不依赖共享推理资源（如 `vtip-platform-catalog` 核心目录服务）；
+  - 其生产 `compose.yaml` 保持纯净，**严禁注入 `extra_hosts: host.docker.internal`**；
+  - 项目网络门禁与 CI 严禁将 Ollama / CPA 列为必选通过项。
+- **`OPTIONAL`（按需/增强依赖）**：
+  - 项目核心业务不依赖 AI，但包含可选的 AI 增强模块（如独立的 `vtip-ai-sidecar`、离线评测辅助脚本等）；
+  - 仅在其专属 AI 组件或 Sidecar 容器中配置 `extra_hosts` 与资源环境变量，故障时业务平滑降级。
+- **`REQUIRED`（强依赖）**：
+  - 项目核心业务强依赖共享推理资源（如 `AI-KB` 智能知识库）；
+  - 容器编排文件必须声明 `extra_hosts: ["host.docker.internal:host-gateway"]`，其门禁将本地共享资源（Ollama、CPA Local）作为必选通过项。
+
+### 3.4 提供方冷重启契约 (Producer Cold-Start Contract)
+作为机器级共享基础设施，共享推理网关必须保障宿主机与 WSL 冷重启（Cold-Start）后的自愈与常驻能力：
+1. **Systemd 常驻自启**：网关必须通过操作系统级 init 体系（`docker-inference-gateway.service`）注册并配置开机自启（`WantedBy=multi-user.target`, `Restart=always`），在 `docker.service` 启动后自动激活；
+2. **冷重启测试准则**：任何热态验证（Warm-State）必须伴随持久化配置审查（`systemctl is-enabled` 输出 `enabled`），严禁仅依靠临时后台进程宣布就绪；
+3. **管理入口集成**：管理脚本（`inference-gateway.sh` / `.cmd`）统一对接 `systemctl`，在具备 systemd 的环境下优先调用服务单元，并在无 systemd 环境下提供平滑 fallback。
+
+### 3.5 动态 Bridge 发现与冷重启恢复语义
+1. **网桥动态自适应**：网关不得假定启动时所有 Docker 网桥均已存在，严禁硬编码特定 `172.x` 或 `br-*` IP。网关必须具备动态接口扫描能力（固定周期 5s 扫描）；
+2. **新网桥自动绑定**：当任意业务项目在启动后通过 `docker compose up` 动态创建新自定义网桥时，网关在下一个扫描周期内自动在新增网桥 IP 上拉起 `8317` / `18317` 等端口的监听；
+3. **销毁网桥清理**：当 Docker 网络下线或销毁时，网关优雅关闭对应网桥 IP 的监听器，防止资源泄露；
+4. **初始化与端口容错**：
+   - 冷重启初期若 Docker 守护进程尚未就绪导致网桥未生成，网关采用退避重试（Backoff），不崩溃、不消耗异常 CPU；
+   - 若特定端口（如 `11434`）已被上游宿主服务（如 Ollama 默认的 `0.0.0.0:11434`）全局绑定，网关捕获 `EADDRINUSE`，记录单次状态并跳过该端口的重复监听，确保其他端口（`8317`, `18317`）及直连流量不受影响。
+
+### 3.6 跨项目容器准入门禁 (Cross-Project Container Access Gate)
+任何声明为 `REQUIRED` 或 `OPTIONAL` 的 Docker 工程，在集成或构建前必须在自身运行时命名空间执行实机验证门禁：
 1. **DNS 解析门禁**：`host.docker.internal` 解析必须匹配 Docker 网桥网关（非外网公共 DNS）；
 2. **传输通道门禁**：
    - `http://host.docker.internal:11434/api/tags` -> HTTP 200 (耗时 < 200ms)；
