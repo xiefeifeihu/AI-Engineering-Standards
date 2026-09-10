@@ -100,7 +100,7 @@ def probe_endpoint(target_host: str, res_def: dict, token: str | None = None) ->
         elapsed = (time.time() - t0) * 1000
         if he.code == 502:
             result["http_transport"] = f"HTTP 502 Bad Gateway ({elapsed:.1f}ms)"
-            result["status"] = "OFFLINE"
+            result["status"] = "OFFLINE" if res_def.get("optional") else "FAIL"
             result["auth"] = "UPSTREAM_OFFLINE"
             result["discovery"] = "OFFLINE"
             return result

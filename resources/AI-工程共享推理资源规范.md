@@ -81,7 +81,7 @@ FINAL_RELEASE_PENDING=true
 ### 3.2 容器环境访问契约 (Container Runtime Access)
 - **定位**：运行在 Docker 容器内部的应用访问宿主机共享推理资源的网络契约。
 - **物理安全底线与网关必要性**：
-  1. **宿主绝对回环保护**：宿主机上的核心共享推理服务（`cpa-local: 8317`、`cpa-cloud: 18317`）在宿主网络栈上**严格仅绑定 127.0.0.1**，严禁扩大至 `0.0.0.0`，严禁向局域网（LAN）或公网暴露任何推理与管理端口；
+  1. **宿主绝对回环保护**：宿主机上的核心共享推理服务（`ollama-local: 11434`、`cpa-local: 8317`、`cpa-cloud: 18317`）在宿主网络栈上**严格仅绑定 127.0.0.1**（Ollama 容器编排宿主端口必须声明为 `127.0.0.1:11434:11434`，严禁使用 `0.0.0.0:11434:11434`），严禁向局域网（LAN）或公网暴露任何推理与管理端口；
   2. **跨项目容器访问网关 (Machine Docker Shared Inference Gateway)**：
      - 因宿主端口保持 `127.0.0.1`，处于独立 Docker 网络命名空间（如 `vtip-platform-catalog_default`）的容器无法直接经由宿主网关访问回环端口；
      - 本机提供常驻轻量网关（`Machine Docker Shared Inference Gateway`），**仅动态发现并监听 Docker 网桥内部接口（`docker0`、`br-*`，如 `172.17.0.1`）**，严禁监听任何 LAN/WAN 接口；
@@ -121,21 +121,21 @@ FINAL_RELEASE_PENDING=true
 
 ### 3.5 动态 Bridge 发现与冷重启恢复语义
 1. **网桥动态自适应**：网关不得假定启动时所有 Docker 网桥均已存在，严禁硬编码特定 `172.x` 或 `br-*` IP。网关必须具备动态接口扫描能力（固定周期 5s 扫描）；
-2. **新网桥自动绑定**：当任意业务项目在启动后通过 `docker compose up` 动态创建新自定义网桥时，网关在下一个扫描周期内自动在新增网桥 IP 上拉起 `8317` / `18317` 等端口的监听；
+2. **新网桥自动绑定**：当任意业务项目在启动后通过 `docker compose up` 动态创建新自定义网桥时，网关在下一个扫描周期内自动在新增网桥 IP 上拉起 `8317` / `18317` / `11434` 等端口的监听；
 3. **销毁网桥清理**：当 Docker 网络下线或销毁时，网关优雅关闭对应网桥 IP 的监听器，防止资源泄露；
-4. **初始化与端口容错**：
+4. **初始化与冷启动端口竞争隔离**：
    - 冷重启初期若 Docker 守护进程尚未就绪导致网桥未生成，网关采用退避重试（Backoff），不崩溃、不消耗异常 CPU；
-   - 若特定端口（如 `11434`）已被上游宿主服务（如 Ollama 默认的 `0.0.0.0:11434`）全局绑定，网关捕获 `EADDRINUSE`，记录单次状态并跳过该端口的重复监听，确保其他端口（`8317`, `18317`）及直连流量不受影响。
+   - **Socket 绑定隔离规则**：在 Linux/WSL 网络栈下，若网关在各网桥 IP（`172.x.0.1:11434`）建立监听，Docker 若尝试绑定 `0.0.0.0:11434` 会触发 `address already in use` 端口冲突；因此 Ollama 宿主端口发布必须显式声明为 `127.0.0.1:11434:11434`。在特定 IP（`127.0.0.1`）与各网桥 IP（`172.x.0.1`）明确隔离后，二者在底层 Linux Socket 完全共存、互不争抢。
 
 ### 3.6 跨项目容器准入门禁 (Cross-Project Container Access Gate)
 任何声明为 `REQUIRED` 或 `OPTIONAL` 的 Docker 工程，在集成或构建前必须在自身运行时命名空间执行实机验证门禁：
 1. **DNS 解析门禁**：`host.docker.internal` 解析必须匹配 Docker 网桥网关（非外网公共 DNS）；
-2. **传输通道门禁**：
-   - `http://host.docker.internal:11434/api/tags` -> HTTP 200 (耗时 < 200ms)；
-   - `http://host.docker.internal:8317/` -> HTTP 200 (耗时 < 50ms)；
-   - `http://host.docker.internal:18317/` -> 隧道开启时 HTTP 200，隧道关闭时返回 HTTP 502 / Connection Refused (耗时 < 100ms，快速失败)；
+2. **传输通道与确定性健康语义**（严禁将 502 模糊判定为通过）：
+   - **`ollama-local`**：`http://host.docker.internal:11434/api/tags` -> 必须为 HTTP 200 (HEALTHY)；HTTP 502 / 连接拒绝判为 FAIL；
+   - **`cpa-local`**：`http://host.docker.internal:8317/` -> HTTP 200/401 为 PASS (HEALTHY)；HTTP 502 / 连接拒绝判为 FAIL；
+   - **`cpa-cloud`**：`http://host.docker.internal:18317/` -> 隧道开启时 HTTP 200/401 为 PASS (HEALTHY)；隧道关闭时 HTTP 502 / 连接拒绝为 CONFORMANCE_PASS (RESOURCE_OFFLINE)；
 3. **认证语义隔离**：消费者无凭据时验证端点鉴权拦截（HTTP 401），标记 `AUTH_NOT_CONFIGURED`，严禁判网络传输失败；
-4. **局域网零暴露验证**：局域网物理 IP（`192.168.x.x`）严禁对外响应 `8317` / `18317`。
+4. **局域网零暴露验证**：局域网物理 IP（`192.168.x.x`）严禁对外响应 `8317` / `18317` / `11434`。
 
 
 ---
