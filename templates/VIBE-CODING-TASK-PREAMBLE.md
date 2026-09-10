@@ -25,7 +25,8 @@
 - 严禁非必要重启宿主机操作系统、wsl --shutdown 或重启 Docker Daemon；
 - 严禁触碰任何未指派的 Git stash；
 - 严禁无授权的 git reset --hard、git clean -fd、git merge、git tag 或 force push；
-- 在多 Remote 仓库中，未经用户明确授权严禁自动向任何远程执行 push 操作。
+- 在多 Remote 仓库中，未经用户明确授权严禁自动向任何远程执行 push 操作；
+- 跨 Windows/WSL EOL 治理守卫：在 NTFS 共享仓库中，若 Windows Git 与 WSL Git dirty 状态不一致，严禁自动执行 reset/restore/checkout/clean/stash。必须先执行 git diff --ignore-space-at-eol、git ls-files --eol 进行 EOL 审计，优先依赖仓库根目录 .gitattributes 规范化。
 
 4. 推理资源与服务调用守卫：
 - 共享推理资源（ollama: 11434, cpa-local: 8317, cpa-cloud: 18317）只读消费，严禁冲突抢占端口；

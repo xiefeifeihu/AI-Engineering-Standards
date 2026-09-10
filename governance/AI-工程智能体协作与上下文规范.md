@@ -104,3 +104,22 @@ AI-Engineering-Standards (本机唯一 Canonical Source of Truth)
 2. **绝对零凭据泄漏 (Zero Secrets)**：
    - 任何提交前必须扫描是否包含 API Key、Token、私钥、包含真实账号密码的配置；
    - 敏感文件必须严格列入 `.gitignore` 并存放在 `LocalConfig/` 或环境变量中。
+
+### 4.3 跨 Windows/WSL 环境的 Git 换行符 (EOL) 治理规范
+对于位于 Windows NTFS 盘符（如 `D:\...`）并通过 WSL (`/mnt/...`) 同时访问的工程仓库，智能体必须严格遵循以下 EOL 治理规则：
+
+1. **优先信任仓库级 `.gitattributes`**：
+   - 严禁要求用户修改全局配置 `core.autocrlf`；
+   - 仓库根目录必须维护项目级 `.gitattributes` 确立换行符语义（Linux/源码/配置/文档强制 `eol=lf`，Windows 脚本强制 `eol=crlf`，二进制文件标记 `-text`）；
+2. **严禁因 EOL 假脏工作区盲目执行破坏性清理**：
+   - 若 Windows Git (`clean`) 与 WSL Git (`dozens of modified`) 状态不一致，智能体**绝对不得**自动执行 `git checkout .`、`git reset`、`git restore .`、`git clean` 或 `git stash`；
+   - 必须先执行 EOL 审计以区分真实内容变化与换行符视角差异：
+     ```bash
+     git diff --ignore-space-at-eol --stat
+     git ls-files --eol <sample-files>
+     git check-attr -a <sample-files>
+     ```
+   - 若 `git diff --ignore-space-at-eol` 为空，确认为 `EOL_VIEW_MISMATCH=true` 且 `REAL_CONTENT_DIRTY=false`，严禁盲目丢弃现场；
+3. **安全规范化流程 (Renormalization)**：
+   - 引入或更新 `.gitattributes` 后，执行 `git add .gitattributes` 与 `git add --renormalize .`；
+   - 提交前必须通过 `git diff --cached --ignore-space-at-eol` 严格核实：**除 `.gitattributes` 外不得出现任何真实业务内容变动**。
