@@ -1,0 +1,54 @@
+﻿# ==============================================================================
+# AI 工程项目清单标准模板 (Engineering Project Manifest Template)
+# Schema: AI-Engineering-Standards/governance/engineering-manifest-schema.json
+# ==============================================================================
+
+schema_version: "1.0"
+
+project:
+  id: "project-unique-id"                   # 全局唯一项目英文小写标识，如 ai-kb-infra, vtip-platform-catalog
+  name: "项目显示名称"
+  purpose: "项目的核心定位与业务目的简述"
+  repo_path_hints:
+    windows: "D:\\Projects\\your-project"
+    wsl: "/mnt/d/Projects/your-project"
+  consumer_contract:
+    shared_inference: "REQUIRED"            # REQUIRED | NONE | OPTIONAL
+    details: "对本机共享推理资源 (Ollama, CPA) 的消费策略说明"
+  network_gate_snapshot_hint: "logs/network/network-gate-latest.json"
+  tags:
+    - "ai-engineering"
+
+services:
+  - id: "service-unique-id"                 # 服务唯一标识，如 ai-kb-control, vtip
+    name: "服务名称"
+    purpose: "服务功能简述"
+    owner: "责任项目或组件"
+    category: "project_app"                 # project_app | shared_ai_resource | knowledge_data_infra | machine_infra
+    exposure: "loopback"                    # loopback | docker_internal | optional_tunnel | none
+    endpoints:
+      windows_host: "http://127.0.0.1:8000"
+      wsl_host: "http://127.0.0.1:8000"
+      docker_internal: "http://container-name:8000"
+    health_contract:
+      probe_type: "http"                    # http | tcp | docker_status | file_snapshot | none
+      endpoint: "http://127.0.0.1:8000/health"
+      expected_status: 200
+      optional: false                       # 若为 true (如 Cloud CPA)，离线时不会导致整体异常
+      timeout_seconds: 2.0
+    config_references:
+      - label: "主配置文件"
+        path: "config.yaml"
+        owner: "项目内部"
+    credential_references:
+      - label: "API 访问凭据 (严禁写明文)"
+        env_var: "PROJECT_API_KEY"
+        file_ref: "D:\\AI-KB\\LocalConfig\\... (安全脱敏路径)"
+        status_detector: "env_or_file"       # 检测凭据是 CONFIGURED 还是 MISSING
+    lifecycle_commands:
+      start: "docker compose up -d"
+      stop: "docker compose down"
+      status: "docker compose ps"
+      logs: "docker compose logs -f"
+    tags:
+      - "core"

@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/engineering-manifest-schema.json",
+  "title": "Engineering Project Manifest",
+  "description": "Schema for machine-readable AI engineering project manifests defining services, endpoints, credentials, and health contracts.",
+  "type": "object",
+  "required": ["schema_version", "project", "services"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0", "1.0.0"]
+    },
+    "project": {
+      "type": "object",
+      "required": ["id", "name", "purpose"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_-]+$"
+        },
+        "name": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "repo_path_hints": {
+          "type": "object",
+          "properties": {
+            "windows": { "type": "string" },
+            "wsl": { "type": "string" }
+          }
+        },
+        "consumer_contract": {
+          "type": "object",
+          "required": ["shared_inference"],
+          "properties": {
+            "shared_inference": {
+              "type": "string",
+              "enum": ["REQUIRED", "NONE", "OPTIONAL"]
+            },
+            "details": { "type": "string" }
+          }
+        },
+        "network_gate_snapshot_hint": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "services": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "purpose", "category", "exposure"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]+$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "project_app",
+              "shared_ai_resource",
+              "knowledge_data_infra",
+              "machine_infra"
+            ]
+          },
+          "exposure": {
+            "type": "string",
+            "enum": ["loopback", "docker_internal", "optional_tunnel", "none"]
+          },
+          "endpoints": {
+            "type": "object",
+            "properties": {
+              "windows_host": { "type": "string" },
+              "wsl_host": { "type": "string" },
+              "docker_internal": { "type": "string" }
+            }
+          },
+          "health_contract": {
+            "type": "object",
+            "required": ["probe_type"],
+            "properties": {
+              "probe_type": {
+                "type": "string",
+                "enum": ["http", "tcp", "docker_status", "file_snapshot", "none"]
+              },
+              "endpoint": { "type": "string" },
+              "expected_status": {
+                "type": ["integer", "string"]
+              },
+              "optional": { "type": "boolean" },
+              "timeout_seconds": { "type": "number" }
+            }
+          },
+          "config_references": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["label", "path"],
+              "properties": {
+                "label": { "type": "string" },
+                "path": { "type": "string" },
+                "owner": { "type": "string" }
+              }
+            }
+          },
+          "credential_references": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["label"],
+              "properties": {
+                "label": { "type": "string" },
+                "env_var": { "type": "string" },
+                "file_ref": { "type": "string" },
+                "status_detector": { "type": "string" }
+              }
+            }
+          },
+          "lifecycle_commands": {
+            "type": "object",
+            "properties": {
+              "start": { "type": "string" },
+              "stop": { "type": "string" },
+              "restart": { "type": "string" },
+              "status": { "type": "string" },
+              "logs": { "type": "string" }
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

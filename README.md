@@ -61,6 +61,7 @@ FINAL_RELEASE_PENDING=true
 ### 核心文档 (Source of Truth)
 
 - **智能体协作与上下文规范**：[`governance/AI-工程智能体协作与上下文规范.md`](./governance/AI-工程智能体协作与上下文规范.md) — 会话级极简交接 (Chat Handoff) 与工程现场记录 (Engineering Live Handoff) 的职责分界、Canonical Standards 与 Project Profile 关系、智能体 Git 操作安全边界与防泄密规则。
+- **项目清单规范与统一导航契约**：[`governance/AI-工程项目清单规范.md`](./governance/AI-工程项目清单规范.md) — 统一 AI 工程清单规范（Schema: `governance/engineering-manifest-schema.json`，Template: `governance/templates/engineering-manifest.template.yaml`），定义跨工程服务定位、健康探测、零密钥凭据引用与宿主 80 端口 Engineering Hub 架构。
 - **上下文包导出规范**：[`governance/AI-工程会话上下文包规范.md`](./governance/AI-工程会话上下文包规范.md) — 面向外部 AI 评审与新会话恢复的上下文导出规则，严格基于 LIVE Repo，严禁密钥、依赖包与失效交接。
 
 ---
