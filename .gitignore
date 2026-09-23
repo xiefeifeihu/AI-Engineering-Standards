@@ -16,3 +16,8 @@ Acceptance-*.zip
 Thumbs.db
 .vscode/
 .idea/
+
+# Artifact workspace (STD-019: generated outputs never committed)
+.artifacts/
+playwright-report/
+test-results/

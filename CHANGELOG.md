@@ -1,6 +1,19 @@
-# AI Engineering Standards - Changelog
+﻿# AI Engineering Standards - Changelog
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
+
+## [1.1.0] - 2026-09-23
+
+### Added
+- **STD-019: Artifact & Workspace Hygiene Standard** – Six-category artifact taxonomy (SOURCE, GENERATED, ACCEPTANCE, DEMO, TEMPORARY, ARCHIVE), `.artifacts/` directory layout, and workspace cleanup policy.
+- **STD-020: Cross-Session Handoff Standard** – DURABLE vs TEMPORARY handoff types, mandatory fields, lifecycle constraints, and cross-repo isolation rules.
+- **ARTIFACT-GOVERNANCE-V1.1.md** – Architecture overview of artifact governance model, KPI semantic correctness fix rationale, and Playwright mode governance.
+- **tools/cleanup_audit.py** – Automated workspace audit tool implementing STD-019 classification.
+
+### Changed
+- **STD-014 v1.1**: Extended to four-level testing matrix (L1-SMOKE, L2-CORE, L3-DEEP, L4-DIAGNOSTIC) with explicit per-level constraints on scope, duration, tooling and output location.
+- **STD-015 v1.1**: Added three explicit Playwright execution modes (AUTOMATED_TEST, ACCEPTANCE, DEMO) with mandatory headless/headed rules and KPI card verification requirement.
+- **`.gitignore`**: Added `.artifacts/`, `playwright-report/`, `test-results/`.
 
 ## [1.0.0] - 2026-09-23
 
