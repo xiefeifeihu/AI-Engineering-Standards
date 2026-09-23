@@ -2,6 +2,18 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [1.1.1] - 2026-09-23
+
+### Changed
+- **Contract Freeze (AI-ENGINEERING-PLATFORM-V1-004)**:
+  - Unified Canonical Model Router API (POST /api/model/select) and Model Feedback API (POST /api/model/feedback).
+  - Formally deprecated /api/router/* as compatibility aliases (/api/router/candidate-plan, /api/router/feedback, /api/router/match).
+  - Fixed request enum typo across documentation and templates (quality strictly [high, medium, low]; latency strictly [low, normal, batch]; eliminated quality=normal).
+  - Eliminated dual error taxonomies: unified on the 7 canonical classes in model-feedback.schema.json (QUOTA_EXHAUSTED, RATE_LIMITED, AUTH_FAILED, MODEL_UNAVAILABLE, NETWORK_ERROR, TIMEOUT, PROVIDER_ERROR).
+  - Standardized Candidate Plan response schema conformance (rank, logical_model_id, endpoint_reference, governance_state, metrics, reason).
+  - Aligned Durable Handoff baselines in handoff/ to Standards v1.1.1 and Hub v0.5.8.
+  - Added contract regression assertions to tools/validate-schemas.py.
+
 ## [1.1.0] - 2026-09-23
 
 ### Added

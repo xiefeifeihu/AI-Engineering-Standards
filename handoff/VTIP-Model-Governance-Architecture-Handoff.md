@@ -3,7 +3,7 @@
 ```text
 TARGET_PROJECT=VTIP Platform (vtip-platform-catalog)
 TARGET_AUDIENCE=VTIP 架构与系统会话
-GOVERNANCE_BASELINE=AI Engineering Standards V1.0 / AI-Hub v0.5.4
+GOVERNANCE_BASELINE=AI Engineering Standards v1.1.1 / AI-Hub v0.5.8
 STATUS=OFFICIAL_HANDOFF
 ```
 

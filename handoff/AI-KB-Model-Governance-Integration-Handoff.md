@@ -3,7 +3,7 @@
 ```text
 TARGET_PROJECT=AI-KB (ai-kb-infra)
 TARGET_AUDIENCE=AI-KB ChatGPT / Claude 长期架构会话
-GOVERNANCE_BASELINE=AI Engineering Standards V1.0 / AI-Hub v0.5.4
+GOVERNANCE_BASELINE=AI Engineering Standards v1.1.1 / AI-Hub v0.5.8
 STATUS=OFFICIAL_HANDOFF
 ```
 
@@ -15,13 +15,13 @@ STATUS=OFFICIAL_HANDOFF
 
 AI Engineering Hub 当前已完成对齐并提供如下稳定核心能力：
 1. **Candidate Execution Plan (`POST /api/model/select`)**：
-   业务方声明任务意图（`knowledge_distillation`, `chat`, `code` 等）、质量期望（`high` / `normal`）与时延偏好，Hub 返回包含 1~5 个去重后的异构候选模型方案链（包含评分、得分拆解、治理健康度及通道容灾标记）。
+   业务方声明任务意图（`knowledge_distillation`, `chat`, `code` 等）、质量期望（`high` / `medium` / `low`）与时延偏好（`low` / `normal` / `batch`），Hub 返回包含 1~5 个去重后的异构候选模型方案链（包含评分、得分拆解、治理健康度及通道容灾标记）。
 2. **Endpoint Registry (`/api/endpoints/local-cpa`, `/api/endpoints/cpa-cloud`)**：
    动态感知 Local CPA（Host: `127.0.0.1:18117`，Docker: `cpa-local:8317`）及 Cloud CPA 运行端点与配置漂移。
 3. **Feedback API (`POST /api/model/feedback`)**：
-   接受实际调用结果回传（耗时、Token、错误分类及业务质量指标），动态驱动熔断降权。
+   接受实际调用结果回传（耗时、Token、7大标准错误分类及业务质量指标），动态驱动熔断降权。
 4. **模型治理中心 (Model Governance)**：
-   提供 206+ 模型的滑动窗口统计、P50/P95 追踪与 7 大标准错误分类自愈。
+   提供 200+ 模型的滑动窗口统计、P50/P95 追踪与 7 大标准错误分类自愈。
 
 ---
 

@@ -3,7 +3,7 @@
 ```text
 TARGET_PROJECT=VTIP-AI-SIDECAR (vtip-ai-sidecar)
 TARGET_AUDIENCE=Sidecar ChatGPT / Claude 长期架构会话
-GOVERNANCE_BASELINE=AI Engineering Standards V1.0 / AI-Hub v0.5.4
+GOVERNANCE_BASELINE=AI Engineering Standards v1.1.1 / AI-Hub v0.5.8
 STATUS=OFFICIAL_HANDOFF
 ```
 
@@ -15,7 +15,7 @@ STATUS=OFFICIAL_HANDOFF
 
 AI-Engineering-Hub 已提供：
 - 规范的 Candidate Plan 接口（`POST /api/model/select`）
-- 零密钥端点注册表
+- 零密钥端点注册表（`/api/endpoints`）
 - 业务反馈接口（`POST /api/model/feedback`）
 
 ---

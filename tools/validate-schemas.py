@@ -20,11 +20,54 @@ def validate_schema_structure(schema_path: Path):
 
 def test_samples():
     print("Testing realistic samples against standard schemas...")
+    try:
+        import jsonschema
+    except ImportError:
+        print("[WARN] jsonschema not installed, skipping deep payload validation.")
+        return True
 
-    # 1. Test Candidate Plan Sample (with cold start null semantics & diversity)
+    with open(SCHEMAS_DIR / "model-routing-request.schema.json", "r", encoding="utf-8") as f:
+        req_schema = json.load(f)
+    with open(SCHEMAS_DIR / "model-routing-response.schema.json", "r", encoding="utf-8") as f:
+        resp_schema = json.load(f)
+    with open(SCHEMAS_DIR / "model-feedback.schema.json", "r", encoding="utf-8") as f:
+        fb_schema = json.load(f)
+
+    # 1. Test Routing Request Sample
+    sample_request_high = {
+        "task": "knowledge_distillation",
+        "quality": "high",
+        "latency": "normal",
+        "multimodal_required": False,
+        "preferred_channel": "local-cpa",
+        "max_candidates": 3,
+        "consumer": "ai-kb"
+    }
+    jsonschema.validate(instance=sample_request_high, schema=req_schema)
+
+    sample_request_medium = {
+        "task": "general_chat",
+        "quality": "medium",
+        "latency": "normal"
+    }
+    jsonschema.validate(instance=sample_request_medium, schema=req_schema)
+
+    # Negative test: quality="normal" MUST fail (normal belongs to latency)
+    invalid_quality_req = {
+        "task": "general_chat",
+        "quality": "normal",
+        "latency": "normal"
+    }
+    try:
+        jsonschema.validate(instance=invalid_quality_req, schema=req_schema)
+        raise AssertionError("Failed negative test: quality='normal' was incorrectly accepted!")
+    except jsonschema.ValidationError:
+        pass  # Expected
+
+    # 2. Test Candidate Plan Sample (with cold start null semantics & diversity)
     sample_candidate_plan = {
         "decision_id": "route-1774316000-sample",
-        "policy_version": "v1.0.0",
+        "policy_version": "v1.1.1",
         "task": "knowledge_distillation",
         "requirements": {
             "quality": "high",
@@ -79,8 +122,9 @@ def test_samples():
             "description": "逐个候选尝试，全失败回退业务 Legacy"
         }
     }
+    jsonschema.validate(instance=sample_candidate_plan, schema=resp_schema)
     
-    # 2. Test Feedback Payload Sample
+    # 3. Test Feedback Payload Sample
     sample_feedback = {
         "decision_id": "route-1774316000-sample",
         "consumer": "ai-kb",
@@ -92,13 +136,29 @@ def test_samples():
         "prompt_tokens": 1200,
         "completion_tokens": 400,
         "total_tokens": 1600,
+        "status_code": 200,
+        "error_type": "",
         "quality_metrics": {
             "knowledge_quality": 0.95,
             "citation_validity": 1.0
         }
     }
+    jsonschema.validate(instance=sample_feedback, schema=fb_schema)
 
-    print("Sample validation PASS: structures conform to Standards V1.0 specifications.")
+    # Negative test: invalid error_type MUST fail
+    invalid_fb = {
+        "model": "qwen2.5:7b-instruct",
+        "channel": "ollama",
+        "success": False,
+        "error_type": "UNKNOWN_CUSTOM_ERROR"
+    }
+    try:
+        jsonschema.validate(instance=invalid_fb, schema=fb_schema)
+        raise AssertionError("Failed negative test: invalid error_type was incorrectly accepted!")
+    except jsonschema.ValidationError:
+        pass  # Expected
+
+    print("Sample validation PASS: structures conform to Standards V1.1 specifications.")
     return True
 
 def main():
