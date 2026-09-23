@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/canonical-action.schema.json",
+  "title": "Canonical Action Execution Schema",
+  "type": "object",
+  "required": [
+    "action",
+    "resource_id",
+    "status"
+  ],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "start",
+        "stop",
+        "restart",
+        "status",
+        "test"
+      ]
+    },
+    "resource_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "SUCCESS",
+        "FAILED",
+        "RUNNING",
+        "SKIPPED"
+      ]
+    },
+    "exit_code": {
+      "type": "integer"
+    },
+    "duration_ms": {
+      "type": "number"
+    },
+    "message": {
+      "type": "string"
+    },
+    "executed_at": {
+      "type": "string"
+    }
+  }
+}

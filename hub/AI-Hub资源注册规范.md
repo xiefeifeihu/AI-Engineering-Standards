@@ -85,19 +85,21 @@ resources:
     actions: ["start", "stop", "restart", "test", "status"]
     credential_status: "CONFIGURED"
 
-  - resource_id: "cpa-local"
+  - resource_id: "local-cpa"
     name: "Local CPA (本机模型代理)"
     type: "ai_inference"
-    owner: "sensha-cloud"
-    endpoint: "http://127.0.0.1:8317"
+    owner: "ai-kb-infra"
+    endpoint: "http://127.0.0.1:18117"
     container_endpoint: "cpa-local:8317"
-    console_url: "http://127.0.0.1:8317/management.html"
+    console_url: "http://127.0.0.1:18117/management.html"
+    lifecycle_policy: "ALWAYS_ON"
+    desired_state: "RUNNING"
     health_check:
       type: "http"
-      endpoint: "http://127.0.0.1:8317/v1/models"
+      endpoint: "http://127.0.0.1:18117/"
     capabilities: ["chat", "embedding", "code"]
-    actions: ["status", "test"]
-    credential_status: "NONE"
+    actions: ["start", "stop", "restart", "status", "test"]
+    credential_status: "CONFIGURED"
 
   - resource_id: "ollama"
     name: "Ollama (本地私有算力)"

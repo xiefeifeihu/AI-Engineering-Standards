@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/audit-event.schema.json",
+  "title": "Observability Unified Audit Event Schema",
+  "type": "object",
+  "required": [
+    "timestamp",
+    "category",
+    "action",
+    "target",
+    "status",
+    "summary"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "SYSTEM_EVENT",
+        "RESOURCE_ACTION",
+        "MODEL_PROBE",
+        "ROUTE_DECISION"
+      ]
+    },
+    "action": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "WARN"
+      ]
+    },
+    "duration_ms": {
+      "type": "number"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "technical_detail": {
+      "type": "object"
+    }
+  }
+}

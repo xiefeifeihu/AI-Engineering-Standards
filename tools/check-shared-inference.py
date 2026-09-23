@@ -2,7 +2,7 @@
 """
 AI Engineering Standards: Shared Inference Resource Conformance Checker
 Portable diagnostic script to probe shared inference resources from either:
-  - Host environment (default loopback endpoints 127.0.0.1: 11434, 8317, 18317)
+  - Host environment (default loopback endpoints 127.0.0.1: 11434, 18117, 18317)
   - Container environment (via host-gateway, e.g. host.docker.internal: 11434, 8317, 18317)
 
 Zero Secrets Principle:
@@ -34,7 +34,7 @@ RESOURCES = [
     {
         "id": "cpa-local",
         "default_host": "127.0.0.1",
-        "port": 8317,
+        "port": 18117,
         "path": "/v1/models",
         "ping_path": "/",
         "auth_required": True,

@@ -1,0 +1,66 @@
+# AI Engineering Standards - Changelog
+
+All notable changes to the AI Engineering Standards baseline are documented in this file.
+
+## [1.0.0] - 2026-09-23
+
+### Added
+- **Formal Standards Framework (STD-001 to STD-018)**:
+  - STD-001: Engineering Manifest Standard
+  - STD-002: Resource Ownership Standard
+  - STD-003: Endpoint Registry Standard
+  - STD-004: Canonical Action Standard
+  - STD-005: Health Status & Lifecycle Model Standard
+  - STD-006: Port Governance Standard (18000-19999 Convention & Windows Dynamic Port Range)
+  - STD-007: Credential Reference & Zero Secret Standard
+  - STD-008: Model Registry Standard
+  - STD-009: Model Routing Contract
+  - STD-010: Model Feedback Contract
+  - STD-011: Application Consumer Contract
+  - STD-012: Windows / WSL / Docker Runtime Boundary
+  - STD-013: Logging & Observability Standard
+  - STD-014: Testing Standard
+  - STD-015: Playwright Acceptance Standard
+  - STD-016: Acceptance Evidence ZIP Standard
+  - STD-017: Git Release & Versioning Standard
+  - STD-018: UI Diagnostics & Enum Presentation Standard
+- **Machine-readable JSON Schemas (`schemas/`)**:
+  - `engineering-manifest.schema.json`
+  - `resource.schema.json`
+  - `endpoint.schema.json`
+  - `canonical-action.schema.json`
+  - `model-registry.schema.json`
+  - `model-routing-request.schema.json`
+  - `model-routing-response.schema.json`
+  - `model-feedback.schema.json`
+  - `audit-event.schema.json`
+- **Resource Lifecycle Classification Model**:
+  - `ALWAYS_ON` (常驻服务), `ON_DEMAND` (按需服务), `MANUAL` (手动管理), `EXTERNAL` (外部管理)
+  - Explicit `desired_state` and `actual_state` contracts.
+- **Cross-Session Integration Handoffs (`handoff/`)**:
+  - `AI-KB-Model-Governance-Integration-Handoff.md`
+  - `Sidecar-Model-Governance-Integration-Handoff.md`
+  - `VTIP-Model-Governance-Architecture-Handoff.md`
+- **Audit & Architecture Baseline**:
+  - `docs/audit/STANDARDS-V1-AUDIT.md`
+  - `docs/architecture/STANDARDS-V1-ARCHITECTURE.md`
+  - `deprecated/CLOUD-CPA-TUNNEL-DEPRECATED.md`
+- **Automated Schema Validator**:
+  - `tools/validate-schemas.py`
+
+### Changed
+- **Local CPA Ground Truth Alignment**:
+  - Aligned Host Endpoint to `http://127.0.0.1:18117` and Docker Internal Endpoint to `http://cpa-local:8317`.
+  - Affirmed Owner as `ai-kb-infra` (`D:\AI-KB\Repo\ai-kb-infra`).
+  - Standardized canonical lifecycle commands to `scripts/cpa/local-cpa.cmd` (`start`, `stop`, `restart`, `status`, `test`).
+- **Cloud CPA Alignment**:
+  - Standardized script path to `scripts/cpa/cloud-cpa-tunnel.cmd`.
+  - Host Endpoint `http://127.0.0.1:18317` with fallback range `18318-18320`.
+  - Classified as `ON_DEMAND` with `desired_state: STOPPED`.
+- **Cold Start Semantics**:
+  - Established contract: 0 invocations must return `success_rate: null` and `latency_p50/p95: null`. UI must display "暂无数据" and never "100%" or "0ms".
+  - Introduced `sample_count` and `metric_confidence` (`NONE`, `LOW`, `MEDIUM`, `HIGH`).
+
+### Deprecated
+- `scripts/tunnel/cloud-cpa-tunnel.cmd` permanently marked as DEPRECATED in favor of `scripts/cpa/cloud-cpa-tunnel.cmd`.
+- Direct Host port `8317` marked as DEPRECATED in favor of governed Host port `18117`.

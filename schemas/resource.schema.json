@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/resource.schema.json",
+  "title": "Managed Resource Entity Schema",
+  "type": "object",
+  "required": [
+    "resource_id",
+    "name",
+    "type",
+    "owner",
+    "endpoint",
+    "lifecycle_policy",
+    "desired_state"
+  ],
+  "properties": {
+    "resource_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "name": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "ai_inference",
+        "infrastructure",
+        "app_dependency"
+      ]
+    },
+    "owner": {
+      "type": "string"
+    },
+    "endpoint": {
+      "type": "string"
+    },
+    "container_endpoint": {
+      "type": "string"
+    },
+    "console_url": {
+      "type": "string"
+    },
+    "lifecycle_policy": {
+      "type": "string",
+      "enum": [
+        "ALWAYS_ON",
+        "ON_DEMAND",
+        "MANUAL",
+        "EXTERNAL"
+      ]
+    },
+    "desired_state": {
+      "type": "string",
+      "enum": [
+        "RUNNING",
+        "STOPPED"
+      ]
+    },
+    "actual_state": {
+      "type": "string",
+      "enum": [
+        "READY",
+        "AVAILABLE",
+        "PRESENT",
+        "STOPPED",
+        "OPTIONAL_OFFLINE",
+        "OFFLINE",
+        "ERROR"
+      ]
+    },
+    "default_port": {
+      "type": "integer"
+    },
+    "fallback_ports": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "health_check": {
+      "type": "object"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "credential_status": {
+      "type": "string",
+      "enum": [
+        "CONFIGURED",
+        "MISSING",
+        "NONE"
+      ]
+    },
+    "credential_source": {
+      "type": "string"
+    }
+  }
+}

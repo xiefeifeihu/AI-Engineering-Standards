@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/model-feedback.schema.json",
+  "title": "Model Execution Feedback Payload Schema",
+  "type": "object",
+  "required": [
+    "model",
+    "channel",
+    "success"
+  ],
+  "properties": {
+    "decision_id": {
+      "type": "string"
+    },
+    "consumer": {
+      "type": "string"
+    },
+    "task": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "channel": {
+      "type": "string",
+      "enum": [
+        "local-cpa",
+        "cloud-cpa",
+        "ollama"
+      ]
+    },
+    "success": {
+      "type": "boolean"
+    },
+    "latency_ms": {
+      "type": "number",
+      "minimum": 0.0
+    },
+    "prompt_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "completion_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "total_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "status_code": {
+      "type": "integer"
+    },
+    "error_type": {
+      "type": "string",
+      "enum": [
+        "",
+        "QUOTA_EXHAUSTED",
+        "RATE_LIMITED",
+        "AUTH_FAILED",
+        "MODEL_UNAVAILABLE",
+        "NETWORK_ERROR",
+        "TIMEOUT",
+        "PROVIDER_ERROR"
+      ]
+    },
+    "error_message": {
+      "type": "string"
+    },
+    "quality_metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      }
+    }
+  }
+}

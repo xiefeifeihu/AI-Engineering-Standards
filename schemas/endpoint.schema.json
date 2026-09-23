@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/endpoint.schema.json",
+  "title": "Endpoint Topology Definition Schema",
+  "type": "object",
+  "required": [
+    "endpoint_id",
+    "host_endpoint",
+    "docker_endpoint"
+  ],
+  "properties": {
+    "endpoint_id": {
+      "type": "string"
+    },
+    "host_endpoint": {
+      "type": "string",
+      "format": "uri"
+    },
+    "docker_endpoint": {
+      "type": "string"
+    },
+    "remote_endpoint": {
+      "type": "string"
+    },
+    "console_url": {
+      "type": "string"
+    },
+    "protocol": {
+      "type": "string",
+      "enum": [
+        "http",
+        "https",
+        "tcp",
+        "ws"
+      ]
+    },
+    "exposure": {
+      "type": "string",
+      "enum": [
+        "loopback",
+        "docker_internal",
+        "optional_tunnel",
+        "none"
+      ]
+    }
+  }
+}
