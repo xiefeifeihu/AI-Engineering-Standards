@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-006
-VERSION=1.0.0
+VERSION=1.1.2
 STATUS=ACTIVE
 SCOPE=开发机 Windows 宿主、WSL2 与 Docker 容器向宿主映射的所有 TCP 端口
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-09-23
+LAST_UPDATED=2026-09-24
 ```
 
 ### 规范性关键词说明 (Normative Keywords)
@@ -40,10 +40,10 @@ LAST_UPDATED=2026-09-23
 
 | 端口范围 | 规划职能 | 现有稳定分配实例 | 约束原则 |
 | :--- | :--- | :--- | :--- |
-| **18000 - 18099** | 应用入口 / Web 控制台 | `18080` (RAGFlow Web), `18090` (AI-KB Control) | 仅供业务系统 Web UI 暴露 |
+| **18000 - 18099** | 应用入口 / Web 控制台 / Docker Ingress | `18000` (Hub Docker Ingress), `18080` (RAGFlow Web), `18090` (AI-KB Control) | 仅供业务系统 Web UI 与 Docker 专属网关暴露 |
 | **18100 - 18199** | 本地 AI 推理网关 / 代理 | `18117` (Local CPA 网关) | 境内高速低时延推理代理 |
 | **18300 - 18399** | 云端按需隧道 / 出站代理 | `18317` (Cloud CPA 隧道, 候选: 18318-18320) | 按需加密隧道专用 |
-| **18700 - 18799** | 宿主桥接 / Agent 扩展 | `18787` (Host Action Bridge) | 宿主与容器隔离桥接通信 |
+| **18700 - 18799** | 宿主桥接 / Agent 扩展 | `18777` (Host Action Bridge) | 宿主与容器隔离桥接通信 |
 | **18800 - 18999** | 监控 / 诊断 / 测试入口 | 验收与测试用临时端口 | 测试完成后必须释放 |
 | **19000 - 19999** | 未来扩展示例保留 | 保留备用 | 需由架构评审后分配 |
 
@@ -52,7 +52,11 @@ LAST_UPDATED=2026-09-23
 ## 3. 历史稳定端口保护原则
 
 以下已稳定运行的核心端口 **MUST NOT** 为追求数字对齐而进行无意义迁移：
-- **Port 80**: `AI-Engineering-Hub`（机器级统一门户）
+- **Port 80**: `AI-Engineering-Hub`（机器级统一宿主门户，LOOPBACK ONLY）
+- **Port 18000**: `AI-Engineering-Hub Docker Ingress`（Docker 容器消费专用网关，仅绑定 Docker 网桥接口）
 - **Port 11434**: `Ollama`（本地离线模型原生默认端口）
 - **Port 8799**: `VTIP-AI-SIDECAR`（已稳定接入的业务 Sidecar 端口）
 - **Port 18080 / 18090**: `RAGFlow` / `AI-KB Control`
+- **Port 18117**: `Local CPA`
+- **Port 18317**: `Cloud CPA`
+- **Port 18777**: `Windows Host Action Bridge`

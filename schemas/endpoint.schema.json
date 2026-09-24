@@ -42,6 +42,63 @@
         "optional_tunnel",
         "none"
       ]
+    },
+    "canonical_paths": {
+      "type": "object",
+      "properties": {
+        "health": {
+          "type": "string"
+        },
+        "model_select": {
+          "type": "string"
+        },
+        "model_feedback": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "runtime_profiles": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "object",
+          "required": [
+            "endpoint"
+          ],
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "network_type": {
+              "type": "string"
+            },
+            "dns_name": {
+              "type": "string"
+            }
+          }
+        },
+        "docker": {
+          "type": "object",
+          "required": [
+            "endpoint"
+          ],
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "network_type": {
+              "type": "string"
+            },
+            "dns_name": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "additionalProperties": true
     }
   }
 }

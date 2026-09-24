@@ -3,8 +3,9 @@
 ```text
 TARGET_PROJECT=VTIP-AI-SIDECAR (vtip-ai-sidecar)
 TARGET_AUDIENCE=Sidecar ChatGPT / Claude 长期架构会话
-GOVERNANCE_BASELINE=AI Engineering Standards v1.1.1 / AI-Hub v0.5.8
+GOVERNANCE_BASELINE=AI Engineering Standards v1.1.2 / AI-Hub v0.5.9
 STATUS=OFFICIAL_HANDOFF
+LAST_UPDATED=2026-09-24
 ```
 
 ---
@@ -17,10 +18,18 @@ AI-Engineering-Hub 已提供：
 - 规范的 Candidate Plan 接口（`POST /api/model/select`）
 - 零密钥端点注册表（`/api/endpoints`）
 - 业务反馈接口（`POST /api/model/feedback`）
+- **Docker 容器专属网关端点**：`http://host.docker.internal:18000`（严禁在容器内使用 `127.0.0.1:80`）
 
 ---
 
-## 2. Sidecar 会话需要自主决策的核心事项
+## 2. 运行时端点配置
+
+- **Host 环境（宿主机测试、CLI）**：`HUB_HOST_ENDPOINT=http://127.0.0.1:80`
+- **Docker 容器环境（Sidecar Runtime）**：`HUB_DOCKER_ENDPOINT=http://host.docker.internal:18000`
+
+---
+
+## 3. Sidecar 会话需要自主决策的核心事项
 
 1. **Fact Guard 事实护栏与反馈契约**：
    - Sidecar 拥有专属的 Fact Guard 校验逻辑；

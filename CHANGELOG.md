@@ -1,6 +1,20 @@
-﻿# AI Engineering Standards - Changelog
+# AI Engineering Standards - Changelog
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
+
+## [1.1.2] - 2026-09-24
+
+### Added
+- **Docker / Host Dual-Profile Runtime Topology (AI-ENGINEERING-PLATFORM-V1-005)**:
+  - Formally established `HUB_HOST_ENDPOINT` (`http://127.0.0.1:80`, loopback only) and `HUB_DOCKER_ENDPOINT` (`http://host.docker.internal:18000`, dedicated bridge ingress).
+  - Extended `schemas/endpoint.schema.json` with `runtime_profiles` (host, docker) and `canonical_paths` (`health`, `model_select`, `model_feedback`).
+  - Allocated Port `18000` in `STD-006` Port Governance for Hub Docker Consumer Ingress.
+  - Published official durable handoff `handoff/SIDECAR-FULL-ADOPTION-HANDOFF.md`.
+
+### Changed
+- **STD-003 v1.1.2**: Decoupled Canonical Paths from Base URL; defined Runtime Profiles to drive dynamic endpoint resolution.
+- **STD-011 v1.1.2**: Explicitly prohibited Docker consumers from assuming `127.0.0.1` represents host; required consumers to prioritize `docker_endpoint`.
+- **STD-012 v1.1.2**: Codified 3-tier boundary isolation rules, requiring Hub to bind dedicated listeners strictly on Docker bridge gateways while keeping loopback intact and physical LAN completely unexposed.
 
 ## [1.1.1] - 2026-09-23
 

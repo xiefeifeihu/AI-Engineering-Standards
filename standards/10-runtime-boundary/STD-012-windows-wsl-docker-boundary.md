@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-012
-VERSION=1.0.0
+VERSION=1.1.2
 STATUS=ACTIVE
 SCOPE=跨 Windows 宿主、WSL2 子系统与 Docker 桥接网络的开发与运行环境
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-09-23
+LAST_UPDATED=2026-09-24
 ```
 
 ### 规范性关键词说明 (Normative Keywords)
@@ -22,17 +22,25 @@ LAST_UPDATED=2026-09-23
 ## 1. 三层环境拓扑定义
 
 1. **Windows Host (宿主环境)**：
-   负责原生 IDE、用户浏览器交互、原生 CLI 命令执行，以及通过 `127.0.0.1:80` 访问 Hub。
+   负责原生 IDE、用户浏览器交互、原生 CLI 命令执行、Windows Host Action Bridge (18777)。
 2. **WSL2 (Linux 子系统)**：
-   运行 Docker 守护进程及 Linux 原生构建工具。
+   运行 Docker 守护进程及 Linux 原生构建工具，为 Hub 提供 host network namespace。
 3. **Docker Bridge (容器网络)**：
-   运行 RAGFlow、Elasticsearch、MySQL、Redis、Local CPA 及 AI-Hub 容器。
+   运行各业务系统容器（`vtip-ai-sidecar`, `ai-kb-control`, RAGFlow, Elasticsearch, MySQL, Redis, Local CPA）。
 
 ---
 
 ## 2. 访问规则与安全边界
 
-- 宿主访问容器服务：必须通过容器映射至宿主回环的端口（如 `18117`）；
-- 容器访问宿主服务：通过 `host.docker.internal:<PORT>` 访问；
-- 容器之间相互访问：通过 Docker Compose 自定义网络内部服务名与内部端口访问（如 `cpa-local:8317`）；
-- 所有对外暴露的 HTTP 接口默认仅绑定 `127.0.0.1`，严禁无认证暴露于 `0.0.0.0` 公网接口。
+1. **Hub 双端点拓扑隔离**：
+   - **HOST_ENDPOINT (`http://127.0.0.1:80`)**：
+     仅监听本地回环接口 `127.0.0.1`。供宿主 Windows、WSL 及浏览器管理使用。**严禁直接修改为 0.0.0.0**。
+   - **DOCKER_ENDPOINT (`http://host.docker.internal:18000`)**：
+     由 Hub 内置 Docker Ingress 提供，**严格仅绑定 Docker 网桥网关接口**（如 `172.17.0.1`, `172.18.0.1` 等 `docker0`, `br-*`）。
+2. **物理 LAN 零暴露红线**：
+   - Hub Docker Ingress **MUST NOT** 监听物理 LAN 接口（如 `192.168.10.x`）。
+   - Client ACL 校验：仅允许来自 Docker bridge 子网（`172.16.0.0/12`）与 loopback 的连接，阻断任何外来流量。
+3. **宿主资源直通保障**：
+   Hub 必须保持 host 网络模式运行，以确保持续直接访问 Windows Host Action Bridge (18777)、Local CPA (18117)、Cloud CPA (18317)、Ollama (11434) 及基础设施存储，不得降级为普通 bridge 模式。
+4. **容器访问宿主服务规范**：
+   普通 bridge 容器通过 `host.docker.internal:<PORT>` 访问宿主/网桥暴露的服务（需配置 `extra_hosts: host.docker.internal:host-gateway`）。
