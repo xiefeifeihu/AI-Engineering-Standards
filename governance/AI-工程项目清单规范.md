@@ -1,7 +1,7 @@
 ﻿# AI 工程项目清单规范 (Engineering Project Manifest Specification)
 
 ```text
-MANIFEST_SPEC_VERSION=V1.0
+MANIFEST_SPEC_VERSION=V1.1.3
 MANIFEST_SPEC_STATUS=ACTIVE
 SCHEMA_REF=AI-Engineering-Standards/governance/engineering-manifest-schema.json
 ```
@@ -26,7 +26,11 @@ SCHEMA_REF=AI-Engineering-Standards/governance/engineering-manifest-schema.json
 ## 2. 核心治理契约
 
 1. **项目自声明原则 (Self-Declaration)**：
-   各项目自己维护自己的服务、端点、健康检查契约与生命周期命令，Hub 不复制项目内部事实。
+   各项目自己维护自己的服务、端点、健康检查契约与生命周期命令，Hub 不复制项目内部事实。在端点表达上：
+   - `windows_host`: Windows 宿主环境 loopback 访问地址（例如 `http://127.0.0.1:18317`）；
+   - `wsl_host`: WSL2 环境访问地址；
+   - `docker_internal`: 同 Docker 网络/服务 DNS 直接连通地址（例如 `http://cpa-local:8317`）；
+   - `docker_consumer`: 其他 Docker bridge 容器通过网关中继消费的端点（例如 `http://host.docker.internal:18318`）。
 2. **零密钥红线 (Zero Secret)**：
    Manifest 与 Hub 仅回答“凭据在哪里（Reference / Environment）”以及“当前是否已配置（CONFIGURED / MISSING）”，严禁记录任何真实 API Key、Token 或密码。
 3. **两级导航体系 (Two-Level Navigation)**：

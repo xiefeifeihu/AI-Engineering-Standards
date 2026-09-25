@@ -2,6 +2,15 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [1.1.3] - 2026-09-25
+
+### Added
+- **Engineering Manifest Docker Consumer Endpoint & SOT Convergence (AI-HUB-V1-008)**:
+  - Extended `schemas/engineering-manifest.schema.json` and `governance/engineering-manifest-schema.json` with `endpoints.docker_consumer`.
+  - Added support for `schema_version` `"1.1"`, `"1.1.0"`, and `"1.1.3"` while maintaining 100% backward compatibility with `"1.0"` / `"1.0.0"`.
+  - Defined explicit semantics: `docker_internal` for in-network container communication vs `docker_consumer` for bridge container access via host gateway relay.
+  - Aligned STD-001 (v1.1.3), STD-003 (v1.1.3), and STD-012 (v1.1.3) with single source of truth resolution.
+
 ## [1.1.2] - 2026-09-24
 
 ### Added

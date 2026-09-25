@@ -29,7 +29,8 @@ services:
     endpoints:
       windows_host: "http://127.0.0.1:8000"
       wsl_host: "http://127.0.0.1:8000"
-      docker_internal: "http://container-name:8000"
+      docker_internal: "http://container-name:8000"     # 同 Docker 网络/DNS 容器访问端点 (可选)
+      docker_consumer: "http://host.docker.internal:8000" # 外部 Docker bridge 容器通过网关消费端点 (可选)
     health_contract:
       probe_type: "http"                    # http | tcp | docker_status | file_snapshot | none
       endpoint: "http://127.0.0.1:8000/health"

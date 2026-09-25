@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-001
-VERSION=1.0.0
+VERSION=1.1.3
 STATUS=ACTIVE
 SCOPE=所有参与跨工程协作与 AI-Hub 汇聚的本地工程仓库
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-09-23
+LAST_UPDATED=2026-09-25
 SCHEMA_REF=schemas/engineering-manifest.schema.json
 ```
 
@@ -46,7 +46,10 @@ SCHEMA_REF=schemas/engineering-manifest.schema.json
 - `owner`: 责任仓库标识符（例如 `ai-kb-infra`）。
 - `category`: `project_app`, `shared_ai_resource`, `knowledge_data_infra`, `machine_infra`。
 - `exposure`: `loopback`, `docker_internal`, `optional_tunnel`, `none`。
-- `endpoints`: `windows_host`, `wsl_host`, `docker_internal`。
+- `endpoints`: `windows_host`, `wsl_host`, `docker_internal`, `docker_consumer`。
+  - `docker_internal`: 同 Docker 网络/容器 DNS 内直连端点（如 `http://cpa-local:8317`）。
+  - `docker_consumer`: 外部 Docker bridge 容器经由宿主网关/中继消费端点（如 `http://host.docker.internal:18318`）。
+  - 端点字段均为可选，无强行共存约束；旧版本清单不含 `docker_consumer` 完全保持合法兼容。
 - `health_contract`: 声明探测类型与超时。
 - `lifecycle_policy`: `ALWAYS_ON`, `ON_DEMAND`, `MANUAL`, `EXTERNAL`。
 - `desired_state`: `RUNNING`, `STOPPED`。

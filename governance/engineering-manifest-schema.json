@@ -4,15 +4,29 @@
   "title": "Engineering Project Manifest",
   "description": "Schema for machine-readable AI engineering project manifests defining services, endpoints, credentials, and health contracts.",
   "type": "object",
-  "required": ["schema_version", "project", "services"],
+  "required": [
+    "schema_version",
+    "project",
+    "services"
+  ],
   "properties": {
     "schema_version": {
       "type": "string",
-      "enum": ["1.0", "1.0.0"]
+      "enum": [
+        "1.0",
+        "1.0.0",
+        "1.1",
+        "1.1.0",
+        "1.1.3"
+      ]
     },
     "project": {
       "type": "object",
-      "required": ["id", "name", "purpose"],
+      "required": [
+        "id",
+        "name",
+        "purpose"
+      ],
       "properties": {
         "id": {
           "type": "string",
@@ -27,19 +41,31 @@
         "repo_path_hints": {
           "type": "object",
           "properties": {
-            "windows": { "type": "string" },
-            "wsl": { "type": "string" }
+            "windows": {
+              "type": "string"
+            },
+            "wsl": {
+              "type": "string"
+            }
           }
         },
         "consumer_contract": {
           "type": "object",
-          "required": ["shared_inference"],
+          "required": [
+            "shared_inference"
+          ],
           "properties": {
             "shared_inference": {
               "type": "string",
-              "enum": ["REQUIRED", "NONE", "OPTIONAL"]
+              "enum": [
+                "REQUIRED",
+                "NONE",
+                "OPTIONAL"
+              ]
             },
-            "details": { "type": "string" }
+            "details": {
+              "type": "string"
+            }
           }
         },
         "network_gate_snapshot_hint": {
@@ -47,7 +73,9 @@
         },
         "tags": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -55,7 +83,13 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "name", "purpose", "category", "exposure"],
+        "required": [
+          "id",
+          "name",
+          "purpose",
+          "category",
+          "exposure"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -81,41 +115,81 @@
           },
           "exposure": {
             "type": "string",
-            "enum": ["loopback", "docker_internal", "optional_tunnel", "none"]
+            "enum": [
+              "loopback",
+              "docker_internal",
+              "optional_tunnel",
+              "none"
+            ]
           },
           "endpoints": {
             "type": "object",
             "properties": {
-              "windows_host": { "type": "string" },
-              "wsl_host": { "type": "string" },
-              "docker_internal": { "type": "string" }
+              "windows_host": {
+                "type": "string"
+              },
+              "wsl_host": {
+                "type": "string"
+              },
+              "docker_internal": {
+                "type": "string"
+              },
+              "docker_consumer": {
+                "type": "string"
+              }
             }
           },
           "health_contract": {
             "type": "object",
-            "required": ["probe_type"],
+            "required": [
+              "probe_type"
+            ],
             "properties": {
               "probe_type": {
                 "type": "string",
-                "enum": ["http", "tcp", "docker_status", "file_snapshot", "none"]
+                "enum": [
+                  "http",
+                  "tcp",
+                  "docker_status",
+                  "file_snapshot",
+                  "none"
+                ]
               },
-              "endpoint": { "type": "string" },
+              "endpoint": {
+                "type": "string"
+              },
               "expected_status": {
-                "type": ["integer", "string"]
+                "type": [
+                  "integer",
+                  "string"
+                ]
               },
-              "optional": { "type": "boolean" },
-              "timeout_seconds": { "type": "number" }
+              "optional": {
+                "type": "boolean"
+              },
+              "timeout_seconds": {
+                "type": "number"
+              }
             }
           },
           "config_references": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["label", "path"],
+              "required": [
+                "label",
+                "path"
+              ],
               "properties": {
-                "label": { "type": "string" },
-                "path": { "type": "string" },
-                "owner": { "type": "string" }
+                "label": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "owner": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -123,28 +197,50 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["label"],
+              "required": [
+                "label"
+              ],
               "properties": {
-                "label": { "type": "string" },
-                "env_var": { "type": "string" },
-                "file_ref": { "type": "string" },
-                "status_detector": { "type": "string" }
+                "label": {
+                  "type": "string"
+                },
+                "env_var": {
+                  "type": "string"
+                },
+                "file_ref": {
+                  "type": "string"
+                },
+                "status_detector": {
+                  "type": "string"
+                }
               }
             }
           },
           "lifecycle_commands": {
             "type": "object",
             "properties": {
-              "start": { "type": "string" },
-              "stop": { "type": "string" },
-              "restart": { "type": "string" },
-              "status": { "type": "string" },
-              "logs": { "type": "string" }
+              "start": {
+                "type": "string"
+              },
+              "stop": {
+                "type": "string"
+              },
+              "restart": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "logs": {
+                "type": "string"
+              }
             }
           },
           "tags": {
             "type": "array",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           }
         }
       }

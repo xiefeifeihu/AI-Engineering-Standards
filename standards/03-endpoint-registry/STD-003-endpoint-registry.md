@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-003
-VERSION=1.1.2
+VERSION=1.1.3
 STATUS=ACTIVE
 SCOPE=跨宿主机、WSL 与 Docker 容器网络的所有网络访问端点与拓扑解析
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-09-24
+LAST_UPDATED=2026-09-25
 SCHEMA_REF=schemas/endpoint.schema.json
 ```
 
@@ -27,8 +27,9 @@ SCHEMA_REF=schemas/endpoint.schema.json
    Windows 宿主机 / WSL 本地 Loopback 环境下的专用访问地址，例如 Hub 门户 `http://127.0.0.1:80`、Local CPA `http://127.0.0.1:18117`。
    - 约束：**MUST** 保持 Loopback-only，**MUST NOT** 暴露于物理 LAN。
 2. **DOCKER_ENDPOINT (容器消费端点)**：
-   普通 Docker Bridge 容器内部访问的专属端点，例如 Hub 容器入口 `http://host.docker.internal:18000`、CPA 容器入口 `http://cpa-local:8317`。
-   - 约束：由专用 Docker Ingress 或容器内部网络提供，**MUST** 支持标准 bridge container 访问，且 **MUST NOT** 监听物理 LAN (0.0.0.0)。
+   普通 Docker Bridge 容器内部访问的专属端点，例如 Hub 容器入口 `http://host.docker.internal:18000`、CPA 容器入口 `http://cpa-local:8317`、Cloud CPA 消费端点 `http://host.docker.internal:18318`。
+   - 约束：由专用 Docker Ingress、容器内部网络或 Host Gateway Relay 提供，**MUST** 支持标准 bridge container 访问，且 **MUST NOT** 监听物理 LAN (0.0.0.0)。
+   - 清单映射：Owner Engineering Manifest 通过 `endpoints.docker_consumer` 声明网关转发表项，或通过 `endpoints.docker_internal` 声明同网络容器端点；Endpoint Registry 统一映射至 `docker_endpoint`。
 3. **REMOTE_ENDPOINT (远端隧道端点)**：
    通过加密 SSH/WireGuard 隧道按需转发出站的受控端点，例如 `http://127.0.0.1:18317` 动态映射至海外推理节点。
 4. **CONSOLE_URL (人类控制台链接)**：

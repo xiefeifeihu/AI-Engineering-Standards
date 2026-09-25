@@ -124,6 +124,86 @@ def test_samples():
     }
     jsonschema.validate(instance=sample_candidate_plan, schema=resp_schema)
     
+    # 2.5 Test Engineering Manifest (Old and New)
+    with open(SCHEMAS_DIR / "engineering-manifest.schema.json", "r", encoding="utf-8") as f:
+        manifest_schema = json.load(f)
+
+    # Legacy v1.0.0 sample manifest without docker_consumer
+    sample_manifest_legacy = {
+        "schema_version": "1.0.0",
+        "project": {
+            "id": "legacy-project",
+            "name": "Legacy Project",
+            "purpose": "Testing backward compatibility",
+            "consumer_contract": {
+                "shared_inference": "REQUIRED"
+            }
+        },
+        "services": [
+            {
+                "id": "legacy-service",
+                "name": "Legacy Service",
+                "purpose": "Service without docker_consumer",
+                "category": "project_app",
+                "exposure": "loopback",
+                "lifecycle_policy": "ALWAYS_ON",
+                "desired_state": "RUNNING",
+                "endpoints": {
+                    "windows_host": "http://127.0.0.1:8000",
+                    "wsl_host": "http://127.0.0.1:8000",
+                    "docker_internal": "http://legacy-app:8000"
+                },
+                "health_contract": {
+                    "probe_type": "http",
+                    "endpoint": "http://127.0.0.1:8000/health"
+                }
+            }
+        ]
+    }
+    jsonschema.validate(instance=sample_manifest_legacy, schema=manifest_schema)
+
+    # Modern v1.1.3 sample manifest with docker_consumer
+    sample_manifest_v113 = {
+        "schema_version": "1.1.3",
+        "project": {
+            "id": "modern-project",
+            "name": "Modern Project",
+            "purpose": "Testing v1.1.3 dual-profile endpoints",
+            "consumer_contract": {
+                "shared_inference": "REQUIRED"
+            }
+        },
+        "services": [
+            {
+                "id": "cloud-cpa-tunnel",
+                "name": "Cloud CPA Tunnel",
+                "purpose": "SSH tunnel with host gateway relay",
+                "category": "shared_ai_resource",
+                "exposure": "optional_tunnel",
+                "lifecycle_policy": "ALWAYS_ON",
+                "desired_state": "RUNNING",
+                "endpoints": {
+                    "windows_host": "http://127.0.0.1:18317",
+                    "docker_consumer": "http://host.docker.internal:18318"
+                },
+                "health_contract": {
+                    "probe_type": "http",
+                    "endpoint": "http://127.0.0.1:18317/v1/models"
+                }
+            }
+        ]
+    }
+    jsonschema.validate(instance=sample_manifest_v113, schema=manifest_schema)
+
+    # Negative test: invalid schema_version
+    invalid_manifest = dict(sample_manifest_v113)
+    invalid_manifest["schema_version"] = "99.0.0"
+    try:
+        jsonschema.validate(instance=invalid_manifest, schema=manifest_schema)
+        raise AssertionError("Failed negative test: invalid schema_version was accepted!")
+    except jsonschema.ValidationError:
+        pass
+
     # 3. Test Feedback Payload Sample
     sample_feedback = {
         "decision_id": "route-1774316000-sample",

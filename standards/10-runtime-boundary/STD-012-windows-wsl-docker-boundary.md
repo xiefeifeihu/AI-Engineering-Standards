@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-012
-VERSION=1.1.2
+VERSION=1.1.3
 STATUS=ACTIVE
 SCOPE=跨 Windows 宿主、WSL2 子系统与 Docker 桥接网络的开发与运行环境
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-09-24
+LAST_UPDATED=2026-09-25
 ```
 
 ### 规范性关键词说明 (Normative Keywords)
@@ -44,3 +44,4 @@ LAST_UPDATED=2026-09-24
    Hub 必须保持 host 网络模式运行，以确保持续直接访问 Windows Host Action Bridge (18777)、Local CPA (18117)、Cloud CPA (18317)、Ollama (11434) 及基础设施存储，不得降级为普通 bridge 模式。
 4. **容器访问宿主服务规范**：
    普通 bridge 容器通过 `host.docker.internal:<PORT>` 访问宿主/网桥暴露的服务（需配置 `extra_hosts: host.docker.internal:host-gateway`）。
+   Owner 工程若需向外部 bridge 容器暴露宿主 Loopback 资源（如 Cloud CPA 18317），**MUST** 通过 Docker Gateway 专用中继（如 18318）并于 `engineering-manifest.yaml` 显式声明 `docker_consumer: http://host.docker.internal:18318`。
