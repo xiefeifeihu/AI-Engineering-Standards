@@ -20,6 +20,8 @@ def validate_schema_structure(schema_path: Path):
 
 def test_samples():
     print("Testing realistic samples against standard schemas...")
+
+
     try:
         import jsonschema
     except ImportError:
@@ -32,6 +34,8 @@ def test_samples():
         resp_schema = json.load(f)
     with open(SCHEMAS_DIR / "model-feedback.schema.json", "r", encoding="utf-8") as f:
         fb_schema = json.load(f)
+    with open(SCHEMAS_DIR / "coding-gateway.schema.json", "r", encoding="utf-8") as f:
+        gw_schema = json.load(f)
 
     # 1. Test Routing Request Sample
     sample_request_high = {
@@ -238,7 +242,32 @@ def test_samples():
     except jsonschema.ValidationError:
         pass  # Expected
 
-    print("Sample validation PASS: structures conform to Standards V1.1 specifications.")
+        # 4. Test Coding Gateway Schema Sample
+    sample_gateway_payload = {
+        "virtual_model": "hub-code-auto",
+        "protocol": "anthropic_messages",
+        "routing_profile": "auto",
+        "session_id": "sess-claude-20260928-01",
+        "caller_identity": "claude-code",
+        "consumer_runtime": "host",
+        "streaming": True,
+        "execution_diagnostics": {
+            "decision_id": "route-code-12345",
+            "selected_model": "qwen3-coder-plus",
+            "selected_channel": "local-cpa",
+            "attempt_count": 1,
+            "fallback_count": 0,
+            "ttft_ms": 320.5,
+            "total_latency_ms": 1250.0,
+            "tokens_input": 450,
+            "tokens_output": 210,
+            "tool_call_success": True,
+            "circuit_state": "HEALTHY"
+        }
+    }
+    jsonschema.validate(instance=sample_gateway_payload, schema=gw_schema)
+
+    print("Sample validation PASS: structures conform to Standards V1.2 specifications.")
     return True
 
 def main():

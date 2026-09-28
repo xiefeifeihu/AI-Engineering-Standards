@@ -72,6 +72,41 @@
       "additionalProperties": {
         "type": "number"
       }
+    },
+    "ttft_ms": {
+      "type": "number",
+      "minimum": 0.0,
+      "description": "Time to first token in milliseconds"
+    },
+    "tool_call_success": {
+      "type": "boolean",
+      "description": "Whether tool call execution was successful"
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of retries attempted"
+    },
+    "fallback_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of failover switches to next candidate"
+    },
+    "patch_applied": {
+      "type": "boolean",
+      "description": "Whether code patch was successfully applied"
+    },
+    "tests_passed": {
+      "type": "boolean",
+      "description": "Whether project tests passed after coding change"
+    },
+    "lint_passed": {
+      "type": "boolean",
+      "description": "Whether linter checks passed after coding change"
+    },
+    "task_completed": {
+      "type": "boolean",
+      "description": "Whether overall coding task was marked completed"
     }
   }
 }

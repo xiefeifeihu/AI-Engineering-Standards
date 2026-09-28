@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-010
-VERSION=1.0.0
+VERSION=1.2.0
 STATUS=ACTIVE
 SCOPE=所有向 AI-Hub 上报实际调用结果的业务消费者
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-09-23
+LAST_UPDATED=2026-09-28
 SCHEMA_REF=schemas/model-feedback.schema.json
 ```
 
@@ -52,3 +52,17 @@ SCHEMA_REF=schemas/model-feedback.schema.json
    AI-Hub **MUST NOT** 深度实现 AI-KB 的知识切片相关性评分、事实校验算法或 Sidecar 的 Fact Guard 逻辑。
 2. **指标聚合与熔断驱动**：
    Hub 仅接收并统计业务方回传的通用分数（0.0 ~ 1.0），用于驱动滑动窗口指标更新、熔断状态机流转与动态降权。
+
+---
+
+## 3. 编程智能体网关反馈扩展 (Coding Feedback Extension)
+
+在 `STD-021` 编程智能体网关执行完成后，网关或客户端可回传编程专用指标字段：
+- `ttft_ms`: 首字流式输出耗时 (毫秒)
+- `tool_call_success`: 智能体工具调用 (Tool Call) 是否成功执行
+- `retry_count`: 单次轮次内的重试次数
+- `fallback_count`: 触发 Candidate 故障转移的次数
+- `patch_applied`: 代码 Patch 是否成功落盘应用 (仅消费端实际具备该能力时上报)
+- `tests_passed`: 单元测试是否通过 (仅消费端实际具备该能力时上报)
+- `lint_passed`: 静态代码检查是否通过 (仅消费端实际具备该能力时上报)
+- `task_completed`: 编程任务是否最终闭环完成 (仅消费端实际具备该能力时上报)

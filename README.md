@@ -5,10 +5,10 @@ Canonical engineering standards shared across local AI / Vibe Coding projects.
 本项目是开发机跨工程共享的架构标准规范库（Source of Truth），定义网络通信、推理资源共享、智能体接入、上下文管理与工程协作标准。
 
 ```text
-STANDARDS_VERSION=1.0.0
+STANDARDS_VERSION=1.2.0
 STATUS=RELEASED
 BASELINE=AI-ENGINEERING-PLATFORM-V1-001
-LAST_UPDATED=2026-09-23
+LAST_UPDATED=2026-09-28
 ```
 
 ---
@@ -35,12 +35,15 @@ LAST_UPDATED=2026-09-23
 | [`STD-016`](./standards/12-acceptance/STD-016-acceptance-evidence-zip.md) | **Acceptance Evidence ZIP** | 独立工程阶段交付物压缩包标准 |
 | [`STD-017`](./standards/13-git-release/STD-017-git-release-versioning.md) | **Git Release & Versioning** | 独立 Git 仓库提交、干净工作区与 SemVer |
 | [`STD-018`](./standards/14-ui-diagnostics/STD-018-ui-diagnostics-enum-presentation.md) | **UI Diagnostics & Presentation** | 内部大写英文枚举向纯简体中文界面的映射规范 |
+| [`STD-019`](./standards/15-artifact-hygiene/STD-019-Artifact-Workspace-Hygiene.md) | **Artifact & Workspace Hygiene** | 六分类交付物管理、.artifacts 目录与清理规范 |
+| [`STD-020`](./standards/16-handoff/STD-020-Cross-Session-Handoff.md) | **Cross-Session Handoff Standard** | 会话持久化交接标准与跨工程隔离规范 |
+| [`STD-021`](./standards/08-model-governance/STD-021-coding-agent-gateway-contract.md) | **Coding Agent Gateway Contract** | 虚拟模型、双协议接入、透明故障转移与编程会话粘性 |
 
 ---
 
 ## 2. 机器可读 JSON Schemas (`schemas/`)
 
-规范库提供 9 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
+规范库提供 10 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
 - `schemas/engineering-manifest.schema.json`
 - `schemas/resource.schema.json`
 - `schemas/endpoint.schema.json`
@@ -50,6 +53,7 @@ LAST_UPDATED=2026-09-23
 - `schemas/model-routing-response.schema.json`
 - `schemas/model-feedback.schema.json`
 - `schemas/audit-event.schema.json`
+- `schemas/coding-gateway.schema.json`
 
 ---
 

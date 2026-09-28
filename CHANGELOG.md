@@ -2,6 +2,18 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [1.2.0] - 2026-09-28
+
+### Added
+- **STD-021: Coding Agent Gateway Contract (AI-Hub-010-CODING-GATEWAY)**:
+  - Formally established AI-Hub execution plane capabilities for professional coding agents.
+  - Defined 4 canonical virtual models: `hub-code-auto`, `hub-code-fast`, `hub-code-deep`, and `hub-code-local`.
+  - Standardized dual-protocol support: Anthropic Messages API (`/v1/messages`) for Claude Code, and OpenAI Chat Completions API (`/v1/chat/completions`) for OpenCode, Cline, Continue, Aider, and generic agents.
+  - Codified failover semantics: transparent candidate-plan failover strictly before first streamed token; strictly prohibited cross-model output concatenation after stream start.
+  - Established soft session stickiness based on `session_id` and diagnostic header metadata (`X-Hub-Decision-Id`, `X-Hub-Selected-Model`, `X-Hub-Channel`, `X-Hub-Attempts`).
+  - Standardized coding-specific feedback metrics (`ttft_ms`, `tool_call_success`, `retry_count`, `fallback_count`, and reserved quality fields in `schemas/model-feedback.schema.json`).
+  - Added `schemas/coding-gateway.schema.json` with full automated validation in `tools/validate-schemas.py`.
+
 ## [1.1.3] - 2026-09-25
 
 ### Added

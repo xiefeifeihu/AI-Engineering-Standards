@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/coding-gateway.schema.json",
+  "title": "Coding Agent Gateway Contract Schema",
+  "type": "object",
+  "required": [
+    "virtual_model",
+    "protocol",
+    "routing_profile"
+  ],
+  "properties": {
+    "virtual_model": {
+      "type": "string",
+      "enum": [
+        "hub-code-auto",
+        "hub-code-fast",
+        "hub-code-deep",
+        "hub-code-local"
+      ],
+      "description": "Unified virtual model alias presented to coding agents."
+    },
+    "protocol": {
+      "type": "string",
+      "enum": [
+        "anthropic_messages",
+        "openai_chat_completions"
+      ],
+      "description": "Upstream client protocol used by the coding agent."
+    },
+    "routing_profile": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "fast",
+        "deep",
+        "local"
+      ],
+      "description": "Internal routing profile mapped to virtual model."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Session identifier for soft model stickiness across multi-turn coding tasks."
+    },
+    "caller_identity": {
+      "type": "string",
+      "description": "Client identity identifier (e.g. claude-code, opencode, cline, continue, aider)."
+    },
+    "consumer_runtime": {
+      "type": "string",
+      "enum": [
+        "host",
+        "docker"
+      ],
+      "default": "host"
+    },
+    "streaming": {
+      "type": "boolean",
+      "default": false
+    },
+    "execution_diagnostics": {
+      "type": "object",
+      "properties": {
+        "decision_id": {
+          "type": "string"
+        },
+        "selected_model": {
+          "type": "string"
+        },
+        "selected_channel": {
+          "type": "string",
+          "enum": [
+            "local-cpa",
+            "cloud-cpa",
+            "ollama"
+          ]
+        },
+        "attempt_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fallback_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ttft_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0.0
+        },
+        "total_latency_ms": {
+          "type": "number",
+          "minimum": 0.0
+        },
+        "tokens_input": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens_output": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tool_call_success": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "circuit_state": {
+          "type": "string",
+          "enum": [
+            "HEALTHY",
+            "DEGRADED",
+            "QUARANTINED",
+            "RECOVERING"
+          ]
+        }
+      }
+    }
+  }
+}
