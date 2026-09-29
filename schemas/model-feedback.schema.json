@@ -1,25 +1,77 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://standards.local/model-feedback.schema.json",
-  "title": "Model Execution Feedback Payload Schema",
+  "title": "Model Execution and Multi-Stage Feedback Payload Schema (STD-010 v1.3.0)",
   "type": "object",
   "required": [
     "model",
-    "channel",
     "success"
   ],
+  "additionalProperties": false,
   "properties": {
+    "feedback_stage": {
+      "type": "string",
+      "enum": [
+        "execution",
+        "business_evaluation",
+        "human_review"
+      ],
+      "default": "execution",
+      "description": "Lifecycle stage of feedback: execution (runtime attempt), business_evaluation (automated domain eval), or human_review (human review/approval)"
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of observed execution or evaluation event"
+    },
     "decision_id": {
-      "type": "string"
+      "type": "string",
+      "description": "Hub routing decision identifier"
+    },
+    "run_id": {
+      "type": "string",
+      "description": "Consumer workflow or benchmark run identifier"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "1-based execution attempt counter"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "description": "Unique deduplication key for this feedback event"
     },
     "consumer": {
-      "type": "string"
+      "type": "string",
+      "description": "Calling application identifier (e.g. ai-kb, vtip-ai-sidecar, claude-code)"
     },
     "task": {
-      "type": "string"
+      "type": "string",
+      "description": "Business task identifier (e.g. knowledge_distillation, chat, code)"
+    },
+    "metric_namespace": {
+      "type": "string",
+      "description": "Domain metric namespace (e.g. ai-kb.knowledge_distillation.v1, vtip-ai-sidecar.report_synthesis.v1)"
     },
     "model": {
-      "type": "string"
+      "type": "string",
+      "description": "Model identifier or bare model name (backward compatible)"
+    },
+    "logical_model_id": {
+      "type": "string",
+      "description": "Canonical logical model identifier"
+    },
+    "selected_model_id": {
+      "type": "string",
+      "description": "Exact Hub candidate selected for execution"
+    },
+    "upstream_model_id": {
+      "type": "string",
+      "description": "Actual model identifier verified/returned from upstream provider"
+    },
+    "resource_id": {
+      "type": "string",
+      "description": "Infrastructure resource identifier serving the candidate"
     },
     "channel": {
       "type": "string",
@@ -27,29 +79,105 @@
         "local-cpa",
         "cloud-cpa",
         "ollama"
-      ]
+      ],
+      "description": "Routing channel infrastructure"
+    },
+    "source_unit_id": {
+      "type": "string",
+      "description": "Consumer-owned opaque unit identifier (e.g. U1, chunk-slot-42)"
+    },
+    "source_unit_hash": {
+      "type": "string",
+      "description": "Hash of normalized source unit identity/content only (must NOT include prompt or execution parameters)"
+    },
+    "execution_spec_hash": {
+      "type": "string",
+      "description": "Separate hash of execution specification (prompt version, params, schema, temperature)"
+    },
+    "evaluation_method": {
+      "type": "string",
+      "enum": [
+        "deterministic",
+        "llm_judge",
+        "human",
+        "combined",
+        "unknown"
+      ],
+      "description": "Evaluation methodology used for quality assessment"
+    },
+    "prompt_version": {
+      "type": "string",
+      "description": "Version identifier of system/task prompt"
+    },
+    "rubric_version": {
+      "type": "string",
+      "description": "Version identifier of evaluation rubric/scoring criteria"
+    },
+    "evaluation_confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Consumer confidence in one specific evaluation event (separate from Hub sample confidence)"
+    },
+    "review_decision": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "approved_with_note",
+        "rejected",
+        "revise",
+        "discard",
+        "execution_failed",
+        "not_reviewed"
+      ],
+      "description": "Canonical business review outcome"
+    },
+    "review_reason_code": {
+      "type": "string",
+      "description": "Structured machine-readable rejection or review reason code (e.g. fact_guard_failed, structure_invalid)"
+    },
+    "candidate_rank": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Rank of candidate in original Hub routing plan"
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of retries attempted for this candidate"
+    },
+    "fallback_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of failover switches to subsequent candidates"
     },
     "success": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "Whether technical provider execution succeeded"
     },
     "latency_ms": {
       "type": "number",
-      "minimum": 0.0
+      "minimum": 0.0,
+      "description": "Round-trip execution latency in milliseconds"
     },
     "prompt_tokens": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Observed prompt tokens consumed"
     },
     "completion_tokens": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Observed completion tokens generated"
     },
     "total_tokens": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Total tokens consumed"
     },
     "status_code": {
-      "type": "integer"
+      "type": "integer",
+      "description": "HTTP status code returned by upstream provider or gateway"
     },
     "error_type": {
       "type": "string",
@@ -62,16 +190,19 @@
         "NETWORK_ERROR",
         "TIMEOUT",
         "PROVIDER_ERROR"
-      ]
+      ],
+      "description": "Canonical 7-class technical error category (empty on success)"
     },
     "error_message": {
-      "type": "string"
+      "type": "string",
+      "description": "Sanitized error message or technical diagnostic summary"
     },
     "quality_metrics": {
       "type": "object",
       "additionalProperties": {
         "type": "number"
-      }
+      },
+      "description": "Domain-specific numeric quality metrics map (0.0 to 1.0 recommended)"
     },
     "ttft_ms": {
       "type": "number",
@@ -81,16 +212,6 @@
     "tool_call_success": {
       "type": "boolean",
       "description": "Whether tool call execution was successful"
-    },
-    "retry_count": {
-      "type": "integer",
-      "minimum": 0,
-      "description": "Number of retries attempted"
-    },
-    "fallback_count": {
-      "type": "integer",
-      "minimum": 0,
-      "description": "Number of failover switches to next candidate"
     },
     "patch_applied": {
       "type": "boolean",

@@ -208,8 +208,9 @@ def test_samples():
     except jsonschema.ValidationError:
         pass
 
-    # 3. Test Feedback Payload Sample
-    sample_feedback = {
+    # 3. Test Feedback Payload Samples (STD-010 v1.3.0)
+    # 3.1 Legacy v1.2 payload (Backward compatibility)
+    sample_feedback_legacy = {
         "decision_id": "route-1774316000-sample",
         "consumer": "ai-kb",
         "task": "knowledge_distillation",
@@ -227,20 +228,131 @@ def test_samples():
             "citation_validity": 1.0
         }
     }
-    jsonschema.validate(instance=sample_feedback, schema=fb_schema)
+    jsonschema.validate(instance=sample_feedback_legacy, schema=fb_schema)
 
-    # Negative test: invalid error_type MUST fail
-    invalid_fb = {
+    # 3.2 Stage: execution (v1.3 canonical)
+    sample_fb_execution = {
+        "feedback_stage": "execution",
+        "observed_at": "2026-09-29T10:45:00Z",
+        "decision_id": "route-1790643768998",
+        "run_id": "run-distill-20260929-001",
+        "attempt": 1,
+        "idempotency_key": "ai-kb::run-distill-20260929-001::U1::local-cpa::qwen3-coder-next::1::execution",
+        "consumer": "ai-kb",
+        "task": "knowledge_distillation",
+        "metric_namespace": "ai-kb.knowledge_distillation.v1",
+        "model": "qwen3-coder-next",
+        "logical_model_id": "qwen3-coder-next",
+        "selected_model_id": "local-cpa::qwen3-coder-next",
+        "upstream_model_id": "qwen3-coder-next",
+        "resource_id": "local-cpa",
+        "channel": "local-cpa",
+        "source_unit_id": "U1",
+        "source_unit_hash": "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+        "execution_spec_hash": "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321",
+        "candidate_rank": 1,
+        "retry_count": 0,
+        "fallback_count": 0,
+        "success": True,
+        "latency_ms": 765.4,
+        "prompt_tokens": 1250,
+        "completion_tokens": 420,
+        "total_tokens": 1670,
+        "status_code": 200,
+        "error_type": "",
+        "quality_metrics": {
+            "knowledge_quality": 0.96,
+            "citation_validity": 1.0,
+            "answer_completeness": 0.92
+        }
+    }
+    jsonschema.validate(instance=sample_fb_execution, schema=fb_schema)
+
+    # 3.3 Stage: business_evaluation (Asynchronous automated domain evaluation)
+    sample_fb_biz_eval = {
+        "feedback_stage": "business_evaluation",
+        "observed_at": "2026-09-29T10:47:30Z",
+        "decision_id": "route-1790643768998",
+        "run_id": "run-distill-20260929-001",
+        "attempt": 1,
+        "idempotency_key": "ai-kb::run-distill-20260929-001::U1::local-cpa::qwen3-coder-next::1::business_evaluation",
+        "consumer": "ai-kb",
+        "task": "knowledge_distillation",
+        "metric_namespace": "ai-kb.knowledge_distillation.v1",
+        "model": "qwen3-coder-next",
+        "logical_model_id": "qwen3-coder-next",
+        "channel": "local-cpa",
+        "source_unit_id": "U1",
+        "source_unit_hash": "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+        "execution_spec_hash": "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321",
+        "evaluation_method": "combined",
+        "prompt_version": "v1.2.0",
+        "rubric_version": "kq-003",
+        "evaluation_confidence": 0.95,
+        "review_decision": "approved",
+        "review_reason_code": "",
+        "success": True,
+        "quality_metrics": {
+            "knowledge_quality": 0.96,
+            "citation_validity": 1.0,
+            "answer_completeness": 0.92,
+            "core_thesis_accuracy": 0.98,
+            "boundary_accuracy": 0.94
+        }
+    }
+    jsonschema.validate(instance=sample_fb_biz_eval, schema=fb_schema)
+
+    # 3.4 Stage: human_review (Human expert review outcome)
+    sample_fb_human_review = {
+        "feedback_stage": "human_review",
+        "observed_at": "2026-09-29T11:00:00Z",
+        "decision_id": "route-1790643768998",
+        "run_id": "run-distill-20260929-001",
+        "attempt": 1,
+        "idempotency_key": "ai-kb::run-distill-20260929-001::U1::local-cpa::qwen3-coder-next::1::human_review",
+        "consumer": "ai-kb",
+        "task": "knowledge_distillation",
+        "metric_namespace": "ai-kb.knowledge_distillation.v1",
+        "model": "qwen3-coder-next",
+        "logical_model_id": "qwen3-coder-next",
+        "channel": "local-cpa",
+        "source_unit_id": "U1",
+        "evaluation_method": "human",
+        "evaluation_confidence": 1.0,
+        "review_decision": "approved_with_note",
+        "review_reason_code": "minor_formatting_observation",
+        "success": True
+    }
+    jsonschema.validate(instance=sample_fb_human_review, schema=fb_schema)
+
+    # 3.5 Negative tests: invalid error_type MUST fail
+    invalid_fb_error = {
         "model": "qwen2.5:7b-instruct",
         "channel": "ollama",
         "success": False,
         "error_type": "UNKNOWN_CUSTOM_ERROR"
     }
     try:
-        jsonschema.validate(instance=invalid_fb, schema=fb_schema)
+        jsonschema.validate(instance=invalid_fb_error, schema=fb_schema)
         raise AssertionError("Failed negative test: invalid error_type was incorrectly accepted!")
     except jsonschema.ValidationError:
         pass  # Expected
+
+    # 3.6 Negative tests proving: consumer cannot submit raw content fields (Zero Content Storage Guardrail)
+    forbidden_content_samples = [
+        ("prompt", {"model": "qwen3-coder-next", "success": True, "prompt": "Translate this secret doc..."}),
+        ("response", {"model": "qwen3-coder-next", "success": True, "response": "Here is the confidential response..."}),
+        ("source_content", {"model": "qwen3-coder-next", "success": True, "source_content": "Sensitive document text..."}),
+        ("chunk_content", {"model": "qwen3-coder-next", "success": True, "chunk_content": "RAG chunk private text..."}),
+        ("document_text", {"model": "qwen3-coder-next", "success": True, "document_text": "Full article raw text..."}),
+        ("raw_metrics_string", {"model": "qwen3-coder-next", "success": True, "quality_metrics": {"analysis": "Non-numeric string"}})
+    ]
+    for forbidden_key, bad_payload in forbidden_content_samples:
+        try:
+            jsonschema.validate(instance=bad_payload, schema=fb_schema)
+            raise AssertionError(f"Failed negative test: forbidden content '{forbidden_key}' was accepted by schema!")
+        except jsonschema.ValidationError:
+            pass  # Expected
 
         # 4. Test Coding Gateway Schema Sample
     sample_gateway_payload = {
@@ -267,7 +379,7 @@ def test_samples():
     }
     jsonschema.validate(instance=sample_gateway_payload, schema=gw_schema)
 
-    print("Sample validation PASS: structures conform to Standards V1.2 specifications.")
+    print("Sample validation PASS: structures conform to Standards V1.3 specifications.")
     return True
 
 def main():

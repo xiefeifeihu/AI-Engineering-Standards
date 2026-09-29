@@ -5,10 +5,10 @@ Canonical engineering standards shared across local AI / Vibe Coding projects.
 本项目是开发机跨工程共享的架构标准规范库（Source of Truth），定义网络通信、推理资源共享、智能体接入、上下文管理与工程协作标准。
 
 ```text
-STANDARDS_VERSION=1.2.0
+STANDARDS_VERSION=1.3.0
 STATUS=RELEASED
 BASELINE=AI-ENGINEERING-PLATFORM-V1-001
-LAST_UPDATED=2026-09-28
+LAST_UPDATED=2026-09-29
 ```
 
 ---

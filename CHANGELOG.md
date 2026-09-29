@@ -2,6 +2,24 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [1.3.0] - 2026-09-29
+
+### Added
+- **STD-010: Model Feedback Contract v1.3.0 (AI-Hub-012-R1-FEEDBACK-CONTRACT-FREEZE)**:
+  - Codified multi-stage feedback lifecycle: `execution`, `business_evaluation`, and `human_review` stages.
+  - Formally established domain judgment ownership: consumers own business evaluation, Hub owns technical health memory and multi-tenant persistence.
+  - Added canonical `review_decision` enum (`approved`, `approved_with_note`, `rejected`, `revise`, `discard`, `execution_failed`, `not_reviewed`) and structured `review_reason_code`.
+  - Added `evaluation_method` enum (`deterministic`, `llm_judge`, `human`, `combined`, `unknown`).
+  - Added `metric_namespace` specification to isolate cross-consumer metric comparability.
+  - Decoupled `evaluation_confidence` (consumer single-event confidence) from Hub-computed `sample_confidence_level`.
+  - Aligned Hub and STD-009 sample confidence thresholds: 0=NONE, 1-9=LOW, 10-49=MEDIUM, 50+=HIGH.
+  - Added `source_unit_id`, `source_unit_hash` (content only), and `execution_spec_hash` (params only).
+  - Clarified model identities: `logical_model_id`, `selected_model_id`, `upstream_model_id`, `resource_id`.
+  - Fixed multi-stage idempotency collisions with stage-aware deduplication identity.
+  - Added `observed_at` (ISO-8601 UTC) for asynchronous evaluation and out-of-order tolerance.
+  - Enforced zero raw business content guardrail via `additionalProperties: false` in `schemas/model-feedback.schema.json`.
+  - Guaranteed business rejections never mutate technical failure counters or trigger circuit breakers.
+
 ## [1.2.0] - 2026-09-28
 
 ### Added
