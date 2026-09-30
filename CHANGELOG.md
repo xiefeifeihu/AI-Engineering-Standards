@@ -2,6 +2,17 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [1.4.0] - 2026-09-30
+
+### Added
+- **STD-022: Model Runtime Memory & Decay Governance (AI-Hub-012-R2-LONG-TERM-MODEL-MEMORY)**:
+  - Defined separation of **Raw Historical Facts (All-Time Memory)** and **Recent Effective Routing Memory**.
+  - Specified `observed_at` canonical exponential time decay ($w = 0.5^{\text{age}/\text{half\_life}}$) with configurable defaults (`technical_half_life_days = 7`, `business_quality_half_life_days = 30`) and out-of-order arrival safety.
+  - Defined strict 5-tuple L2 business quality isolation (`consumer`, `task`, `metric_namespace`, `logical_model_id`, `channel`) and namespace-internal aggregation (`namespace_specific_weighted` vs `neutral_mean_normalized`).
+  - Defined `effective_sample_weight` and effective governance confidence (`历史样本数`, `当前有效样本权重`, `当前治理置信度`).
+  - Defined `model_fingerprint`, `fingerprint_status` (`VERIFIED`/`已确认`, `PARTIAL`/`部分可识别`, `UNKNOWN`/`未知`), and `memory_epoch` with false-epoch prevention and cold-start neutral priors.
+  - Defined idempotent historical L2 memory rebuild from persisted L3 `model_invocations` without downstream consumer replay or L1 counter mutation.
+
 ## [1.3.0] - 2026-09-29
 
 ### Added
