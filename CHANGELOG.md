@@ -2,6 +2,18 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [1.5.0] - 2026-09-30
+
+### Added
+- **STD-023: Coding Agent Outcome Contract & Persistent Coding Task Memory (AI-Hub-013-R1-CODING-OUTCOME-CONTRACT)**:
+  - Strictly separated Layer 1 Model Invocation Feedback (`POST /api/model/feedback`) from Layer 2 Coding Agent Outcome (`POST /api/coding/outcome`).
+  - Defined canonical two-stage outcome lifecycle (`ATTEMPT_COMPLETED`, `INTEGRATION_DECISION`) and the core invariant: one `coding_attempt_id` equals exactly one Coding Memory sample.
+  - Defined Frozen Coding Candidate Plan contract (`POST /api/coding/candidate-plan`, `GET /api/coding/candidate-plan/{decision_id}`) and First Bake-Off fairness mode (`CODING_OUTCOME_RANKING_MODE=SHADOW_ONLY`).
+  - Enforced single-primary-model attribution (`SINGLE_PRIMARY_MODEL`) per independent coding attempt, authentic provenance (prohibiting fake strings such as `unknown`/`未验证`/`N/A`/`not_verified`), and zero raw source/patch/diff storage (`additionalProperties: false` in `schemas/coding-agent-outcome.schema.json`).
+  - Codified non-penalizing integration semantics (`task_outcome=COMPLETED` with `integration_selected=false` is valid and never penalizes completion capability or L1 health).
+  - Guaranteed strict isolation between Coding Outcome failures (`FAILED`/`PARTIAL`/`BLOCKED`), L1 technical health/circuit breakers, and non-coding L2 domain quality memories (`ai-kb`, `vtip-ai-sidecar`).
+  - Published durable handoff `handoff/SIDECAR-CODING-BAKEOFF-INTEGRATION-HANDOFF.md` for `SIDECAR-DEV-022`.
+
 ## [1.4.0] - 2026-09-30
 
 ### Added

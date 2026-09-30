@@ -1,0 +1,601 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-engineering-standards.local/schemas/coding-agent-outcome.schema.json",
+  "title": "Coding Agent Outcome Contract Schema (STD-023 v1.5.0)",
+  "description": "Canonical schema for Layer 2 Coding Agent Outcome submissions (POST /api/coding/outcome). Strictly separated from Layer 1 Model Invocation Feedback (POST /api/model/feedback). Enforces one-attempt-one-sample semantics, zero raw source/patch storage, and authentic provenance.",
+  "type": "object",
+  "required": [
+    "consumer",
+    "repo_id",
+    "task_id",
+    "agent_run_id",
+    "coding_attempt_id"
+  ],
+  "definitions": {
+    "authenticNullableString": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "not": {
+        "enum": [
+          "unknown",
+          "UNKNOWN",
+          "Unknown",
+          "未验证",
+          "未知",
+          "N/A",
+          "n/a",
+          "not_verified",
+          "NOT_VERIFIED",
+          "none",
+          "NONE",
+          "null",
+          "NULL"
+        ]
+      }
+    }
+  },
+  "properties": {
+    "outcome_stage": {
+      "type": "string",
+      "enum": [
+        "ATTEMPT_COMPLETED",
+        "INTEGRATION_DECISION"
+      ],
+      "default": "ATTEMPT_COMPLETED",
+      "description": "Outcome lifecycle stage. ATTEMPT_COMPLETED records the engineering result of one independent coding attempt; INTEGRATION_DECISION updates integration_selected and final delivery metadata for the same coding_attempt_id without creating a second sample."
+    },
+    "idempotency_key": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Deterministic stage-aware deduplication key. Defaults to {consumer}::{repo_id}::{task_id}::{agent_run_id}::{coding_attempt_id}::{outcome_stage}."
+    },
+    "observed_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 10,
+      "maxLength": 64,
+      "description": "Canonical ISO-8601 UTC timestamp when the coding outcome was observed (e.g. 2026-09-30T08:00:00Z). Defaults to server UTC ingestion time if omitted."
+    },
+    "consumer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "not": {
+        "enum": [
+          "unknown",
+          "UNKNOWN",
+          "未验证",
+          "未知",
+          "N/A",
+          "n/a",
+          "not_verified"
+        ]
+      },
+      "description": "Authoritative consumer project or orchestrator identity (e.g. vtip-ai-sidecar, claude-code, opencode, ai-hub)."
+    },
+    "coding_client": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Coding agent client or harness (e.g. claude-code, opencode, codex, sidecar-bakeoff-runner)."
+    },
+    "repo_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "not": {
+        "enum": [
+          "unknown",
+          "UNKNOWN",
+          "未验证",
+          "未知",
+          "N/A",
+          "n/a",
+          "not_verified"
+        ]
+      },
+      "description": "Target repository identifier (e.g. vtip-ai-sidecar, ai-engineering-hub)."
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "description": "Engineering task identifier (e.g. SIDECAR-DEV-022)."
+    },
+    "agent_run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "description": "Unique identifier for the agent orchestration run."
+    },
+    "coding_attempt_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "description": "Unique identifier for one independent coding attempt. One coding_attempt_id equals exactly ONE Coding Memory sample."
+    },
+    "parent_attempt_id": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Optional reference to a prior coding_attempt_id when this attempt is a separate repair attempt."
+    },
+    "attribution_mode": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "SINGLE_PRIMARY_MODEL",
+        null
+      ],
+      "default": "SINGLE_PRIMARY_MODEL",
+      "description": "Attribution policy for the attempt. R1 enforces SINGLE_PRIMARY_MODEL per independent coding attempt."
+    },
+    "base_commit": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Authentic Git base commit SHA before the coding attempt."
+    },
+    "result_commit": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Authentic Git commit SHA produced by the coding attempt when committed."
+    },
+    "task_profile": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "bugfix",
+        "feature_implementation",
+        "refactor",
+        "test_writing",
+        "ui_playwright",
+        "governance_contract",
+        "repo_exploration",
+        "general_coding",
+        null
+      ],
+      "default": "general_coding",
+      "description": "Canonical coding task profile for fine-grained Coding Memory partitioning."
+    },
+    "repo_stack": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Repository technology stack identifier (e.g. python_fastapi, python_playwright, typescript_node)."
+    },
+    "decision_id": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Routing decision_id or frozen candidate_plan_id from Hub."
+    },
+    "candidate_plan_id": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Explicit frozen Coding Candidate Plan identifier when evaluating Bake-Off candidates."
+    },
+    "candidate_rank": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "description": "1-based candidate rank within the Candidate Plan."
+    },
+    "virtual_model": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Coding Gateway virtual model if invoked through Gateway (e.g. hub-code-auto, hub-code-deep)."
+    },
+    "logical_model_id": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Canonical primary logical model ID for this independent coding attempt (e.g. qwen3-coder-next, gpt-5.4)."
+    },
+    "selected_model_id": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Channel-prefixed selected model identifier (e.g. local-cpa::qwen3-coder-next)."
+    },
+    "upstream_model_id": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Verified upstream model identifier returned by provider when authoritative. Omit or null if unverified."
+    },
+    "upstream_provider": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Authoritative upstream provider name when verified (e.g. Alibaba, OpenAI). Omit or null if unverified."
+    },
+    "channel": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Execution channel (e.g. local-cpa, cloud-cpa, ollama)."
+    },
+    "resource_id": {
+      "$ref": "#/definitions/authenticNullableString",
+      "description": "Canonical shared inference resource identifier (e.g. local-cpa, cloud-cpa, local-ollama)."
+    },
+    "patch_created": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether the coding attempt produced a patch or code modification."
+    },
+    "patch_parse_success": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether the generated patch/edit blocks parsed cleanly without format errors."
+    },
+    "patch_apply_success": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether the patch/changes applied cleanly to the working tree."
+    },
+    "patch_hash": {
+      "$ref": "#/definitions/authenticNullableString",
+      "maxLength": 160,
+      "description": "SHA-256 digest of the normalized patch. Raw patch/diff text MUST NOT be submitted."
+    },
+    "files_changed_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Number of files modified in the attempt."
+    },
+    "lines_added": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Total lines added in the attempt."
+    },
+    "lines_deleted": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Total lines deleted in the attempt."
+    },
+    "syntax_check_run": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether syntax check (e.g. py_compile / AST parse) was executed."
+    },
+    "syntax_check_pass": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether syntax check passed. Null if not executed."
+    },
+    "lint_run": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether linter was executed."
+    },
+    "lint_pass": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether linter passed. Null if not executed."
+    },
+    "typecheck_run": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether static type check was executed."
+    },
+    "typecheck_pass": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether static type check passed. Null if not executed."
+    },
+    "targeted_tests_run": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Number of targeted unit/feature tests executed. Null if not run."
+    },
+    "targeted_tests_passed": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Number of targeted tests that passed. Null if not run."
+    },
+    "targeted_tests_failed": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Number of targeted tests that failed. Null if not run."
+    },
+    "core_regression_run": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Number of core regression tests executed. Null if not run."
+    },
+    "core_regression_passed": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Number of core regression tests that passed. Null if not run."
+    },
+    "core_regression_failed": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Number of core regression tests that failed. Null if not run."
+    },
+    "build_run": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether build/packaging verification was executed."
+    },
+    "build_pass": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether build/packaging passed. Null if not executed."
+    },
+    "browser_acceptance_run": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether Playwright/browser UI acceptance was executed."
+    },
+    "browser_acceptance_pass": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether Playwright/browser UI acceptance passed. Null if not executed."
+    },
+    "acceptance_gates_total": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Total number of acceptance gates evaluated. Null if not evaluated."
+    },
+    "acceptance_gates_passed": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Number of acceptance gates that passed. Null if not evaluated."
+    },
+    "task_outcome": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "COMPLETED",
+        "PARTIAL",
+        "FAILED",
+        "BLOCKED",
+        null
+      ],
+      "description": "Canonical engineering outcome of the coding attempt."
+    },
+    "failure_stage": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "MODEL_INVOCATION_FAILED",
+        "NO_PATCH_PRODUCED",
+        "PATCH_PARSE_FAILED",
+        "PATCH_APPLY_FAILED",
+        "SYNTAX_CHECK_FAILED",
+        "LINT_FAILED",
+        "TYPECHECK_FAILED",
+        "TARGETED_TEST_FAILED",
+        "REGRESSION_FAILED",
+        "BUILD_FAILED",
+        "ACCEPTANCE_FAILED",
+        "SECURITY_REJECTED",
+        "",
+        null
+      ],
+      "description": "Structured stage where failure or partial stop occurred. Null or empty when task_outcome=COMPLETED."
+    },
+    "failure_reason_code": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "Structured machine-readable failure reason code (e.g. assertion_error_in_targeted_test). Never store raw code or stack dumps."
+    },
+    "integration_selected": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether this candidate attempt was selected for final branch integration. Null when integration decision has not yet occurred. task_outcome=COMPLETED with integration_selected=false is valid and non-penalizing."
+    },
+    "generation_latency_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Total LLM generation latency in milliseconds when accurately measurable."
+    },
+    "wall_time_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Total end-to-end wall clock time for the coding attempt in milliseconds."
+    },
+    "model_call_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Number of LLM API requests made during this coding attempt."
+    },
+    "tool_call_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Number of agent tool calls executed during this coding attempt."
+    },
+    "repair_rounds": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Number of self-repair rounds within the same primary model attempt."
+    },
+    "retry_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Number of transport/invocation retries during the attempt."
+    },
+    "human_intervention_required": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether manual human intervention was required during the attempt."
+    },
+    "human_intervention_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Number of manual human interventions required."
+    },
+    "commit_created": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether a Git commit was created for this attempt."
+    },
+    "git_clean": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether the Git working tree was clean after completion."
+    },
+    "remote_push_performed": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether the commit was pushed to a remote repository."
+    },
+    "acceptance_pass": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether overall task acceptance passed."
+    },
+    "task_complete": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether the overall task was marked complete."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome_stage": {
+            "const": "ATTEMPT_COMPLETED"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "logical_model_id",
+          "task_outcome"
+        ],
+        "properties": {
+          "logical_model_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "task_outcome": {
+            "type": "string",
+            "enum": [
+              "COMPLETED",
+              "PARTIAL",
+              "FAILED",
+              "BLOCKED"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome_stage": {
+            "const": "INTEGRATION_DECISION"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "integration_selected"
+        ],
+        "properties": {
+          "integration_selected": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

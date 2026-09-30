@@ -379,7 +379,92 @@ def test_samples():
     }
     jsonschema.validate(instance=sample_gateway_payload, schema=gw_schema)
 
-    print("Sample validation PASS: structures conform to Standards V1.3 specifications.")
+    with open(SCHEMAS_DIR / "coding-agent-outcome.schema.json", "r", encoding="utf-8") as f:
+        outcome_schema = json.load(f)
+
+    # 5. Test Coding Agent Outcome Schema (STD-023 v1.5.0)
+    sample_outcome_attempt = {
+        "outcome_stage": "ATTEMPT_COMPLETED",
+        "observed_at": "2026-09-30T08:00:00Z",
+        "consumer": "vtip-ai-sidecar",
+        "coding_client": "claude-code",
+        "repo_id": "vtip-ai-sidecar",
+        "repo_stack": "python_fastapi",
+        "task_id": "SIDECAR-DEV-022",
+        "task_profile": "feature_implementation",
+        "agent_run_id": "run-bakeoff-001",
+        "coding_attempt_id": "attempt-cand-a-001",
+        "decision_id": "code-plan-1790000001",
+        "candidate_rank": 1,
+        "virtual_model": "hub-code-auto",
+        "logical_model_id": "qwen3-coder-next",
+        "selected_model_id": "local-cpa::qwen3-coder-next",
+        "upstream_model_id": None,
+        "upstream_provider": None,
+        "channel": "local-cpa",
+        "resource_id": "local-cpa",
+        "base_commit": "abc1234",
+        "patch_created": True,
+        "patch_parse_success": True,
+        "patch_apply_success": True,
+        "patch_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "files_changed_count": 2,
+        "lines_added": 45,
+        "lines_deleted": 8,
+        "syntax_check_run": True,
+        "syntax_check_pass": True,
+        "targeted_tests_run": 5,
+        "targeted_tests_passed": 5,
+        "targeted_tests_failed": 0,
+        "core_regression_run": 30,
+        "core_regression_passed": 30,
+        "core_regression_failed": 0,
+        "browser_acceptance_run": True,
+        "browser_acceptance_pass": True,
+        "acceptance_gates_total": 4,
+        "acceptance_gates_passed": 4,
+        "task_outcome": "COMPLETED",
+        "integration_selected": False,
+        "wall_time_ms": 32400.0,
+        "model_call_count": 3,
+        "tool_call_count": 6,
+        "repair_rounds": 0
+    }
+    jsonschema.validate(instance=sample_outcome_attempt, schema=outcome_schema)
+
+    sample_outcome_integration = {
+        "outcome_stage": "INTEGRATION_DECISION",
+        "consumer": "vtip-ai-sidecar",
+        "repo_id": "vtip-ai-sidecar",
+        "task_id": "SIDECAR-DEV-022",
+        "agent_run_id": "run-bakeoff-001",
+        "coding_attempt_id": "attempt-cand-a-001",
+        "integration_selected": True,
+        "commit_created": True,
+        "result_commit": "def5678",
+        "git_clean": True,
+        "acceptance_pass": True,
+        "task_complete": True
+    }
+    jsonschema.validate(instance=sample_outcome_integration, schema=outcome_schema)
+
+    # Negative tests for STD-023: raw patch/source/fake identity MUST fail
+    bad_outcome_samples = [
+        ("raw_patch", dict(sample_outcome_attempt, patch="diff --git a/app.py b/app.py")),
+        ("raw_diff", dict(sample_outcome_attempt, diff="@@ -1,3 +1,3 @@")),
+        ("source_code", dict(sample_outcome_attempt, source_code="def secret(): pass")),
+        ("fake_upstream_unknown", dict(sample_outcome_attempt, upstream_model_id="unknown")),
+        ("fake_upstream_unverified_zh", dict(sample_outcome_attempt, upstream_provider="未验证")),
+        ("fake_commit_na", dict(sample_outcome_attempt, result_commit="N/A")),
+    ]
+    for label, bad_instance in bad_outcome_samples:
+        try:
+            jsonschema.validate(instance=bad_instance, schema=outcome_schema)
+            raise AssertionError(f"Failed negative test for STD-023: '{label}' was accepted!")
+        except jsonschema.ValidationError:
+            pass
+
+    print("Sample validation PASS: structures conform to Standards V1.5 specifications.")
     return True
 
 def main():

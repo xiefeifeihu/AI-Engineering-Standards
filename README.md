@@ -1,14 +1,14 @@
-# AI Engineering Standards (V1.0.0)
+# AI Engineering Standards (V1.5.0)
 
 Canonical engineering standards shared across local AI / Vibe Coding projects.
 
 本项目是开发机跨工程共享的架构标准规范库（Source of Truth），定义网络通信、推理资源共享、智能体接入、上下文管理与工程协作标准。
 
 ```text
-STANDARDS_VERSION=1.4.0
+STANDARDS_VERSION=1.5.0
 STATUS=RELEASED
 BASELINE=AI-ENGINEERING-PLATFORM-V1-001
-LAST_UPDATED=2026-09-29
+LAST_UPDATED=2026-09-30
 ```
 
 ---
@@ -38,12 +38,14 @@ LAST_UPDATED=2026-09-29
 | [`STD-019`](./standards/15-artifact-hygiene/STD-019-Artifact-Workspace-Hygiene.md) | **Artifact & Workspace Hygiene** | 六分类交付物管理、.artifacts 目录与清理规范 |
 | [`STD-020`](./standards/16-handoff/STD-020-Cross-Session-Handoff.md) | **Cross-Session Handoff Standard** | 会话持久化交接标准与跨工程隔离规范 |
 | [`STD-021`](./standards/08-model-governance/STD-021-coding-agent-gateway-contract.md) | **Coding Agent Gateway Contract** | 虚拟模型、双协议接入、透明故障转移与编程会话粘性 |
+| [`STD-022`](./standards/08-model-governance/STD-022-model-runtime-memory-and-decay-governance.md) | **Model Runtime Memory & Decay Governance** | 全量历史与近期衰减路由记忆解耦、模型指纹与 Epoch 治理 |
+| [`STD-023`](./standards/08-model-governance/STD-023-coding-agent-outcome-contract.md) | **Coding Agent Outcome Contract** | 编程智能体任务级工程结果契约、持久化编码任务记忆与 Bake-Off 公平治理 |
 
 ---
 
 ## 2. 机器可读 JSON Schemas (`schemas/`)
 
-规范库提供 10 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
+规范库提供 11 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
 - `schemas/engineering-manifest.schema.json`
 - `schemas/resource.schema.json`
 - `schemas/endpoint.schema.json`
@@ -54,6 +56,7 @@ LAST_UPDATED=2026-09-29
 - `schemas/model-feedback.schema.json`
 - `schemas/audit-event.schema.json`
 - `schemas/coding-gateway.schema.json`
+- `schemas/coding-agent-outcome.schema.json`
 
 ---
 
@@ -61,6 +64,7 @@ LAST_UPDATED=2026-09-29
 
 - [`AI-KB 模型治理接入交接指南`](./handoff/AI-KB-Model-Governance-Integration-Handoff.md)
 - [`Sidecar 模型治理接入交接指南`](./handoff/Sidecar-Model-Governance-Integration-Handoff.md)
+- [`Sidecar 首次真实编码 Bake-Off 平台接入交接指南`](./handoff/SIDECAR-CODING-BAKEOFF-INTEGRATION-HANDOFF.md)
 - [`VTIP 模型治理架构交接指南`](./handoff/VTIP-Model-Governance-Architecture-Handoff.md)
 
 ---
