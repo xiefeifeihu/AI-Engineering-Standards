@@ -668,6 +668,12 @@
         },
         "reason": {
           "type": "string"
+        },
+        "owner_action_contract_defined": {
+          "type": "boolean"
+        },
+        "owner_action_execution_implemented": {
+          "type": "boolean"
         }
       },
       "required": [
