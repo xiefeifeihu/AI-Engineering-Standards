@@ -1,0 +1,594 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-engineering-standards.local/schemas/model-ops-autopilot.schema.json",
+  "title": "Model Ops Autopilot Governance Contract Schema (STD-024 v1.6.0)",
+  "description": "Canonical schema for Model Ops Autopilot foundation: self-discovery observations, low-cost capability verification, deterministic lifecycle transitions, explainable shadow/challenger recommendations, and future owner action request envelopes.",
+  "type": "object",
+  "required": [
+    "record_type"
+  ],
+  "definitions": {
+    "authenticNullableString": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "not": {
+        "enum": [
+          "unknown",
+          "UNKNOWN",
+          "Unknown",
+          "未验证",
+          "未知",
+          "N/A",
+          "n/a",
+          "not_verified",
+          "NOT_VERIFIED",
+          "none",
+          "NONE",
+          "null",
+          "NULL"
+        ]
+      }
+    },
+    "lifecycleState": {
+      "type": "string",
+      "enum": [
+        "DISCOVERED",
+        "PROBE_VERIFIED",
+        "CHALLENGER",
+        "SHADOW",
+        "PRODUCTION_ELIGIBLE",
+        "TEMP_UNAVAILABLE",
+        "QUARANTINED",
+        "REJECTED"
+      ]
+    },
+    "capabilityDimension": {
+      "type": "string",
+      "enum": [
+        "text_generation",
+        "reasoning",
+        "coding",
+        "agent_tool_use",
+        "agent_loop",
+        "structured_output",
+        "embedding",
+        "vision",
+        "long_context"
+      ]
+    },
+    "executionPurpose": {
+      "type": "string",
+      "enum": [
+        "USER",
+        "RECOVERY_PROBE",
+        "CAPABILITY_PROBE",
+        "SHADOW_EVALUATION"
+      ]
+    }
+  },
+  "properties": {
+    "record_type": {
+      "type": "string",
+      "enum": [
+        "DISCOVERY_OBSERVATION",
+        "CAPABILITY_PROBE",
+        "LIFECYCLE_TRANSITION",
+        "PROMOTION_RECOMMENDATION",
+        "OWNER_ACTION_REQUEST"
+      ]
+    }
+  },
+  "not": {
+    "anyOf": [
+      {
+        "required": [
+          "api_key"
+        ]
+      },
+      {
+        "required": [
+          "token"
+        ]
+      },
+      {
+        "required": [
+          "password"
+        ]
+      },
+      {
+        "required": [
+          "prompt_body"
+        ]
+      },
+      {
+        "required": [
+          "response_body"
+        ]
+      },
+      {
+        "required": [
+          "source_code"
+        ]
+      },
+      {
+        "required": [
+          "patch"
+        ]
+      },
+      {
+        "required": [
+          "document_content"
+        ]
+      }
+    ]
+  },
+  "oneOf": [
+    {
+      "title": "Discovery Observation Record",
+      "properties": {
+        "record_type": {
+          "const": "DISCOVERY_OBSERVATION"
+        },
+        "logical_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selected_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "upstream_model_id": {
+          "$ref": "#/definitions/authenticNullableString"
+        },
+        "resource_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string",
+          "enum": [
+            "local-cpa",
+            "cloud-cpa",
+            "ollama",
+            "direct"
+          ]
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "upstream_provider": {
+          "$ref": "#/definitions/authenticNullableString"
+        },
+        "provenance_status": {
+          "type": "string",
+          "enum": [
+            "LOCAL_RUNTIME",
+            "CLOUD_TUNNEL",
+            "DIRECT_PROVIDER",
+            "UNVERIFIED"
+          ]
+        },
+        "provenance_source": {
+          "type": "string",
+          "enum": [
+            "OWNER_MANIFEST",
+            "LOCAL_RUNTIME_ENGINE",
+            "ENDPOINT_REGISTRY",
+            "UNVERIFIED"
+          ]
+        },
+        "first_seen_at": {
+          "type": "string"
+        },
+        "last_seen_at": {
+          "type": "string"
+        },
+        "discovery_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "availability": {
+          "type": "string",
+          "enum": [
+            "AVAILABLE",
+            "DISAPPEARED",
+            "AUTH_REQUIRED",
+            "STOPPED",
+            "ERROR"
+          ]
+        },
+        "model_fingerprint": {
+          "$ref": "#/definitions/authenticNullableString"
+        },
+        "capability_state": {
+          "type": "string",
+          "enum": [
+            "UNKNOWN",
+            "DECLARED",
+            "VERIFIED"
+          ]
+        },
+        "lifecycle_state": {
+          "$ref": "#/definitions/lifecycleState"
+        }
+      },
+      "required": [
+        "record_type",
+        "logical_model_id",
+        "resource_id",
+        "channel",
+        "owner",
+        "first_seen_at",
+        "last_seen_at",
+        "discovery_generation",
+        "availability",
+        "lifecycle_state"
+      ]
+    },
+    {
+      "title": "Capability Probe Record",
+      "properties": {
+        "record_type": {
+          "const": "CAPABILITY_PROBE"
+        },
+        "probe_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logical_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "probe_level": {
+          "type": "string",
+          "enum": [
+            "L0_DISCOVERY",
+            "L1_INFERENCE",
+            "L2_STRUCTURED_TOOL",
+            "L3_AGENT_LOOP"
+          ]
+        },
+        "capability_dimension": {
+          "$ref": "#/definitions/capabilityDimension"
+        },
+        "execution_purpose": {
+          "$ref": "#/definitions/executionPurpose"
+        },
+        "probe_status": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "FAIL",
+            "SKIPPED",
+            "RATE_LIMITED",
+            "BACKOFF_ACTIVE"
+          ]
+        },
+        "latency_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "tokens_used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "error_type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "QUOTA_EXHAUSTED",
+            "TIMEOUT",
+            "HTTP_ERROR",
+            "PROTOCOL_ERROR",
+            "TOOL_USE_MISMATCH",
+            "AGENT_LOOP_FAILED",
+            "BACKOFF_HONORED",
+            null
+          ]
+        }
+      },
+      "required": [
+        "record_type",
+        "probe_id",
+        "logical_model_id",
+        "channel",
+        "probe_level",
+        "capability_dimension",
+        "execution_purpose",
+        "probe_status",
+        "observed_at"
+      ]
+    },
+    {
+      "title": "Lifecycle State Transition Record",
+      "properties": {
+        "record_type": {
+          "const": "LIFECYCLE_TRANSITION"
+        },
+        "transition_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logical_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from_state": {
+          "type": "string",
+          "enum": [
+            "INITIAL",
+            "DISCOVERED",
+            "PROBE_VERIFIED",
+            "CHALLENGER",
+            "SHADOW",
+            "PRODUCTION_ELIGIBLE",
+            "TEMP_UNAVAILABLE",
+            "QUARANTINED",
+            "REJECTED"
+          ]
+        },
+        "to_state": {
+          "$ref": "#/definitions/lifecycleState"
+        },
+        "reason_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_type": {
+          "type": "string",
+          "enum": [
+            "CATALOG_DISCOVERY",
+            "PROBE_RUN",
+            "HEALTH_TELEMETRY",
+            "EVALUATION_METRIC",
+            "CIRCUIT_BREAKER",
+            "EXPONENTIAL_BACKOFF",
+            "OPERATOR_OVERRIDE"
+          ]
+        },
+        "evidence_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "algorithm_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "record_type",
+        "transition_id",
+        "logical_model_id",
+        "channel",
+        "from_state",
+        "to_state",
+        "reason_code",
+        "evidence_type",
+        "evidence_ref",
+        "observed_at",
+        "algorithm_version"
+      ]
+    },
+    {
+      "title": "Promotion / Demotion Recommendation Record",
+      "properties": {
+        "record_type": {
+          "const": "PROMOTION_RECOMMENDATION"
+        },
+        "recommendation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logical_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "consumer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capability": {
+          "$ref": "#/definitions/capabilityDimension"
+        },
+        "enforcement_mode": {
+          "type": "string",
+          "enum": [
+            "SHADOW_ONLY"
+          ]
+        },
+        "current_state": {
+          "$ref": "#/definitions/lifecycleState"
+        },
+        "recommended_state": {
+          "$ref": "#/definitions/lifecycleState"
+        },
+        "promotion_recommended": {
+          "type": "boolean"
+        },
+        "demotion_recommended": {
+          "type": "boolean"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recent_success_rate": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "technical_failure_rate": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "latency_p50": {
+          "type": "number",
+          "minimum": 0
+        },
+        "latency_p95": {
+          "type": "number",
+          "minimum": 0
+        },
+        "component_reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "metric_name",
+              "threshold",
+              "observed_value",
+              "pass",
+              "reason_cn"
+            ],
+            "properties": {
+              "metric_name": {
+                "type": "string"
+              },
+              "threshold": {
+                "type": [
+                  "number",
+                  "string",
+                  "boolean"
+                ]
+              },
+              "observed_value": {
+                "type": [
+                  "number",
+                  "string",
+                  "boolean",
+                  "null"
+                ]
+              },
+              "pass": {
+                "type": "boolean"
+              },
+              "reason_cn": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "required": [
+        "record_type",
+        "recommendation_id",
+        "logical_model_id",
+        "channel",
+        "consumer",
+        "task_family",
+        "capability",
+        "enforcement_mode",
+        "current_state",
+        "recommended_state",
+        "promotion_recommended",
+        "demotion_recommended",
+        "confidence",
+        "sample_count",
+        "component_reasons"
+      ]
+    },
+    {
+      "title": "Owner Action Request Record",
+      "properties": {
+        "record_type": {
+          "const": "OWNER_ACTION_REQUEST"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action_type": {
+          "type": "string",
+          "enum": [
+            "OLLAMA_PULL_MODEL",
+            "OLLAMA_REMOVE_MODEL",
+            "CPA_CANARY_UPGRADE",
+            "CPA_RESTART",
+            "CPA_ROLLBACK"
+          ]
+        },
+        "owner": {
+          "type": "string",
+          "const": "AI-KB"
+        },
+        "target_resource": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requested_by": {
+          "type": "string",
+          "const": "AI-Engineering-Hub"
+        },
+        "requested_at": {
+          "type": "string"
+        },
+        "execution_implemented": {
+          "type": "boolean",
+          "const": false
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "REQUESTED",
+            "ACKNOWLEDGED",
+            "EXECUTING",
+            "COMPLETED",
+            "REJECTED",
+            "FAILED"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "request_id",
+        "action_type",
+        "owner",
+        "target_resource",
+        "requested_by",
+        "requested_at",
+        "execution_implemented",
+        "status",
+        "reason"
+      ]
+    }
+  ]
+}

@@ -464,7 +464,130 @@ def test_samples():
         except jsonschema.ValidationError:
             pass
 
-    print("Sample validation PASS: structures conform to Standards V1.5 specifications.")
+    # 6. Test Model Ops Autopilot Schema (STD-024 v1.6.0)
+    with open(SCHEMAS_DIR / "model-ops-autopilot.schema.json", "r", encoding="utf-8") as f:
+        autopilot_schema = json.load(f)
+
+    # 6.1 Sample Discovery Observation
+    sample_autopilot_discovery = {
+        "record_type": "DISCOVERY_OBSERVATION",
+        "logical_model_id": "qwen3-coder-plus",
+        "selected_model_id": "local-cpa::qwen3-coder-plus",
+        "upstream_model_id": None,
+        "resource_id": "local-cpa",
+        "channel": "local-cpa",
+        "owner": "AI-KB",
+        "upstream_provider": None,
+        "provenance_status": "LOCAL_RUNTIME",
+        "provenance_source": "ENDPOINT_REGISTRY",
+        "first_seen_at": "2026-10-06T10:00:00Z",
+        "last_seen_at": "2026-10-06T12:00:00Z",
+        "discovery_generation": 1,
+        "availability": "AVAILABLE",
+        "model_fingerprint": None,
+        "capability_state": "VERIFIED",
+        "lifecycle_state": "PROBE_VERIFIED"
+    }
+    jsonschema.validate(instance=sample_autopilot_discovery, schema=autopilot_schema)
+
+    # 6.2 Sample Capability Probe
+    sample_autopilot_probe = {
+        "record_type": "CAPABILITY_PROBE",
+        "probe_id": "probe-l1-001",
+        "logical_model_id": "qwen3-coder-plus",
+        "channel": "local-cpa",
+        "probe_level": "L1_INFERENCE",
+        "capability_dimension": "coding",
+        "execution_purpose": "CAPABILITY_PROBE",
+        "probe_status": "PASS",
+        "latency_ms": 320.0,
+        "tokens_used": 15,
+        "observed_at": "2026-10-06T12:00:01Z",
+        "error_type": None
+    }
+    jsonschema.validate(instance=sample_autopilot_probe, schema=autopilot_schema)
+
+    # 6.3 Sample Lifecycle Transition
+    sample_autopilot_transition = {
+        "record_type": "LIFECYCLE_TRANSITION",
+        "transition_id": "trans-001",
+        "logical_model_id": "qwen3-coder-plus",
+        "channel": "local-cpa",
+        "from_state": "DISCOVERED",
+        "to_state": "PROBE_VERIFIED",
+        "reason_code": "PROBE_L1_INFERENCE_PASS",
+        "evidence_type": "PROBE_RUN",
+        "evidence_ref": "probe-l1-001",
+        "observed_at": "2026-10-06T12:00:02Z",
+        "algorithm_version": "v0.11.0"
+    }
+    jsonschema.validate(instance=sample_autopilot_transition, schema=autopilot_schema)
+
+    # 6.4 Sample Promotion Recommendation
+    sample_autopilot_recommendation = {
+        "record_type": "PROMOTION_RECOMMENDATION",
+        "recommendation_id": "rec-001",
+        "logical_model_id": "qwen3-coder-plus",
+        "channel": "local-cpa",
+        "consumer": "claude-code",
+        "task_family": "coding",
+        "capability": "agent_loop",
+        "enforcement_mode": "SHADOW_ONLY",
+        "current_state": "CHALLENGER",
+        "recommended_state": "SHADOW",
+        "promotion_recommended": True,
+        "demotion_recommended": False,
+        "confidence": 0.95,
+        "sample_count": 25,
+        "recent_success_rate": 0.98,
+        "technical_failure_rate": 0.02,
+        "latency_p50": 850.0,
+        "latency_p95": 1420.0,
+        "component_reasons": [
+            {
+                "metric_name": "agent_loop_pass",
+                "threshold": True,
+                "observed_value": True,
+                "pass": True,
+                "reason_cn": "Claude Code 2轮工具闭环验证通过"
+            }
+        ]
+    }
+    jsonschema.validate(instance=sample_autopilot_recommendation, schema=autopilot_schema)
+
+    # 6.5 Sample Owner Action Request (Contract Only)
+    sample_autopilot_action = {
+        "record_type": "OWNER_ACTION_REQUEST",
+        "request_id": "act-req-001",
+        "action_type": "OLLAMA_PULL_MODEL",
+        "owner": "AI-KB",
+        "target_resource": "ollama",
+        "requested_by": "AI-Engineering-Hub",
+        "requested_at": "2026-10-06T12:00:03Z",
+        "execution_implemented": False,
+        "parameters": {"model_name": "qwen2.5:14b-instruct"},
+        "status": "REQUESTED",
+        "reason": "Challenger candidate identified for coding experiments"
+    }
+    jsonschema.validate(instance=sample_autopilot_action, schema=autopilot_schema)
+
+    # 6.6 Negative tests: forbidden secrets/content and unverified upstream provider guessing
+    bad_autopilot_samples = [
+        ("has_api_key", dict(sample_autopilot_probe, api_key="sk-secret")),
+        ("has_token", dict(sample_autopilot_probe, token="bearer-token")),
+        ("has_prompt_body", dict(sample_autopilot_probe, prompt_body="secret prompt")),
+        ("has_response_body", dict(sample_autopilot_probe, response_body="secret response")),
+        ("fake_upstream_provider", dict(sample_autopilot_discovery, upstream_provider="unknown")),
+        ("fake_provider_zh", dict(sample_autopilot_discovery, upstream_provider="未验证")),
+    ]
+    for label, bad_item in bad_autopilot_samples:
+        try:
+            jsonschema.validate(instance=bad_item, schema=autopilot_schema)
+            raise AssertionError(f"Failed negative test for STD-024: '{label}' was accepted!")
+        except jsonschema.ValidationError:
+            pass
+
+    print("Sample validation PASS: structures conform to Standards V1.6 specifications.")
     return True
 
 def main():
