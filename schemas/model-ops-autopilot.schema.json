@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://ai-engineering-standards.local/schemas/model-ops-autopilot.schema.json",
-  "title": "Model Ops Autopilot Governance Contract Schema (STD-024 v1.6.0)",
+  "title": "Model Ops Autopilot Governance Contract Schema (STD-024 v1.6.1)",
   "description": "Canonical schema for Model Ops Autopilot foundation: self-discovery observations, low-cost capability verification, deterministic lifecycle transitions, explainable shadow/challenger recommendations, and future owner action request envelopes.",
   "type": "object",
   "required": [
@@ -66,6 +66,72 @@
         "CAPABILITY_PROBE",
         "SHADOW_EVALUATION"
       ]
+    },
+    "forbiddenSensitiveFields": {
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "api_key"
+            ]
+          },
+          {
+            "required": [
+              "token"
+            ]
+          },
+          {
+            "required": [
+              "password"
+            ]
+          },
+          {
+            "required": [
+              "secret"
+            ]
+          },
+          {
+            "required": [
+              "bearer"
+            ]
+          },
+          {
+            "required": [
+              "oauth_token"
+            ]
+          },
+          {
+            "required": [
+              "ssh_private_key"
+            ]
+          },
+          {
+            "required": [
+              "prompt_body"
+            ]
+          },
+          {
+            "required": [
+              "response_body"
+            ]
+          },
+          {
+            "required": [
+              "source_code"
+            ]
+          },
+          {
+            "required": [
+              "patch"
+            ]
+          },
+          {
+            "required": [
+              "document_content"
+            ]
+          }
+        ]
+      }
     }
   },
   "properties": {
@@ -95,6 +161,26 @@
       {
         "required": [
           "password"
+        ]
+      },
+      {
+        "required": [
+          "secret"
+        ]
+      },
+      {
+        "required": [
+          "bearer"
+        ]
+      },
+      {
+        "required": [
+          "oauth_token"
+        ]
+      },
+      {
+        "required": [
+          "ssh_private_key"
         ]
       },
       {
@@ -208,7 +294,8 @@
           "enum": [
             "UNKNOWN",
             "DECLARED",
-            "VERIFIED"
+            "VERIFIED",
+            "PROBE_VERIFIED"
           ]
         },
         "lifecycle_state": {
@@ -226,7 +313,8 @@
         "discovery_generation",
         "availability",
         "lifecycle_state"
-      ]
+      ],
+      "additionalProperties": false
     },
     {
       "title": "Capability Probe Record",
@@ -309,7 +397,8 @@
         "execution_purpose",
         "probe_status",
         "observed_at"
-      ]
+      ],
+      "additionalProperties": false
     },
     {
       "title": "Lifecycle State Transition Record",
@@ -386,7 +475,8 @@
         "evidence_ref",
         "observed_at",
         "algorithm_version"
-      ]
+      ],
+      "additionalProperties": false
     },
     {
       "title": "Promotion / Demotion Recommendation Record",
@@ -498,7 +588,8 @@
               "reason_cn": {
                 "type": "string"
               }
-            }
+            },
+            "additionalProperties": false
           }
         }
       },
@@ -518,7 +609,8 @@
         "confidence",
         "sample_count",
         "component_reasons"
-      ]
+      ],
+      "additionalProperties": false
     },
     {
       "title": "Owner Action Request Record",
@@ -560,7 +652,8 @@
           "const": false
         },
         "parameters": {
-          "type": "object"
+          "type": "object",
+          "$ref": "#/definitions/forbiddenSensitiveFields"
         },
         "status": {
           "type": "string",
@@ -588,6 +681,185 @@
         "execution_implemented",
         "status",
         "reason"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action_type": {
+                "const": "OLLAMA_PULL_MODEL"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "model_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "model_name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "tag": {
+                    "type": "string"
+                  },
+                  "version": {
+                    "type": "string"
+                  },
+                  "resource_id": {
+                    "type": "string"
+                  },
+                  "credential_ref": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action_type": {
+                "const": "OLLAMA_REMOVE_MODEL"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "model_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "model_name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "resource_id": {
+                    "type": "string"
+                  },
+                  "credential_ref": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action_type": {
+                "const": "CPA_CANARY_UPGRADE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "resource_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "target_version": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "rollout_mode": {
+                    "type": "string"
+                  },
+                  "credential_ref": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "resource_id",
+                  "target_version"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action_type": {
+                "const": "CPA_RESTART"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "resource_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "credential_ref": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "resource_id"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action_type": {
+                "const": "CPA_ROLLBACK"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "resource_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "target_version": {
+                    "type": "string"
+                  },
+                  "rollback_ref": {
+                    "type": "string"
+                  },
+                  "credential_ref": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "resource_id"
+                ]
+              }
+            }
+          }
+        }
       ]
     }
   ]

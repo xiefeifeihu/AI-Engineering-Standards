@@ -2,7 +2,7 @@
 
 ```text
 STANDARD_ID=STD-024
-VERSION=1.6.0
+VERSION=1.6.1
 STATUS=ACTIVE
 SCOPE=Model Ops Autopilot 基础架构：模型自发现、能力分级验证、生命周期状态机与影子治理契约
 OWNER=AI Platform Governance Committee
@@ -138,8 +138,17 @@ Hub **MUST** 通过机器级权威端点配置或 Endpoint Registry 异步发现
 
 ## 4. 模型多维能力档案与分级低成本验证 (Capability Profile & Layered Probes)
 
-### 4.1 能力档案维度 (Capability Dimensions)
-模型能力档案包含以下正交维度：
+### 4.1 能力档案维度与双层能力状态语义 (Capability Dimensions & Dual-Layer States)
+本标准明确区分**模型级综合能力状态（Aggregate Capability State）**与**单维度能力验证状态（Per-Dimension Capability Verification State）**两个层次的治理语义，二者具备严格的确定性映射关系，严禁混淆：
+
+#### 4.1.1 模型级综合能力状态 (Aggregate Capability State)
+作为模型自发现观测记录（`DISCOVERY_OBSERVATION.capability_state`）与资产目录的顶层汇总字段，用于表达该模型的整体能力准备度梯次：
+- `UNKNOWN`：新发现模型，尚未包含静态声明或探针验证事实。
+- `DECLARED`：模型具备静态元数据或启发式能力声明（如模型名称、标签或 Provider 说明），但尚未经真实探针验证。
+- `VERIFIED` / `PROBE_VERIFIED`：模型至少有一个关键能力维度通过了真实低成本轻量探针验证。
+
+#### 4.1.2 单维度能力验证状态 (Per-Dimension Capability Verification State)
+模型能力档案包含以下 9 个正交维度，各自独立维护验证状态矩阵：
 - `text_generation`（文本生成与基础指令跟随）
 - `reasoning`（深度思考与逻辑推演）
 - `coding`（编程语法生成与代码重构）
@@ -150,7 +159,17 @@ Hub **MUST** 通过机器级权威端点配置或 Endpoint Registry 异步发现
 - `vision`（多模态视觉理解）
 - `long_context`（长上下文检索与综合）
 
-每个维度状态分为：`UNKNOWN`（未知）、`DECLARED`（静态声明）、`PROBE_VERIFIED`（真实探针验证）、`UNSUPPORTED`（确定不支持）。
+每个独立维度状态分为：
+- `UNKNOWN`（未知）：尚未探测或声明。
+- `DECLARED`（静态声明）：依据供应商配置或规格静态声明。
+- `PROBE_VERIFIED`（真实探针验证）：经低成本真实探针（L1/L2/L3）成功验证。
+- `UNSUPPORTED`（确定不支持）：经真实探测明确不支持或协议不兼容。
+
+#### 4.1.3 确定性映射规则 (Deterministic Mapping Function)
+综合能力状态依据单维度验证矩阵进行确定性派生计算：
+1. 若存在任意维度状态为 `PROBE_VERIFIED` $\Longrightarrow$ 模型综合 `capability_state = VERIFIED`。
+2. 否则，若存在任意维度状态为 `DECLARED` $\Longrightarrow$ 模型综合 `capability_state = DECLARED`。
+3. 否则 $\Longrightarrow$ 模型综合 `capability_state = UNKNOWN`。
 
 ### 4.2 分级低成本验证阶梯 (Verification Hierarchy)
 - **L0 DISCOVERY（目录存在）**：接口返回模型条目，证明资源被暴露。
@@ -229,7 +248,7 @@ $$	ext{DISCOVERED} \longrightarrow 	ext{PROBE\_VERIFIED} \longrightarrow 	ext{CH
 
 ---
 
-## 6. 未来 Owner 动作契约信封 (Future Owner Action Envelope)
+## 6. 未来 Owner 动作契约信封与参数白名单 (Future Owner Action Envelope & Parameters Allowlist)
 
 为后续 AI-Hub-014-R2 自动化运维做好架构铺垫，本标准冻结未来 Hub 与 AI-KB 间 Owner 动作请求的标准信封契约。
 - **R1 阶段冻结声明**：
@@ -239,6 +258,19 @@ $$	ext{DISCOVERED} \longrightarrow 	ext{PROBE\_VERIFIED} \longrightarrow 	ext{CH
   ```
 - 动作类型包括：`OLLAMA_PULL_MODEL`、`OLLAMA_REMOVE_MODEL`、`CPA_CANARY_UPGRADE`、`CPA_RESTART`、`CPA_ROLLBACK`。
 - 在 R1 中，Hub 仅可模拟生成请求对象并进行合法性校验，**严禁向任何系统发出执行指令**。
+
+### 6.1 参数类型强白名单 (Strict Parameter Allowlists)
+`OWNER_ACTION_REQUEST.parameters` **MUST NOT** 采用无约束通用对象。针对每种动作类型，Schema 与运行时 **MUST** 强制白名单且设定 `additionalProperties=false`：
+- `OLLAMA_PULL_MODEL` 参数白名单：`model_id`, `model_name`, `tag`, `version`, `resource_id`, `credential_ref`
+- `OLLAMA_REMOVE_MODEL` 参数白名单：`model_id`, `model_name`, `resource_id`, `credential_ref`
+- `CPA_CANARY_UPGRADE` 参数白名单：`resource_id`, `target_version`, `rollout_mode`, `credential_ref`
+- `CPA_RESTART` 参数白名单：`resource_id`, `reason`, `credential_ref`
+- `CPA_ROLLBACK` 参数白名单：`resource_id`, `target_version`, `rollback_ref`, `credential_ref`
+
+### 6.2 凭据引用与递归零敏感信息规则 (Credential References & Recursive Zero-Secret Rule)
+- **绝对禁止原始凭据**：参数中严禁包含 `api_key`, `token`, `password`, `secret`, `bearer`, `oauth_token`, `ssh_private_key`。
+- **仅允许逻辑凭据引用**：若动作需要关联凭据，仅允许通过 `credential_ref` 传递逻辑标识（如 `LOCAL_CPA_KEY`），绝不传递真实值。
+- **递归防渗透**：根节点、`parameters` 字典内部、任何深度 $\ge 2$ 的嵌套对象以及数组容器内，若出现任何禁止字段，Schema 校验与运行时防线 **MUST** 均予强阻断（HTTP 4xx）。
 
 ---
 

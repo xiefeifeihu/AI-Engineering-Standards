@@ -464,7 +464,7 @@ def test_samples():
         except jsonschema.ValidationError:
             pass
 
-    # 6. Test Model Ops Autopilot Schema (STD-024 v1.6.0)
+    # 6. Test Model Ops Autopilot Schema (STD-024 v1.6.1)
     with open(SCHEMAS_DIR / "model-ops-autopilot.schema.json", "r", encoding="utf-8") as f:
         autopilot_schema = json.load(f)
 
@@ -489,6 +489,10 @@ def test_samples():
         "lifecycle_state": "PROBE_VERIFIED"
     }
     jsonschema.validate(instance=sample_autopilot_discovery, schema=autopilot_schema)
+
+    # 6.1.1 Additive capability_state PROBE_VERIFIED
+    sample_autopilot_discovery_pv = dict(sample_autopilot_discovery, capability_state="PROBE_VERIFIED")
+    jsonschema.validate(instance=sample_autopilot_discovery_pv, schema=autopilot_schema)
 
     # 6.2 Sample Capability Probe
     sample_autopilot_probe = {
@@ -571,14 +575,32 @@ def test_samples():
     }
     jsonschema.validate(instance=sample_autopilot_action, schema=autopilot_schema)
 
-    # 6.6 Negative tests: forbidden secrets/content and unverified upstream provider guessing
+    # 6.5.1 Safe Logical Reference Test
+    sample_safe_action = dict(sample_autopilot_action, parameters={"model_name": "qwen2.5:14b-instruct", "credential_ref": "LOCAL_CPA_KEY"})
+    jsonschema.validate(instance=sample_safe_action, schema=autopilot_schema)
+
+    # 6.6 Negative tests: forbidden secrets/content (root, parameters, nested depth >= 2, arrays)
     bad_autopilot_samples = [
-        ("has_api_key", dict(sample_autopilot_probe, api_key="sk-secret")),
-        ("has_token", dict(sample_autopilot_probe, token="bearer-token")),
-        ("has_prompt_body", dict(sample_autopilot_probe, prompt_body="secret prompt")),
-        ("has_response_body", dict(sample_autopilot_probe, response_body="secret response")),
+        ("has_api_key_root", dict(sample_autopilot_probe, api_key="fake-secret")),
+        ("has_token_root", dict(sample_autopilot_probe, token="fake-token")),
+        ("has_password_root", dict(sample_autopilot_probe, password="fake-password")),
+        ("has_secret_root", dict(sample_autopilot_probe, secret="fake-secret")),
+        ("has_prompt_body_root", dict(sample_autopilot_probe, prompt_body="fake prompt")),
+        ("has_response_body_root", dict(sample_autopilot_probe, response_body="fake response")),
+        ("has_source_code_root", dict(sample_autopilot_probe, source_code="fake code")),
+        ("has_patch_root", dict(sample_autopilot_probe, patch="fake patch")),
         ("fake_upstream_provider", dict(sample_autopilot_discovery, upstream_provider="unknown")),
         ("fake_provider_zh", dict(sample_autopilot_discovery, upstream_provider="未验证")),
+        ("params_api_key", dict(sample_autopilot_action, parameters={"api_key": "fake-secret"})),
+        ("params_token", dict(sample_autopilot_action, parameters={"token": "fake-token"})),
+        ("params_password", dict(sample_autopilot_action, parameters={"password": "fake-pass"})),
+        ("params_secret", dict(sample_autopilot_action, parameters={"secret": "fake-secret"})),
+        ("params_prompt_body", dict(sample_autopilot_action, parameters={"prompt_body": "fake-prompt"})),
+        ("params_response_body", dict(sample_autopilot_action, parameters={"response_body": "fake-resp"})),
+        ("params_source_code", dict(sample_autopilot_action, parameters={"source_code": "fake-code"})),
+        ("params_patch", dict(sample_autopilot_action, parameters={"patch": "fake-patch"})),
+        ("params_nested_depth_2", dict(sample_autopilot_action, parameters={"model_name": "qwen2.5:14b-instruct", "nested": {"api_key": "fake-key"}})),
+        ("params_array_object", dict(sample_autopilot_action, parameters={"model_name": "qwen2.5:14b-instruct", "items": [{"api_key": "fake-key"}]})),
     ]
     for label, bad_item in bad_autopilot_samples:
         try:
@@ -587,7 +609,7 @@ def test_samples():
         except jsonschema.ValidationError:
             pass
 
-    print("Sample validation PASS: structures conform to Standards V1.6 specifications.")
+    print("Sample validation PASS: structures conform to Standards V1.6.1 specifications.")
     return True
 
 def main():
