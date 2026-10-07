@@ -648,8 +648,7 @@
           "type": "string"
         },
         "execution_implemented": {
-          "type": "boolean",
-          "const": false
+          "type": "boolean"
         },
         "parameters": {
           "type": "object",

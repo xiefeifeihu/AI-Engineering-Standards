@@ -609,7 +609,122 @@ def test_samples():
         except jsonschema.ValidationError:
             pass
 
-    print("Sample validation PASS: structures conform to Standards V1.6.1 specifications.")
+    # 7. STD-025 Owner Action Execution Schema Testing
+    with open(SCHEMAS_DIR / "owner-action-execution.schema.json", "r", encoding="utf-8") as f:
+        exec_schema = json.load(f)
+
+    sample_owner_action_record = {
+        "record_type": "OWNER_ACTION_RECORD",
+        "request_id": "act-req-20261007-001",
+        "action_type": "CPA_RESTART",
+        "safety_class": "REVERSIBLE_OPERATIONAL",
+        "target_resource": "local-cpa",
+        "owner": "AI-KB",
+        "requested_by": "AI-Engineering-Hub",
+        "requested_at": "2026-10-07T09:30:00Z",
+        "approval_state": "APPROVED",
+        "approved_by": "platform-admin",
+        "approved_at": "2026-10-07T09:30:05Z",
+        "idempotency_key": "idem-act-20261007-001",
+        "execution_mode": "APPROVAL_REQUIRED",
+        "lease_id": "lease-aikb-cpa-001",
+        "executor_id": "aikb-owner-executor",
+        "attempt": 1,
+        "status": "COMPLETED",
+        "reason_code": "LOCAL_CPA_UNHEALTHY_RESTART",
+        "reason_cn": "本地 CPA 连续探针失败触发重启自愈",
+        "parameters": {"resource_id": "local-cpa", "reason": "health-probe-timeout"},
+        "credential_ref": "LOCAL_CPA_KEY",
+        "evidence_ref": "evid-1779234567",
+        "created_at": "2026-10-07T09:30:00Z",
+        "updated_at": "2026-10-07T09:30:30Z"
+    }
+    jsonschema.validate(instance=sample_owner_action_record, schema=exec_schema)
+
+    sample_transition = {
+        "record_type": "OWNER_ACTION_TRANSITION",
+        "transition_id": "trans-act-20261007-001",
+        "request_id": "act-req-20261007-001",
+        "from_status": "APPROVED",
+        "to_status": "LEASED",
+        "actor": "hub-lease-dispatcher",
+        "reason_code": "LEASE_GRANTED",
+        "evidence_ref": "lease-aikb-cpa-001",
+        "attempt": 1,
+        "transitioned_at": "2026-10-07T09:30:10Z"
+    }
+    jsonschema.validate(instance=sample_transition, schema=exec_schema)
+
+    sample_lease = {
+        "record_type": "OWNER_ACTION_LEASE",
+        "lease_id": "lease-aikb-cpa-001",
+        "request_id": "act-req-20261007-001",
+        "executor_id": "aikb-owner-executor",
+        "target_resource": "local-cpa",
+        "leased_at": "2026-10-07T09:30:10Z",
+        "lease_expires_at": "2026-10-07T09:32:10Z",
+        "lease_duration_seconds": 120,
+        "attempt": 1
+    }
+    jsonschema.validate(instance=sample_lease, schema=exec_schema)
+
+    sample_result = {
+        "record_type": "OWNER_ACTION_RESULT",
+        "request_id": "act-req-20261007-001",
+        "lease_id": "lease-aikb-cpa-001",
+        "executor_id": "aikb-owner-executor",
+        "attempt": 1,
+        "execution_started_at": "2026-10-07T09:30:12Z",
+        "execution_finished_at": "2026-10-07T09:30:22Z",
+        "exit_status": "SUCCESS",
+        "exit_code": 0,
+        "owner_result": {
+            "command_executed": "ops/cpa/local_cpa.py restart",
+            "duration_seconds": 9.8,
+            "status_summary": "Local CPA container restarted and reached healthy state"
+        },
+        "reason_code": "LOCAL_CPA_RESTART_SUCCESS",
+        "resource_state_before": {"status": "UNHEALTHY", "port": 18117},
+        "resource_state_after": {"status": "RUNNING", "port": 18117, "healthy": True},
+        "evidence_ref": "exec-fact-1779234567"
+    }
+    jsonschema.validate(instance=sample_result, schema=exec_schema)
+
+    sample_verification = {
+        "record_type": "OWNER_ACTION_VERIFICATION",
+        "verification_id": "verif-act-20261007-001",
+        "request_id": "act-req-20261007-001",
+        "action_type": "CPA_RESTART",
+        "target_resource": "local-cpa",
+        "verification_status": "PASS",
+        "verified_at": "2026-10-07T09:30:25Z",
+        "checks": [
+            {"name": "endpoint_http_reachability", "pass": True, "observed_value": 200, "detail": "HTTP 200 OK from 127.0.0.1:18117"},
+            {"name": "catalog_rediscovery", "pass": True, "observed_value": 92, "detail": "Discovered 92 models from Local CPA"},
+            {"name": "l1_inference_probe", "pass": True, "observed_value": "pass", "detail": "Minimal generation probe passed"},
+            {"name": "agent_compatibility_invariant", "pass": True, "observed_value": "preserved", "detail": "No degradation detected"}
+        ],
+        "evidence_ref": "verif-fact-1779234567"
+    }
+    jsonschema.validate(instance=sample_verification, schema=exec_schema)
+
+    bad_exec_samples = [
+        ("action_has_api_key", dict(sample_owner_action_record, api_key="leak")),
+        ("action_has_secret", dict(sample_owner_action_record, secret="leak")),
+        ("action_params_token", dict(sample_owner_action_record, parameters={"token": "leak"})),
+        ("result_has_password", dict(sample_result, password="leak")),
+        ("result_owner_result_secret", dict(sample_result, owner_result={"secret": "leak"})),
+        ("invalid_action_type", dict(sample_owner_action_record, action_type="UNKNOWN_DOCKER_RUN")),
+        ("invalid_status", dict(sample_owner_action_record, status="INVALID_STATUS")),
+    ]
+    for label, bad_item in bad_exec_samples:
+        try:
+            jsonschema.validate(instance=bad_item, schema=exec_schema)
+            raise AssertionError(f"Failed negative test for STD-025: '{label}' was accepted!")
+        except jsonschema.ValidationError:
+            pass
+
+    print("Sample validation PASS: structures conform to Standards V1.7.0 specifications.")
     return True
 
 def main():

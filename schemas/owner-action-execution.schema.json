@@ -1,0 +1,273 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Owner Action Execution Contract Schema",
+  "description": "STD-025 Owner Action Execution, Leasing, Result and Independent Verification Schema",
+  "type": "object",
+  "definitions": {
+    "actionType": {
+      "type": "string",
+      "enum": [
+        "CPA_RESTART",
+        "CPA_CANARY_UPGRADE",
+        "CPA_ROLLBACK",
+        "OLLAMA_PULL_MODEL",
+        "OLLAMA_REMOVE_MODEL"
+      ]
+    },
+    "actionSafetyClass": {
+      "type": "string",
+      "enum": [
+        "REVERSIBLE_OPERATIONAL",
+        "HIGH_RISK_CHANGE",
+        "HIGH_RISK_RECOVERY",
+        "RESOURCE_MUTATION",
+        "DESTRUCTIVE"
+      ]
+    },
+    "executionMode": {
+      "type": "string",
+      "enum": [
+        "APPROVAL_REQUIRED",
+        "DRY_RUN",
+        "DISABLED"
+      ]
+    },
+    "executionState": {
+      "type": "string",
+      "enum": [
+        "REQUESTED",
+        "APPROVAL_REQUIRED",
+        "APPROVED",
+        "ACKNOWLEDGED",
+        "LEASED",
+        "EXECUTING",
+        "EXECUTION_SUCCEEDED",
+        "EXECUTION_FAILED",
+        "VERIFYING",
+        "VERIFIED",
+        "COMPLETED",
+        "REJECTED",
+        "EXPIRED",
+        "CANCELLED"
+      ]
+    },
+    "approvalState": {
+      "type": "string",
+      "enum": [
+        "PENDING_APPROVAL",
+        "APPROVED",
+        "REJECTED",
+        "AUTO_BYPASSED"
+      ]
+    },
+    "forbiddenSensitiveFields": {
+      "type": "object",
+      "not": {
+        "anyOf": [
+          { "required": ["api_key"] },
+          { "required": ["token"] },
+          { "required": ["password"] },
+          { "required": ["secret"] },
+          { "required": ["bearer"] },
+          { "required": ["oauth_token"] },
+          { "required": ["ssh_private_key"] },
+          { "required": ["prompt_body"] },
+          { "required": ["response_body"] },
+          { "required": ["source_code"] },
+          { "required": ["patch"] },
+          { "required": ["document_content"] }
+        ]
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "title": "Owner Action Full Execution Record",
+      "properties": {
+        "record_type": { "const": "OWNER_ACTION_RECORD" },
+        "request_id": { "type": "string", "minLength": 1 },
+        "action_type": { "$ref": "#/definitions/actionType" },
+        "safety_class": { "$ref": "#/definitions/actionSafetyClass" },
+        "target_resource": { "type": "string", "minLength": 1 },
+        "owner": { "type": "string", "const": "AI-KB" },
+        "requested_by": { "type": "string", "minLength": 1 },
+        "requested_at": { "type": "string" },
+        "approval_state": { "$ref": "#/definitions/approvalState" },
+        "approved_by": { "type": ["string", "null"] },
+        "approved_at": { "type": ["string", "null"] },
+        "idempotency_key": { "type": "string", "minLength": 1 },
+        "execution_mode": { "$ref": "#/definitions/executionMode" },
+        "lease_id": { "type": ["string", "null"] },
+        "executor_id": { "type": ["string", "null"] },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "status": { "$ref": "#/definitions/executionState" },
+        "reason_code": { "type": "string", "minLength": 1 },
+        "reason_cn": { "type": "string" },
+        "parameters": {
+          "type": "object",
+          "$ref": "#/definitions/forbiddenSensitiveFields"
+        },
+        "credential_ref": { "type": ["string", "null"] },
+        "evidence_ref": { "type": ["string", "null"] },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": [
+        "record_type",
+        "request_id",
+        "action_type",
+        "safety_class",
+        "target_resource",
+        "owner",
+        "requested_by",
+        "requested_at",
+        "approval_state",
+        "idempotency_key",
+        "execution_mode",
+        "attempt",
+        "status",
+        "reason_code"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Owner Action Transition Record",
+      "properties": {
+        "record_type": { "const": "OWNER_ACTION_TRANSITION" },
+        "transition_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "minLength": 1 },
+        "from_status": { "type": "string", "minLength": 1 },
+        "to_status": { "$ref": "#/definitions/executionState" },
+        "actor": { "type": "string", "minLength": 1 },
+        "reason_code": { "type": "string", "minLength": 1 },
+        "evidence_ref": { "type": ["string", "null"] },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "transitioned_at": { "type": "string" }
+      },
+      "required": [
+        "record_type",
+        "transition_id",
+        "request_id",
+        "from_status",
+        "to_status",
+        "actor",
+        "reason_code",
+        "attempt",
+        "transitioned_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Owner Action Execution Lease Record",
+      "properties": {
+        "record_type": { "const": "OWNER_ACTION_LEASE" },
+        "lease_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "minLength": 1 },
+        "executor_id": { "type": "string", "minLength": 1 },
+        "target_resource": { "type": "string", "minLength": 1 },
+        "leased_at": { "type": "string" },
+        "lease_expires_at": { "type": "string" },
+        "lease_duration_seconds": { "type": "integer", "minimum": 1 },
+        "attempt": { "type": "integer", "minimum": 1 }
+      },
+      "required": [
+        "record_type",
+        "lease_id",
+        "request_id",
+        "executor_id",
+        "target_resource",
+        "leased_at",
+        "lease_expires_at",
+        "lease_duration_seconds",
+        "attempt"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Owner Action Result Record",
+      "properties": {
+        "record_type": { "const": "OWNER_ACTION_RESULT" },
+        "request_id": { "type": "string", "minLength": 1 },
+        "lease_id": { "type": "string", "minLength": 1 },
+        "executor_id": { "type": "string", "minLength": 1 },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "execution_started_at": { "type": "string" },
+        "execution_finished_at": { "type": "string" },
+        "exit_status": {
+          "type": "string",
+          "enum": ["SUCCESS", "FAILURE", "TIMEOUT"]
+        },
+        "exit_code": { "type": "integer" },
+        "owner_result": {
+          "type": "object",
+          "$ref": "#/definitions/forbiddenSensitiveFields"
+        },
+        "reason_code": { "type": "string", "minLength": 1 },
+        "resource_state_before": {
+          "type": ["object", "null"],
+          "$ref": "#/definitions/forbiddenSensitiveFields"
+        },
+        "resource_state_after": {
+          "type": ["object", "null"],
+          "$ref": "#/definitions/forbiddenSensitiveFields"
+        },
+        "evidence_ref": { "type": ["string", "null"] }
+      },
+      "required": [
+        "record_type",
+        "request_id",
+        "lease_id",
+        "executor_id",
+        "attempt",
+        "execution_started_at",
+        "execution_finished_at",
+        "exit_status",
+        "exit_code",
+        "owner_result",
+        "reason_code"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Owner Action Independent Verification Record",
+      "properties": {
+        "record_type": { "const": "OWNER_ACTION_VERIFICATION" },
+        "verification_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "minLength": 1 },
+        "action_type": { "$ref": "#/definitions/actionType" },
+        "target_resource": { "type": "string", "minLength": 1 },
+        "verification_status": {
+          "type": "string",
+          "enum": ["PASS", "FAIL"]
+        },
+        "verified_at": { "type": "string" },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "pass": { "type": "boolean" },
+              "observed_value": { "type": ["string", "number", "boolean", "null"] },
+              "detail": { "type": "string" }
+            },
+            "required": ["name", "pass"],
+            "additionalProperties": false
+          }
+        },
+        "evidence_ref": { "type": ["string", "null"] }
+      },
+      "required": [
+        "record_type",
+        "verification_id",
+        "request_id",
+        "action_type",
+        "target_resource",
+        "verification_status",
+        "verified_at",
+        "checks"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

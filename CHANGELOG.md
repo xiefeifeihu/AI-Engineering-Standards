@@ -2,6 +2,32 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [1.7.0] - 2026-10-07
+
+### Added
+- **STD-025: Owner Action Execution Contract (AI-Hub-014-R2-OWNER-ACTION-EXECUTOR)**:
+  - Formally established the execution plane boundary: Hub = Control Plane (decision, approval, lease, verification, close-loop), AI-KB = Resource Owner (local validation, exclusive lock, canonical lifecycle execution, non-sensitive fact results).
+  - Defined canonical end-to-end flow: OBSERVE -> RECOMMEND -> OWNER_ACTION_REQUEST -> APPROVAL -> OWNER_ACK -> EXECUTION_LEASE -> OWNER_EXECUTION -> OWNER_RESULT -> HUB_REDISCOVERY -> HUB_CAPABILITY_PROBE -> VERIFY -> ACTION_COMPLETED | ACTION_FAILED -> LIFECYCLE_REEVALUATION.
+  - Defined 14 canonical execution states (`REQUESTED`, `APPROVAL_REQUIRED`, `APPROVED`, `ACKNOWLEDGED`, `LEASED`, `EXECUTING`, `EXECUTION_SUCCEEDED`, `EXECUTION_FAILED`, `VERIFYING`, `VERIFIED`, `COMPLETED`, `REJECTED`, `EXPIRED`, `CANCELLED`).
+  - Codified the non-equivalence invariant: `OWNER_EXECUTION_SUCCEEDED != ACTION_COMPLETED` (execution exit code 0 requires independent Hub verification).
+  - Codified `ONE_REQUEST_ID_ONE_EFFECT=true`, exclusive execution leases, and resource concurrency guards.
+  - Published machine-readable `schemas/owner-action-execution.schema.json`.
+
+## [1.6.1] - 2026-10-06
+
+### Changed
+- Hardened STD-024 Model Ops Autopilot parameter allowlists and recursive zero-secret scanning.
+- Normalized dual-layer capability states: Aggregate Capability State vs Per-Dimension Capability Verification State.
+
+## [1.6.0] - 2026-10-06
+
+### Added
+- **STD-024: Model Ops Autopilot Governance Contract (AI-Hub-014-R1-MODEL-OPS-AUTOPILOT-FOUNDATION)**:
+  - Background asynchronous discovery across Local CPA, Cloud CPA, and Ollama.
+  - Tiered capability probes (L0-L3) with critical-path routing isolation (P95 <= 50ms).
+  - Deterministic lifecycle state machine (DISCOVERED, PROBE_VERIFIED, CHALLENGER, SHADOW, PRODUCTION_ELIGIBLE, TEMP_UNAVAILABLE, QUARANTINED, REJECTED).
+  - Shadow-only governance mode and explainable recommendations.
+
 ## [1.5.0] - 2026-09-30
 
 ### Added

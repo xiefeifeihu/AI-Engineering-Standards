@@ -1,14 +1,14 @@
-# AI Engineering Standards (V1.6.1)
+# AI Engineering Standards (V1.7.0)
 
 Canonical engineering standards shared across local AI / Vibe Coding projects.
 
 本项目是开发机跨工程共享的架构标准规范库（Source of Truth），定义网络通信、推理资源共享、智能体接入、上下文管理与工程协作标准。
 
 ```text
-STANDARDS_VERSION=1.6.1
+STANDARDS_VERSION=1.7.0
 STATUS=RELEASED
 BASELINE=AI-ENGINEERING-PLATFORM-V1-001
-LAST_UPDATED=2026-10-06
+LAST_UPDATED=2026-10-07
 ```
 
 ---
@@ -41,12 +41,13 @@ LAST_UPDATED=2026-10-06
 | [`STD-022`](./standards/08-model-governance/STD-022-model-runtime-memory-and-decay-governance.md) | **Model Runtime Memory & Decay Governance** | 全量历史与近期衰减路由记忆解耦、模型指纹与 Epoch 治理 |
 | [`STD-023`](./standards/08-model-governance/STD-023-coding-agent-outcome-contract.md) | **Coding Agent Outcome Contract** | 编程智能体任务级工程结果契约、持久化编码任务记忆与 Bake-Off 公平治理 |
 | [`STD-024`](./standards/08-model-governance/STD-024-model-ops-autopilot-governance-contract.md) | **Model Ops Autopilot Governance** | 模型自发现、能力分级验证、生命周期状态机与影子治理契约 |
+| [`STD-025`](./standards/08-model-governance/STD-025-owner-action-execution-contract.md) | **Owner Action Execution Contract** | 控制平面决策、Resource Owner 校验执行、独占租约、幂等恢复、零敏感凭据、事实结果与 Hub 独立验证 |
 
 ---
 
 ## 2. 机器可读 JSON Schemas (`schemas/`)
 
-规范库提供 12 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
+规范库提供 13 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
 - `schemas/engineering-manifest.schema.json`
 - `schemas/resource.schema.json`
 - `schemas/endpoint.schema.json`
@@ -59,6 +60,7 @@ LAST_UPDATED=2026-10-06
 - `schemas/coding-gateway.schema.json`
 - `schemas/coding-agent-outcome.schema.json`
 - `schemas/model-ops-autopilot.schema.json`
+- `schemas/owner-action-execution.schema.json`
 
 ---
 
