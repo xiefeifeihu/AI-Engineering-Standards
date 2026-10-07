@@ -2,6 +2,23 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [1.8.0] - 2026-10-07
+
+### Added
+- **STD-026: Model Scout and Challenger Contract (AI-Hub-014-R3-MODEL-SCOUT-AND-CHALLENGER-AUTOMATION)**:
+  - Established canonical Model Scout Source Registry supporting 4 classes (`ACTIVE_RUNTIME_CATALOG`, `OWNER_CANDIDATE_CATALOG`, `PROVIDER_DECLARED_CATALOG`, `OPTIONAL_PUBLIC_METADATA_CATALOG`).
+  - Defined 3 candidate physical availability classes (`AVAILABLE_NOW`, `OWNER_ACTION_REQUIRED`, `METADATA_ONLY`).
+  - Enforced zero-trust model provenance (no provider inference from model names).
+  - Defined Scoped Scout Campaign with frozen Champion semantics (`PRODUCTION_ROUTE_WINNER`, `HISTORICAL_LEADER`, `PLATFORM_PINNED_BASELINE`) and hard eligibility gates (`AGENT_COMPATIBLE` required for coding agent challenges).
+  - Codified separation of production routing preferences from challenge fairness (`RAW_CHALLENGE_CAPABILITY` vs `PLATFORM_PRODUCTION_POLICY`).
+  - Defined Frozen Fairness Specification with `fairness_spec_hash`.
+  - Defined Challenge Suite Registry (`TECHNICAL_MICROBENCH`, `AGENT_MICROBENCH`, `CONSUMER_BUSINESS_EVALUATION`) with isolated coding sandboxes and zero prompt/code leakage.
+  - Defined Dedicated Challenge Result Memory, exponential time decay (`ALL_TIME` vs `EFFECTIVE` views), memory epochs, and conservative exploration budget governance.
+  - Defined multi-dimensional Pareto comparison conclusions and explainable promotion recommendations (`PROMOTION_RECOMMENDED != PRODUCTION_PROMOTED`).
+  - Integrated STD-025 Owner Action requests in `APPROVAL_REQUIRED` and Ollama resource preflight; strictly disabled automatic model removal (`OLLAMA_REMOVE_MODEL`).
+  - Codified four-layer zero double-counting invariants (`SCOUT_L1_DOUBLE_COUNT=false`, `SCOUT_CODING_OUTCOME_DOUBLE_COUNT=false`, `SCOUT_AIKB_QUALITY_DOUBLE_COUNT=false`, `SCOUT_SIDECAR_BUSINESS_DOUBLE_COUNT=false`).
+  - Published machine-readable `schemas/model-scout-challenger.schema.json`.
+
 ## [1.7.0] - 2026-10-07
 
 ### Added

@@ -1,0 +1,1018 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Model Scout and Challenger Contract Schema",
+  "description": "STD-026 Model Scout Source, Candidate, Campaign, Fairness Specification, Microbench, Challenge Memory and Promotion Recommendations",
+  "type": "object",
+  "definitions": {
+    "sourceType": {
+      "type": "string",
+      "enum": [
+        "ACTIVE_RUNTIME_CATALOG",
+        "OWNER_CANDIDATE_CATALOG",
+        "PROVIDER_DECLARED_CATALOG",
+        "OPTIONAL_PUBLIC_METADATA_CATALOG"
+      ]
+    },
+    "sourceTrustLevel": {
+      "type": "string",
+      "enum": [
+        "AUTHORITATIVE_RUNTIME",
+        "VERIFIED_OWNER",
+        "UNVERIFIED_PUBLIC"
+      ]
+    },
+    "availabilityClass": {
+      "type": "string",
+      "enum": [
+        "AVAILABLE_NOW",
+        "OWNER_ACTION_REQUIRED",
+        "METADATA_ONLY"
+      ]
+    },
+    "provenanceStatus": {
+      "type": "string",
+      "enum": [
+        "LOCAL_RUNTIME",
+        "CLOUD_TUNNEL",
+        "OWNER_DECLARED",
+        "PUBLIC_CATALOG",
+        "UNVERIFIED"
+      ]
+    },
+    "agentCompatibility": {
+      "type": "string",
+      "enum": [
+        "AGENT_COMPATIBLE",
+        "AGENT_INCOMPATIBLE",
+        "AGENT_UNKNOWN"
+      ]
+    },
+    "suiteType": {
+      "type": "string",
+      "enum": [
+        "TECHNICAL_MICROBENCH",
+        "AGENT_MICROBENCH",
+        "CONSUMER_BUSINESS_EVALUATION"
+      ]
+    },
+    "comparisonConclusion": {
+      "type": "string",
+      "enum": [
+        "CHALLENGER_DOMINATES",
+        "CHAMPION_RETAINS",
+        "TRADEOFF",
+        "INSUFFICIENT_EVIDENCE",
+        "TECHNICALLY_INELIGIBLE",
+        "BUSINESS_EVIDENCE_REQUIRED",
+        "OWNER_ACTION_REQUIRED"
+      ]
+    },
+    "recommendationType": {
+      "type": "string",
+      "enum": [
+        "PROMOTION_RECOMMENDED",
+        "PROMOTION_NOT_RECOMMENDED",
+        "MORE_EVIDENCE_REQUIRED",
+        "DEMOTION_RECOMMENDED"
+      ]
+    },
+    "forbiddenSensitiveFields": {
+      "type": "object",
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "api_key"
+            ]
+          },
+          {
+            "required": [
+              "token"
+            ]
+          },
+          {
+            "required": [
+              "password"
+            ]
+          },
+          {
+            "required": [
+              "secret"
+            ]
+          },
+          {
+            "required": [
+              "bearer"
+            ]
+          },
+          {
+            "required": [
+              "oauth_token"
+            ]
+          },
+          {
+            "required": [
+              "ssh_private_key"
+            ]
+          },
+          {
+            "required": [
+              "prompt_body"
+            ]
+          },
+          {
+            "required": [
+              "response_body"
+            ]
+          },
+          {
+            "required": [
+              "source_code"
+            ]
+          },
+          {
+            "required": [
+              "patch"
+            ]
+          },
+          {
+            "required": [
+              "document_content"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "title": "Model Scout Source Record",
+      "properties": {
+        "record_type": {
+          "const": "SCOUT_SOURCE"
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_type": {
+          "$ref": "#/definitions/sourceType"
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "trust_level": {
+          "$ref": "#/definitions/sourceTrustLevel"
+        },
+        "endpoint_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "credential_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "discovery_interval_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "last_success_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "catalog_generation": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "record_type",
+        "source_id",
+        "source_type",
+        "owner",
+        "trust_level",
+        "enabled",
+        "catalog_generation"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/definitions/forbiddenSensitiveFields"
+        }
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Model Scout Candidate Record",
+      "properties": {
+        "record_type": {
+          "const": "SCOUT_CANDIDATE"
+        },
+        "candidate_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logical_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resource_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provenance_status": {
+          "$ref": "#/definitions/provenanceStatus"
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "availability_class": {
+          "$ref": "#/definitions/availabilityClass"
+        },
+        "first_seen_at": {
+          "type": "string"
+        },
+        "last_seen_at": {
+          "type": "string"
+        },
+        "model_fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "declared_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "verified_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "context_metadata": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "cost_metadata": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "install_action_required": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lifecycle_state": {
+          "type": "string"
+        },
+        "agent_compatibility": {
+          "$ref": "#/definitions/agentCompatibility"
+        },
+        "technical_health": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "memory_epoch": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "record_type",
+        "candidate_id",
+        "logical_model_id",
+        "channel",
+        "resource_id",
+        "provenance_status",
+        "source_id",
+        "availability_class",
+        "first_seen_at",
+        "last_seen_at",
+        "lifecycle_state",
+        "agent_compatibility",
+        "technical_health",
+        "confidence"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/definitions/forbiddenSensitiveFields"
+        }
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Model Scout Campaign Record",
+      "properties": {
+        "record_type": {
+          "const": "SCOUT_CAMPAIGN"
+        },
+        "campaign_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "consumer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capability_profile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "champion": {
+          "type": "object",
+          "properties": {
+            "logical_model_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "channel": {
+              "type": "string",
+              "minLength": 1
+            },
+            "champion_source": {
+              "type": "string"
+            },
+            "champion_reason": {
+              "type": "string"
+            },
+            "champion_snapshot_at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "logical_model_id",
+            "channel",
+            "champion_source",
+            "champion_reason",
+            "champion_snapshot_at"
+          ],
+          "additionalProperties": false
+        },
+        "challengers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "logical_model_id": {
+                "type": "string"
+              },
+              "channel": {
+                "type": "string"
+              },
+              "eligibility_status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "logical_model_id",
+              "channel",
+              "eligibility_status"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "candidate_source_snapshot": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "candidate_eligibility_rules": {
+          "type": "object"
+        },
+        "challenge_suite": {
+          "type": "object",
+          "properties": {
+            "suite_id": {
+              "type": "string"
+            },
+            "suite_type": {
+              "$ref": "#/definitions/suiteType"
+            },
+            "suite_version": {
+              "type": "string"
+            },
+            "case_count": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "suite_id",
+            "suite_type",
+            "suite_version",
+            "case_count"
+          ],
+          "additionalProperties": false
+        },
+        "fairness_specification": {
+          "type": "object",
+          "properties": {
+            "task": {
+              "type": "string"
+            },
+            "prompt_version": {
+              "type": "string"
+            },
+            "tool_definition_version": {
+              "type": "string"
+            },
+            "acceptance_criteria": {
+              "type": "string"
+            },
+            "timeout_seconds": {
+              "type": "number"
+            },
+            "retry_allowance": {
+              "type": "integer"
+            },
+            "execution_environment": {
+              "type": "string"
+            },
+            "base_fixture_hash": {
+              "type": "string"
+            },
+            "max_token_budget": {
+              "type": "integer"
+            },
+            "evaluator_version": {
+              "type": "string"
+            },
+            "temperature": {
+              "type": "number"
+            },
+            "capability_probe_level": {
+              "type": "string"
+            },
+            "fairness_spec_hash": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "task",
+            "prompt_version",
+            "tool_definition_version",
+            "acceptance_criteria",
+            "timeout_seconds",
+            "retry_allowance",
+            "execution_environment",
+            "base_fixture_hash",
+            "max_token_budget",
+            "evaluator_version",
+            "fairness_spec_hash"
+          ],
+          "additionalProperties": false
+        },
+        "budget_specification": {
+          "type": "object",
+          "properties": {
+            "max_candidates_per_cycle": {
+              "type": "integer"
+            },
+            "max_challenges_per_cycle": {
+              "type": "integer"
+            },
+            "max_concurrent_challenges": {
+              "type": "integer"
+            },
+            "max_token_budget_per_cycle": {
+              "type": "integer"
+            },
+            "max_token_budget_per_day": {
+              "type": "integer"
+            },
+            "per_provider_cooldown_seconds": {
+              "type": "integer"
+            },
+            "timeout_budget_seconds": {
+              "type": "integer"
+            },
+            "owner_action_request_budget": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "max_candidates_per_cycle",
+            "max_challenges_per_cycle",
+            "max_concurrent_challenges",
+            "max_token_budget_per_cycle",
+            "max_token_budget_per_day"
+          ],
+          "additionalProperties": false
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "PENDING",
+            "RUNNING",
+            "COMPLETED",
+            "PAUSED_BUDGET",
+            "FAILED"
+          ]
+        }
+      },
+      "required": [
+        "record_type",
+        "campaign_id",
+        "consumer",
+        "task_family",
+        "capability_profile",
+        "champion",
+        "challengers",
+        "challenge_suite",
+        "fairness_specification",
+        "budget_specification",
+        "created_at",
+        "status"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/definitions/forbiddenSensitiveFields"
+        }
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Challenge Trial Record",
+      "properties": {
+        "record_type": {
+          "const": "CHALLENGE_TRIAL"
+        },
+        "trial_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "campaign_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "suite_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "case_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logical_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_purpose": {
+          "const": "SCOUT_CHALLENGE"
+        },
+        "workspace_path_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pass": {
+          "type": "boolean"
+        },
+        "latency_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "tool_result_enums": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "failure_stage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "executed_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "trial_id",
+        "campaign_id",
+        "suite_id",
+        "case_id",
+        "logical_model_id",
+        "channel",
+        "execution_purpose",
+        "workspace_path_hash",
+        "pass",
+        "latency_ms",
+        "tool_result_enums",
+        "attempts",
+        "executed_at"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/definitions/forbiddenSensitiveFields"
+        }
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Challenge Result Memory Record",
+      "properties": {
+        "record_type": {
+          "const": "CHALLENGE_RESULT_MEMORY"
+        },
+        "memory_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "consumer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capability_profile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logical_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "suite_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completion_rate": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "technical_pass_rate": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "tool_loop_pass_rate": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "targeted_test_pass_rate": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "latency_p50_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "latency_p95_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "retry_rate": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "failure_stage_distribution": {
+          "type": "object"
+        },
+        "recent_evidence_weight": {
+          "type": "number",
+          "minimum": 0
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "last_challenged_at": {
+          "type": "string"
+        },
+        "memory_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "view_type": {
+          "type": "string",
+          "enum": [
+            "ALL_TIME",
+            "EFFECTIVE"
+          ]
+        }
+      },
+      "required": [
+        "record_type",
+        "memory_id",
+        "consumer",
+        "task_family",
+        "capability_profile",
+        "logical_model_id",
+        "channel",
+        "suite_version",
+        "sample_count",
+        "completion_rate",
+        "technical_pass_rate",
+        "tool_loop_pass_rate",
+        "latency_p50_ms",
+        "latency_p95_ms",
+        "retry_rate",
+        "recent_evidence_weight",
+        "confidence",
+        "last_challenged_at",
+        "memory_epoch",
+        "view_type"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/definitions/forbiddenSensitiveFields"
+        }
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Challenger Comparison Record",
+      "properties": {
+        "record_type": {
+          "const": "CHALLENGER_COMPARISON"
+        },
+        "comparison_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "campaign_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "champion_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "challenger_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "conclusion": {
+          "$ref": "#/definitions/comparisonConclusion"
+        },
+        "multi_dimensional_metrics": {
+          "type": "object"
+        },
+        "pareto_tradeoffs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "raw_challenge_capability": {
+          "type": "object"
+        },
+        "platform_production_policy": {
+          "type": "object"
+        },
+        "compared_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "comparison_id",
+        "campaign_id",
+        "champion_model",
+        "challenger_model",
+        "channel",
+        "conclusion",
+        "multi_dimensional_metrics",
+        "raw_challenge_capability",
+        "platform_production_policy",
+        "compared_at"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/definitions/forbiddenSensitiveFields"
+        }
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Scout Promotion Recommendation Record",
+      "properties": {
+        "record_type": {
+          "const": "SCOUT_PROMOTION_RECOMMENDATION"
+        },
+        "recommendation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "campaign_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logical_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "consumer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recommendation_type": {
+          "$ref": "#/definitions/recommendationType"
+        },
+        "production_promoted": {
+          "type": "boolean",
+          "const": false
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "component_reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "metric_name": {
+                "type": "string"
+              },
+              "threshold": {},
+              "observed_value": {},
+              "pass": {
+                "type": "boolean"
+              },
+              "reason_cn": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "metric_name",
+              "pass",
+              "reason_cn"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "owner_action_required": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resource_preflight": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "model_size_bytes": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "free_disk_bytes": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "gpu_category": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "ram_category": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "resource_fit": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "UNKNOWN",
+                "INSUFFICIENT"
+              ]
+            }
+          },
+          "required": [
+            "resource_fit"
+          ],
+          "additionalProperties": false
+        },
+        "created_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "recommendation_id",
+        "campaign_id",
+        "logical_model_id",
+        "channel",
+        "consumer",
+        "task_family",
+        "recommendation_type",
+        "production_promoted",
+        "confidence",
+        "sample_count",
+        "component_reasons",
+        "created_at"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/definitions/forbiddenSensitiveFields"
+        }
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

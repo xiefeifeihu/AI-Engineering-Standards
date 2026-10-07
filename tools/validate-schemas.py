@@ -612,6 +612,8 @@ def test_samples():
     # 7. STD-025 Owner Action Execution Schema Testing
     with open(SCHEMAS_DIR / "owner-action-execution.schema.json", "r", encoding="utf-8") as f:
         exec_schema = json.load(f)
+    with open(SCHEMAS_DIR / "model-scout-challenger.schema.json", "r", encoding="utf-8") as f:
+        scout_schema = json.load(f)
 
     sample_owner_action_record = {
         "record_type": "OWNER_ACTION_RECORD",
@@ -724,7 +726,227 @@ def test_samples():
         except jsonschema.ValidationError:
             pass
 
-    print("Sample validation PASS: structures conform to Standards V1.7.0 specifications.")
+    # 9. Test STD-026 Model Scout and Challenger Contract Samples
+    sample_scout_source = {
+        "record_type": "SCOUT_SOURCE",
+        "source_id": "src-local-cpa",
+        "source_type": "ACTIVE_RUNTIME_CATALOG",
+        "owner": "AI-KB",
+        "provider": None,
+        "trust_level": "AUTHORITATIVE_RUNTIME",
+        "endpoint_ref": "http://127.0.0.1:18117/v1/models",
+        "credential_ref": "LOCAL_CPA_KEY",
+        "enabled": True,
+        "discovery_interval_seconds": 60,
+        "last_success_at": "2026-10-07T10:00:00Z",
+        "last_error": None,
+        "catalog_generation": 12
+    }
+    jsonschema.validate(instance=sample_scout_source, schema=scout_schema)
+
+    sample_scout_candidate = {
+        "record_type": "SCOUT_CANDIDATE",
+        "candidate_id": "cand-qwen-coder-30b",
+        "logical_model_id": "qwen2.5-coder-32b-instruct",
+        "channel": "local-cpa",
+        "resource_id": "local-cpa",
+        "provider": None,
+        "provenance_status": "LOCAL_RUNTIME",
+        "source_id": "src-local-cpa",
+        "availability_class": "AVAILABLE_NOW",
+        "first_seen_at": "2026-10-07T08:00:00Z",
+        "last_seen_at": "2026-10-07T10:00:00Z",
+        "model_fingerprint": "fp-qwen-32b-v1",
+        "declared_capabilities": ["coding", "agent_loop"],
+        "verified_capabilities": ["coding", "agent_tool_use", "agent_loop"],
+        "context_metadata": {"context_window": 32768},
+        "cost_metadata": None,
+        "install_action_required": None,
+        "lifecycle_state": "CHALLENGER",
+        "agent_compatibility": "AGENT_COMPATIBLE",
+        "technical_health": "HEALTHY",
+        "confidence": 0.85,
+        "memory_epoch": 1
+    }
+    jsonschema.validate(instance=sample_scout_candidate, schema=scout_schema)
+
+    sample_scout_campaign = {
+        "record_type": "SCOUT_CAMPAIGN",
+        "campaign_id": "camp-20261007-claude-coding",
+        "consumer": "claude-code",
+        "task_family": "coding_agent",
+        "capability_profile": "agent_coding_high_quality",
+        "champion": {
+            "logical_model_id": "claude-3-7-sonnet",
+            "channel": "cloud-cpa",
+            "champion_source": "PRODUCTION_ROUTE_WINNER",
+            "champion_reason": "Incumbent production route leader for claude-code",
+            "champion_snapshot_at": "2026-10-07T10:00:00Z"
+        },
+        "challengers": [
+            {"logical_model_id": "qwen2.5-coder-32b-instruct", "channel": "local-cpa", "eligibility_status": "ELIGIBLE"},
+            {"logical_model_id": "deepseek-coder-v2", "channel": "cloud-cpa", "eligibility_status": "ELIGIBLE"}
+        ],
+        "candidate_source_snapshot": ["src-local-cpa", "src-cloud-cpa"],
+        "candidate_eligibility_rules": {"agent_compatible_required": True, "availability": "AVAILABLE_NOW"},
+        "challenge_suite": {
+            "suite_id": "agent-coding-microbench-v1",
+            "suite_type": "AGENT_MICROBENCH",
+            "suite_version": "v1.0.0",
+            "case_count": 3
+        },
+        "fairness_specification": {
+            "task": "coding_agent_microbench",
+            "prompt_version": "v1.0.0",
+            "tool_definition_version": "v1.0.0",
+            "acceptance_criteria": "pass_syntax_and_targeted_tests",
+            "timeout_seconds": 30.0,
+            "retry_allowance": 1,
+            "execution_environment": "isolated_sandbox",
+            "base_fixture_hash": "a1b2c3d4e5f6",
+            "max_token_budget": 4096,
+            "evaluator_version": "v1.0.0",
+            "temperature": 0.0,
+            "capability_probe_level": "L3_AGENT_LOOP",
+            "fairness_spec_hash": "f9e8d7c6b5a4"
+        },
+        "budget_specification": {
+            "max_candidates_per_cycle": 5,
+            "max_challenges_per_cycle": 10,
+            "max_concurrent_challenges": 2,
+            "max_token_budget_per_cycle": 50000,
+            "max_token_budget_per_day": 200000,
+            "per_provider_cooldown_seconds": 30,
+            "timeout_budget_seconds": 120,
+            "owner_action_request_budget": 2
+        },
+        "created_at": "2026-10-07T10:00:00Z",
+        "status": "COMPLETED"
+    }
+    jsonschema.validate(instance=sample_scout_campaign, schema=scout_schema)
+
+    sample_trial = {
+        "record_type": "CHALLENGE_TRIAL",
+        "trial_id": "trial-20261007-001",
+        "campaign_id": "camp-20261007-claude-coding",
+        "suite_id": "agent-coding-microbench-v1",
+        "case_id": "case-01-file-patch",
+        "logical_model_id": "qwen2.5-coder-32b-instruct",
+        "channel": "local-cpa",
+        "execution_purpose": "SCOUT_CHALLENGE",
+        "workspace_path_hash": "ws-hash-12345",
+        "pass": True,
+        "latency_ms": 1250.0,
+        "tool_result_enums": ["TOOL_CALL_VALID", "PATCH_APPLIED", "TEST_PASS"],
+        "attempts": 1,
+        "failure_stage": None,
+        "executed_at": "2026-10-07T10:05:00Z"
+    }
+    jsonschema.validate(instance=sample_trial, schema=scout_schema)
+
+    sample_result_memory = {
+        "record_type": "CHALLENGE_RESULT_MEMORY",
+        "memory_id": "mem-qwen-coder-32b",
+        "consumer": "claude-code",
+        "task_family": "coding_agent",
+        "capability_profile": "agent_coding_high_quality",
+        "logical_model_id": "qwen2.5-coder-32b-instruct",
+        "channel": "local-cpa",
+        "suite_version": "v1.0.0",
+        "sample_count": 15,
+        "completion_rate": 0.933,
+        "technical_pass_rate": 1.0,
+        "tool_loop_pass_rate": 0.933,
+        "targeted_test_pass_rate": 0.933,
+        "latency_p50_ms": 1100.0,
+        "latency_p95_ms": 2300.0,
+        "retry_rate": 0.067,
+        "failure_stage_distribution": {"none": 14, "syntax": 1},
+        "recent_evidence_weight": 12.4,
+        "confidence": 0.88,
+        "last_challenged_at": "2026-10-07T10:05:00Z",
+        "memory_epoch": 1,
+        "view_type": "EFFECTIVE"
+    }
+    jsonschema.validate(instance=sample_result_memory, schema=scout_schema)
+
+    sample_comparison = {
+        "record_type": "CHALLENGER_COMPARISON",
+        "comparison_id": "comp-20261007-001",
+        "campaign_id": "camp-20261007-claude-coding",
+        "champion_model": "claude-3-7-sonnet",
+        "challenger_model": "qwen2.5-coder-32b-instruct",
+        "channel": "local-cpa",
+        "conclusion": "TRADEOFF",
+        "multi_dimensional_metrics": {
+            "completion_rate_diff": -0.05,
+            "latency_p95_diff_ms": -450.0
+        },
+        "pareto_tradeoffs": ["Challenger faster P95 latency (-450ms) but slightly lower completion rate (-5%)"],
+        "raw_challenge_capability": {"completion_rate": 0.933, "agent_loop_pass": True},
+        "platform_production_policy": {"policy": "QWEN_LAST_RESORT", "live_routing_penalty": -40},
+        "compared_at": "2026-10-07T10:10:00Z"
+    }
+    jsonschema.validate(instance=sample_comparison, schema=scout_schema)
+
+    sample_recommendation = {
+        "record_type": "SCOUT_PROMOTION_RECOMMENDATION",
+        "recommendation_id": "rec-scout-20261007-001",
+        "campaign_id": "camp-20261007-claude-coding",
+        "logical_model_id": "qwen2.5-coder-32b-instruct",
+        "channel": "local-cpa",
+        "consumer": "claude-code",
+        "task_family": "coding_agent",
+        "recommendation_type": "MORE_EVIDENCE_REQUIRED",
+        "production_promoted": False,
+        "confidence": 0.88,
+        "sample_count": 15,
+        "component_reasons": [
+            {
+                "metric_name": "agent_loop_pass",
+                "threshold": True,
+                "observed_value": True,
+                "pass": True,
+                "reason_cn": "智能体编程闭环微基准全部通过"
+            },
+            {
+                "metric_name": "sample_count",
+                "threshold": 20,
+                "observed_value": 15,
+                "pass": False,
+                "reason_cn": "样本量15次，尚低于高置信晋升门槛20次"
+            }
+        ],
+        "owner_action_required": None,
+        "resource_preflight": {
+            "model_size_bytes": None,
+            "free_disk_bytes": None,
+            "gpu_category": None,
+            "ram_category": None,
+            "resource_fit": "UNKNOWN"
+        },
+        "created_at": "2026-10-07T10:10:00Z"
+    }
+    jsonschema.validate(instance=sample_recommendation, schema=scout_schema)
+
+    bad_scout_samples = [
+        ("scout_source_has_api_key", dict(sample_scout_source, api_key="leak")),
+        ("scout_candidate_has_secret", dict(sample_scout_candidate, secret="leak")),
+        ("scout_trial_has_prompt_body", dict(sample_trial, prompt_body="leak")),
+        ("scout_trial_has_response_body", dict(sample_trial, response_body="leak")),
+        ("scout_trial_has_source_code", dict(sample_trial, source_code="leak")),
+        ("scout_trial_has_patch", dict(sample_trial, patch="leak")),
+        ("scout_campaign_invalid_status", dict(sample_scout_campaign, status="INVALID_STATUS")),
+        ("scout_candidate_invalid_avail", dict(sample_scout_candidate, availability_class="UNKNOWN_CLASS")),
+    ]
+    for label, bad_item in bad_scout_samples:
+        try:
+            jsonschema.validate(instance=bad_item, schema=scout_schema)
+            raise AssertionError(f"Failed negative test for STD-026: '{label}' was accepted!")
+        except jsonschema.ValidationError:
+            pass
+
+    print("Sample validation PASS: structures conform to Standards V1.8.0 specifications.")
     return True
 
 def main():
