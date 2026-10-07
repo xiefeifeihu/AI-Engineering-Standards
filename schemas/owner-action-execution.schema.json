@@ -109,6 +109,12 @@
         },
         "credential_ref": { "type": ["string", "null"] },
         "evidence_ref": { "type": ["string", "null"] },
+        "explainability": {
+          "type": "object",
+          "$ref": "#/definitions/forbiddenSensitiveFields"
+        },
+        "result": { "type": ["object", "null"] },
+        "verification": { "type": ["object", "null"] },
         "created_at": { "type": "string" },
         "updated_at": { "type": "string" }
       },
