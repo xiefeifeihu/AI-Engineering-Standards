@@ -48,7 +48,7 @@ LAST_UPDATED=2026-10-07
 
 ## 2. 机器可读 JSON Schemas (`schemas/`)
 
-规范库提供 14 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
+规范库提供 15 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
 - `schemas/engineering-manifest.schema.json`
 - `schemas/resource.schema.json`
 - `schemas/endpoint.schema.json`

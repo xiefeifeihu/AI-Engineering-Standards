@@ -946,7 +946,87 @@ def test_samples():
         except jsonschema.ValidationError:
             pass
 
-    print("Sample validation PASS: structures conform to Standards V1.8.0 specifications.")
+    
+    # 15. Test Safe Autonomous Promotion Sample (STD-027 v1.9.0)
+    with open(SCHEMAS_DIR / "safe-autonomous-promotion.schema.json", "r", encoding="utf-8") as f:
+        autonomy_schema = json.load(f)
+
+    sample_scope = {
+        "record_type": "AUTONOMY_SCOPE_DEFINITION",
+        "scope_id": "scope-claude-code-coding_agent-agent_coding_high_quality-hub-code-auto",
+        "consumer": "claude-code",
+        "task_family": "coding_agent",
+        "capability_profile": "agent_coding_high_quality",
+        "virtual_profile": "hub-code-auto",
+        "mode": "SAFE_AUTONOMOUS",
+        "rollout_state": "CANARY_ACTIVE",
+        "champion_model_id": "qwen2.5:7b-instruct",
+        "champion_channel": "local-cpa",
+        "canary_model_id": "deepseek-coder:6.7b",
+        "canary_channel": "local-cpa",
+        "canary_weight": 0.05,
+        "routing_revision": 2,
+        "stage": 1,
+        "observation_count": 5,
+        "cooldown_until": 0.0,
+        "is_frozen": False,
+        "pinned_champion_model_id": None,
+        "updated_at": "2026-10-08T10:00:00Z"
+    }
+    jsonschema.validate(instance=sample_scope, schema=autonomy_schema)
+
+    sample_snapshot = {
+        "record_type": "CHAMPION_ROUTING_SNAPSHOT",
+        "snapshot_id": "snap-20261008-001",
+        "scope_id": "scope-claude-code-coding_agent-agent_coding_high_quality-hub-code-auto",
+        "routing_revision": 1,
+        "champion_model_id": "qwen2.5:7b-instruct",
+        "champion_channel": "local-cpa",
+        "candidate_plan": [{"rank": 1, "model": "qwen2.5:7b-instruct", "channel": "local-cpa"}],
+        "policy_version": "v1.9.0",
+        "captured_at": "2026-10-08T10:00:00Z"
+    }
+    jsonschema.validate(instance=sample_snapshot, schema=autonomy_schema)
+
+    sample_event = {
+        "record_type": "AUTONOMOUS_PROMOTION_EVENT",
+        "promotion_event_id": "promo-20261008-001",
+        "scope": "scope-claude-code-coding_agent-agent_coding_high_quality-hub-code-auto",
+        "candidate": "deepseek-coder:6.7b",
+        "champion": "qwen2.5:7b-instruct",
+        "from_rollout_state": "ELIGIBLE",
+        "to_rollout_state": "CANARY_ACTIVE",
+        "from_weight": 0.0,
+        "to_weight": 0.05,
+        "routing_revision_before": 1,
+        "routing_revision_after": 2,
+        "reason_code": "CANARY_ACTIVATED_5",
+        "reason_cn": "候选模型通过全部 19 项硬门禁，首次进入 5% 受控金丝雀分流",
+        "evidence_refs": ["scout-campaign-20261008-001"],
+        "policy_version": "v1.9.0",
+        "algorithm_version": "v1.0.0",
+        "executed_at": "2026-10-08T10:00:00Z",
+        "rollback_snapshot_ref": "snap-20261008-001"
+    }
+    jsonschema.validate(instance=sample_event, schema=autonomy_schema)
+
+    sample_rollback = {
+        "record_type": "AUTONOMOUS_ROLLBACK_EVENT",
+        "rollback_event_id": "roll-20261008-001",
+        "scope_id": "scope-claude-code-coding_agent-agent_coding_high_quality-hub-code-auto",
+        "candidate": "deepseek-coder:6.7b",
+        "champion": "qwen2.5:7b-instruct",
+        "trigger_gate": "AGENT_COMPATIBILITY_INVALIDATED",
+        "trigger_reason": "Tool loop failure exceeded threshold",
+        "trigger_cn": "Agent 工具循环协议异常，触发自主安全回滚",
+        "canary_vs_champion_diff": {"error_rate_diff": 0.08},
+        "restored_routing_revision": 1,
+        "cooldown_until": "2026-10-08T11:00:00Z",
+        "executed_at": "2026-10-08T10:05:00Z"
+    }
+    jsonschema.validate(instance=sample_rollback, schema=autonomy_schema)
+
+    print("Sample validation PASS: structures conform to Standards V1.9.0 specifications.")
     return True
 
 def main():

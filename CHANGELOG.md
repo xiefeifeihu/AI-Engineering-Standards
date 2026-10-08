@@ -2,6 +2,24 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [1.9.0] - 2026-10-08
+
+### Added
+- **STD-027: Safe Autonomous Promotion and Canary Routing Contract** (`standards/08-model-governance/STD-027-safe-autonomous-promotion-contract.md`)
+  - Canonical contract for Model Ops Autopilot R4 bounded production routing autonomy:
+    - Scoped `SAFE_AUTONOMOUS` mode while retaining global `SHADOW_ONLY` default.
+    - Orthogonal rollout state machine (`NOT_ELIGIBLE`, `ELIGIBLE`, `CANARY_PENDING`, `CANARY_ACTIVE`, `CANARY_HOLD`, `ROLLBACK_PENDING`, `ROLLED_BACK`, `PROMOTION_READY`, `FULL_PROMOTION_BLOCKED`).
+    - 19 mandatory hard evidence gates (sample_count >= 10, confidence >= 0.90, agent compatible, health, circuit breaker, etc.).
+    - Strict bounded canary stages (0% -> 5% -> 10% maximum).
+    - Deterministic non-sensitive hash bucketing and frozen plan preservation.
+    - Dual-condition observation windows (dwell time + eligible samples).
+    - Autonomous rollback with relative Champion degradation budgets.
+    - Anti-flapping hysteresis cooldown (>= 60 minutes).
+    - Champion preservation snapshot and versioned Compare-and-Swap (CAS) routing policy update.
+    - Operator override precedence and restart-persistent global Autonomy Kill Switch.
+    - Explainable governance audit and zero metrics double-counting invariants.
+- **Canonical Schema**: `schemas/safe-autonomous-promotion.schema.json` supporting all 9 canonical R4 autonomy record types.
+
 ## [1.8.0] - 2026-10-07
 
 ### Added

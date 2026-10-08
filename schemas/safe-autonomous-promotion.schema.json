@@ -1,0 +1,666 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-engineering-standards.local/schemas/safe-autonomous-promotion.schema.json",
+  "title": "Safe Autonomous Promotion and Canary Routing Contract Schema (STD-027 v1.9.0)",
+  "description": "Canonical schema for Model Ops Autopilot Safe Autonomous Promotion: Scoped Canary, Hard Evidence Gates, Deterministic Bucketing, Continuous Verification, Autonomous Rollback, Champion Preservation Snapshots, and Explainable Audit.",
+  "type": "object",
+  "required": [
+    "record_type"
+  ],
+  "definitions": {
+    "rolloutState": {
+      "type": "string",
+      "enum": [
+        "NOT_ELIGIBLE",
+        "ELIGIBLE",
+        "CANARY_PENDING",
+        "CANARY_ACTIVE",
+        "CANARY_HOLD",
+        "ROLLBACK_PENDING",
+        "ROLLED_BACK",
+        "PROMOTION_READY",
+        "FULL_PROMOTION_BLOCKED"
+      ]
+    },
+    "autopilotEnforcementMode": {
+      "type": "string",
+      "enum": [
+        "SHADOW_ONLY",
+        "SAFE_AUTONOMOUS"
+      ]
+    },
+    "canaryStage": {
+      "type": "integer",
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "canaryWeight": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 0.1
+    },
+    "trafficClass": {
+      "type": "string",
+      "enum": [
+        "USER",
+        "AUTONOMY_CANARY_VALIDATION"
+      ]
+    },
+    "observationStatus": {
+      "type": "string",
+      "enum": [
+        "SUCCESS",
+        "TECHNICAL_FAILURE",
+        "AGENT_LOOP_FAILURE",
+        "LATENCY_TIMEOUT",
+        "CIRCUIT_OPEN",
+        "QUOTA_EXHAUSTED"
+      ]
+    },
+    "operatorOverrideType": {
+      "type": "string",
+      "enum": [
+        "PIN_CHAMPION",
+        "DISABLE_CANARY",
+        "FORCE_ROLLBACK",
+        "FREEZE_AUTONOMY",
+        "UNFREEZE_AUTONOMY"
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "description": "Autonomous Scope Configuration Record",
+      "properties": {
+        "record_type": {
+          "type": "string",
+          "enum": [
+            "AUTONOMY_SCOPE_DEFINITION"
+          ]
+        },
+        "scope_id": {
+          "type": "string"
+        },
+        "consumer": {
+          "type": "string"
+        },
+        "task_family": {
+          "type": "string"
+        },
+        "capability_profile": {
+          "type": "string"
+        },
+        "virtual_profile": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/definitions/autopilotEnforcementMode"
+        },
+        "rollout_state": {
+          "$ref": "#/definitions/rolloutState"
+        },
+        "champion_model_id": {
+          "type": "string"
+        },
+        "champion_channel": {
+          "type": "string"
+        },
+        "canary_model_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "canary_channel": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "canary_weight": {
+          "$ref": "#/definitions/canaryWeight"
+        },
+        "routing_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stage": {
+          "$ref": "#/definitions/canaryStage"
+        },
+        "observation_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cooldown_until": {
+          "type": "number",
+          "minimum": 0.0
+        },
+        "is_frozen": {
+          "type": "boolean"
+        },
+        "pinned_champion_model_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "scope_id",
+        "consumer",
+        "task_family",
+        "capability_profile",
+        "virtual_profile",
+        "mode",
+        "rollout_state",
+        "champion_model_id",
+        "canary_weight",
+        "routing_revision"
+      ],
+      "additionalProperties": true
+    },
+    {
+      "description": "Immutable Champion Routing Snapshot Record",
+      "properties": {
+        "record_type": {
+          "type": "string",
+          "enum": [
+            "CHAMPION_ROUTING_SNAPSHOT"
+          ]
+        },
+        "snapshot_id": {
+          "type": "string"
+        },
+        "scope_id": {
+          "type": "string"
+        },
+        "routing_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "champion_model_id": {
+          "type": "string"
+        },
+        "champion_channel": {
+          "type": "string"
+        },
+        "candidate_plan": {
+          "type": "array"
+        },
+        "policy_version": {
+          "type": "string"
+        },
+        "captured_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "snapshot_id",
+        "scope_id",
+        "routing_revision",
+        "champion_model_id",
+        "champion_channel",
+        "candidate_plan",
+        "policy_version",
+        "captured_at"
+      ],
+      "additionalProperties": true
+    },
+    {
+      "description": "Promotion Hard Gate Evaluation Record",
+      "properties": {
+        "record_type": {
+          "type": "string",
+          "enum": [
+            "PROMOTION_HARD_GATE_EVALUATION"
+          ]
+        },
+        "evaluation_id": {
+          "type": "string"
+        },
+        "scope_id": {
+          "type": "string"
+        },
+        "candidate_id": {
+          "type": "string"
+        },
+        "gates": {
+          "type": "object",
+          "properties": {
+            "lifecycle_state_pass": {
+              "type": "boolean"
+            },
+            "runtime_availability_pass": {
+              "type": "boolean"
+            },
+            "not_quarantined_pass": {
+              "type": "boolean"
+            },
+            "not_temp_unavailable_pass": {
+              "type": "boolean"
+            },
+            "circuit_breaker_pass": {
+              "type": "boolean"
+            },
+            "probe_verified_pass": {
+              "type": "boolean"
+            },
+            "agent_compatible_pass": {
+              "type": "boolean"
+            },
+            "exact_key_evidence_pass": {
+              "type": "boolean"
+            },
+            "sample_count_pass": {
+              "type": "boolean"
+            },
+            "confidence_pass": {
+              "type": "boolean"
+            },
+            "recent_evidence_window_pass": {
+              "type": "boolean"
+            },
+            "no_critical_failures_pass": {
+              "type": "boolean"
+            },
+            "quota_unpaused_pass": {
+              "type": "boolean"
+            },
+            "scout_provenance_pass": {
+              "type": "boolean"
+            },
+            "gateway_provenance_pass": {
+              "type": "boolean"
+            },
+            "memory_epoch_pass": {
+              "type": "boolean"
+            },
+            "challenge_suite_accepted_pass": {
+              "type": "boolean"
+            },
+            "budget_available_pass": {
+              "type": "boolean"
+            },
+            "scope_allowlisted_pass": {
+              "type": "boolean"
+            },
+            "kill_switch_inactive_pass": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "lifecycle_state_pass",
+            "runtime_availability_pass",
+            "not_quarantined_pass",
+            "agent_compatible_pass",
+            "sample_count_pass",
+            "confidence_pass",
+            "scope_allowlisted_pass",
+            "kill_switch_inactive_pass"
+          ]
+        },
+        "all_hard_gates_pass": {
+          "type": "boolean"
+        },
+        "evaluated_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "evaluation_id",
+        "scope_id",
+        "candidate_id",
+        "gates",
+        "all_hard_gates_pass",
+        "evaluated_at"
+      ],
+      "additionalProperties": true
+    },
+    {
+      "description": "Promotion Decision Snapshot Record",
+      "properties": {
+        "record_type": {
+          "type": "string",
+          "enum": [
+            "PROMOTION_DECISION_SNAPSHOT"
+          ]
+        },
+        "decision_id": {
+          "type": "string"
+        },
+        "scope_id": {
+          "type": "string"
+        },
+        "candidate": {
+          "type": "string"
+        },
+        "champion": {
+          "type": "string"
+        },
+        "evidence_window": {
+          "type": "string"
+        },
+        "sample_provenance": {
+          "type": "object"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "scout_metrics": {
+          "type": "object"
+        },
+        "technical_health": {
+          "type": "object"
+        },
+        "agent_compatibility": {
+          "type": "object"
+        },
+        "champion_comparison": {
+          "type": "object"
+        },
+        "policy_constraints": {
+          "type": "object"
+        },
+        "budget_state": {
+          "type": "object"
+        },
+        "created_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "decision_id",
+        "scope_id",
+        "candidate",
+        "champion",
+        "confidence",
+        "scout_metrics",
+        "created_at"
+      ],
+      "additionalProperties": true
+    },
+    {
+      "description": "Autonomous Promotion Event / Transition Record",
+      "properties": {
+        "record_type": {
+          "type": "string",
+          "enum": [
+            "AUTONOMOUS_PROMOTION_EVENT"
+          ]
+        },
+        "promotion_event_id": {
+          "type": "string"
+        },
+        "scope": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "candidate": {
+          "type": "string"
+        },
+        "champion": {
+          "type": "string"
+        },
+        "from_rollout_state": {
+          "$ref": "#/definitions/rolloutState"
+        },
+        "to_rollout_state": {
+          "$ref": "#/definitions/rolloutState"
+        },
+        "from_weight": {
+          "$ref": "#/definitions/canaryWeight"
+        },
+        "to_weight": {
+          "$ref": "#/definitions/canaryWeight"
+        },
+        "routing_revision_before": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "routing_revision_after": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reason_code": {
+          "type": "string"
+        },
+        "reason_cn": {
+          "type": "string"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "policy_version": {
+          "type": "string"
+        },
+        "algorithm_version": {
+          "type": "string"
+        },
+        "executed_at": {
+          "type": "string"
+        },
+        "rollback_snapshot_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "record_type",
+        "promotion_event_id",
+        "scope",
+        "candidate",
+        "champion",
+        "from_rollout_state",
+        "to_rollout_state",
+        "from_weight",
+        "to_weight",
+        "routing_revision_before",
+        "routing_revision_after",
+        "reason_code",
+        "executed_at"
+      ],
+      "additionalProperties": true
+    },
+    {
+      "description": "Canary Observation Record",
+      "properties": {
+        "record_type": {
+          "type": "string",
+          "enum": [
+            "CANARY_OBSERVATION"
+          ]
+        },
+        "observation_id": {
+          "type": "string"
+        },
+        "scope_id": {
+          "type": "string"
+        },
+        "routing_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "model_id": {
+          "type": "string"
+        },
+        "channel": {
+          "type": "string"
+        },
+        "is_canary": {
+          "type": "boolean"
+        },
+        "bucket_hash": {
+          "type": "number"
+        },
+        "status": {
+          "$ref": "#/definitions/observationStatus"
+        },
+        "latency_ms": {
+          "type": "number",
+          "minimum": 0.0
+        },
+        "traffic_class": {
+          "$ref": "#/definitions/trafficClass"
+        },
+        "observed_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "observation_id",
+        "scope_id",
+        "routing_revision",
+        "model_id",
+        "is_canary",
+        "status",
+        "latency_ms",
+        "traffic_class",
+        "observed_at"
+      ],
+      "additionalProperties": true
+    },
+    {
+      "description": "Autonomous Rollback Event Record",
+      "properties": {
+        "record_type": {
+          "type": "string",
+          "enum": [
+            "AUTONOMOUS_ROLLBACK_EVENT"
+          ]
+        },
+        "rollback_event_id": {
+          "type": "string"
+        },
+        "scope_id": {
+          "type": "string"
+        },
+        "candidate": {
+          "type": "string"
+        },
+        "champion": {
+          "type": "string"
+        },
+        "trigger_gate": {
+          "type": "string"
+        },
+        "trigger_reason": {
+          "type": "string"
+        },
+        "trigger_cn": {
+          "type": "string"
+        },
+        "canary_vs_champion_diff": {
+          "type": "object"
+        },
+        "restored_routing_revision": {
+          "type": "integer"
+        },
+        "cooldown_until": {
+          "type": "string"
+        },
+        "executed_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "rollback_event_id",
+        "scope_id",
+        "candidate",
+        "champion",
+        "trigger_gate",
+        "trigger_reason",
+        "restored_routing_revision",
+        "cooldown_until",
+        "executed_at"
+      ],
+      "additionalProperties": true
+    },
+    {
+      "description": "Operator Override Event Record",
+      "properties": {
+        "record_type": {
+          "type": "string",
+          "enum": [
+            "OPERATOR_OVERRIDE_EVENT"
+          ]
+        },
+        "override_id": {
+          "type": "string"
+        },
+        "scope_id": {
+          "type": "string"
+        },
+        "override_type": {
+          "$ref": "#/definitions/operatorOverrideType"
+        },
+        "operator_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "applied_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "override_id",
+        "scope_id",
+        "override_type",
+        "operator_id",
+        "applied_at"
+      ],
+      "additionalProperties": true
+    },
+    {
+      "description": "Global Autonomy State Record",
+      "properties": {
+        "record_type": {
+          "type": "string",
+          "enum": [
+            "AUTONOMY_GLOBAL_STATE"
+          ]
+        },
+        "kill_switch_active": {
+          "type": "boolean"
+        },
+        "kill_switch_reason": {
+          "type": "string"
+        },
+        "global_autopilot_mode": {
+          "$ref": "#/definitions/autopilotEnforcementMode"
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "kill_switch_active",
+        "global_autopilot_mode",
+        "updated_at"
+      ],
+      "additionalProperties": true
+    }
+  ]
+}
