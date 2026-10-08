@@ -1026,7 +1026,72 @@ def test_samples():
     }
     jsonschema.validate(instance=sample_rollback, schema=autonomy_schema)
 
-    print("Sample validation PASS: structures conform to Standards V1.9.0 specifications.")
+# 13. Test Model Supply Autopilot Schema
+    with open(SCHEMAS_DIR / "model-supply-autopilot.schema.json", "r", encoding="utf-8") as f:
+        supply_schema = json.load(f)
+
+    sample_source = {
+        "record_type": "MODEL_SUPPLY_SOURCE",
+        "source_id": "src-openrouter-official",
+        "source_type": "OPENROUTER_CATALOG",
+        "provider_name": "OpenRouter",
+        "catalog_endpoint": "https://openrouter.ai/api/v1/models",
+        "probe_endpoint": "https://openrouter.ai/api/v1/chat/completions",
+        "credential_ref": "env://OPENROUTER_API_KEY",
+        "credential_state": "AVAILABLE",
+        "trust_level": "TRUSTED",
+        "enabled": True,
+        "discovery_interval_seconds": 3600,
+        "rate_limit_policy": "DEFAULT_BACKOFF",
+        "terms_status": "ACCEPTED",
+        "last_success_at": "2026-10-08T10:00:00Z",
+        "last_error": None,
+        "backoff_until": None,
+        "catalog_generation": 1
+    }
+    jsonschema.validate(instance=sample_source, schema=supply_schema)
+
+    sample_supply_item = {
+        "record_type": "MODEL_SUPPLY_ITEM",
+        "supply_id": "sup-openrouter-liquid-lfm-free",
+        "source_id": "src-openrouter-official",
+        "provider_name": "OpenRouter",
+        "logical_model_id": "liquid/lfm-2.5-2.6b:free",
+        "raw_model_id": "liquid/lfm-2.5-2.6b:free",
+        "channel": "openrouter-free",
+        "pricing_class": "FREE_NOW",
+        "stability_class": "EPHEMERAL_FREE",
+        "availability_state": "PROBE_READY",
+        "quota_state": "HEALTHY",
+        "cost_class": "COST_FREE",
+        "input_price_per_m": 0.0,
+        "output_price_per_m": 0.0,
+        "currency": "USD",
+        "pricing_verified_at": "2026-10-08T10:00:00Z",
+        "cpa_onboarded": False,
+        "cpa_route_id": None,
+        "discovered_at": "2026-10-08T10:00:00Z",
+        "updated_at": "2026-10-08T10:00:00Z"
+    }
+    jsonschema.validate(instance=sample_supply_item, schema=supply_schema)
+
+    sample_onboarding_event = {
+        "record_type": "CPA_ONBOARDING_EVENT",
+        "onboarding_id": "onb-20261008-001",
+        "supply_id": "sup-codingplan-qwen3.6-plus-auto",
+        "provider_name": "CodingPlan",
+        "model_name": "qwen3.6-plus",
+        "target_resource": "local-cpa",
+        "onboarding_path": "PREAUTHORIZED_AUTOMATIC",
+        "owner_action_request_id": "act-req-20261008-onb-001",
+        "catalog_preserved": True,
+        "post_probe_verified": True,
+        "fallback_count": 0,
+        "completed_at": "2026-10-08T10:05:00Z"
+    }
+    jsonschema.validate(instance=sample_onboarding_event, schema=supply_schema)
+
+    print("Sample validation PASS: structures conform to Standards V2.0.0 specifications.")
     return True
 
 def main():

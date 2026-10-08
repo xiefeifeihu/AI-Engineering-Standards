@@ -1,0 +1,535 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-engineering-standards.local/schemas/model-supply-autopilot.schema.json",
+  "title": "Model Supply Autopilot and Champion Management Contract Schema (STD-028 v2.0.0)",
+  "description": "Canonical schema for external model supply discovery, free/trial classification, availability probing, quota monitoring, CPA onboarding, and autonomous champion management.",
+  "type": "object",
+  "required": [
+    "record_type"
+  ],
+  "definitions": {
+    "sourceType": {
+      "type": "string",
+      "enum": [
+        "CPA_EXISTING_CATALOG",
+        "OPENROUTER_CATALOG",
+        "HUGGINGFACE_INFERENCE_PROVIDERS",
+        "GENERIC_OPENAI_COMPATIBLE",
+        "OWNER_CONFIGURED_PROVIDER"
+      ]
+    },
+    "trustLevel": {
+      "type": "string",
+      "enum": [
+        "TRUSTED",
+        "OPERATOR_APPROVED",
+        "UNVERIFIED",
+        "BLOCKED"
+      ]
+    },
+    "credentialState": {
+      "type": "string",
+      "enum": [
+        "NOT_REQUIRED",
+        "AVAILABLE",
+        "MISSING",
+        "EXPIRED",
+        "INVALID"
+      ]
+    },
+    "pricingClass": {
+      "type": "string",
+      "enum": [
+        "FREE_NOW",
+        "ZERO_PRICE_MODEL",
+        "TRIAL_CREDIT",
+        "LIMITED_FREE_TIER",
+        "PAID",
+        "UNKNOWN",
+        "EXPIRED"
+      ]
+    },
+    "supplyStabilityClass": {
+      "type": "string",
+      "enum": [
+        "STABLE",
+        "EPHEMERAL_FREE",
+        "TRIAL",
+        "UNKNOWN"
+      ]
+    },
+    "supplyAvailabilityState": {
+      "type": "string",
+      "enum": [
+        "DISCOVERED",
+        "CREDENTIAL_REQUIRED",
+        "TERMS_REQUIRED",
+        "PROBE_READY",
+        "AVAILABLE",
+        "RATE_LIMITED",
+        "QUOTA_EXHAUSTED",
+        "AUTH_FAILED",
+        "TEMP_UNAVAILABLE",
+        "TRIAL_EXPIRED",
+        "PROVIDER_UNAVAILABLE",
+        "DISABLED",
+        "RETIRED"
+      ]
+    },
+    "quotaState": {
+      "type": "string",
+      "enum": [
+        "UNKNOWN",
+        "HEALTHY",
+        "LOW",
+        "RATE_LIMITED",
+        "EXHAUSTED",
+        "TRIAL_EXPIRED"
+      ]
+    },
+    "costClass": {
+      "type": "string",
+      "enum": [
+        "COST_FREE",
+        "COST_TRIAL",
+        "COST_LOW",
+        "COST_STANDARD",
+        "COST_HIGH",
+        "COST_UNKNOWN"
+      ]
+    },
+    "championRolloutStage": {
+      "type": "string",
+      "enum": [
+        "CANARY_5",
+        "CANARY_10",
+        "RAMP_25",
+        "RAMP_50",
+        "PROMOTION_READY",
+        "CHAMPION_ACTIVE"
+      ]
+    },
+    "onboardingPath": {
+      "type": "string",
+      "enum": [
+        "PREAUTHORIZED_AUTOMATIC",
+        "APPROVAL_REQUIRED"
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "title": "Model Supply Source Record",
+      "properties": {
+        "record_type": {
+          "const": "MODEL_SUPPLY_SOURCE"
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_type": {
+          "$ref": "#/definitions/sourceType"
+        },
+        "provider_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "catalog_endpoint": {
+          "type": "string",
+          "format": "uri"
+        },
+        "probe_endpoint": {
+          "type": "string"
+        },
+        "credential_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "credential_state": {
+          "$ref": "#/definitions/credentialState"
+        },
+        "trust_level": {
+          "$ref": "#/definitions/trustLevel"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "discovery_interval_seconds": {
+          "type": "integer",
+          "minimum": 10
+        },
+        "rate_limit_policy": {
+          "type": "string"
+        },
+        "terms_status": {
+          "type": "string"
+        },
+        "last_success_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "backoff_until": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "catalog_generation": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "record_type",
+        "source_id",
+        "source_type",
+        "provider_name",
+        "catalog_endpoint",
+        "credential_state",
+        "trust_level",
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Discovered Model Supply Item Record",
+      "properties": {
+        "record_type": {
+          "const": "MODEL_SUPPLY_ITEM"
+        },
+        "supply_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logical_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "raw_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string"
+        },
+        "pricing_class": {
+          "$ref": "#/definitions/pricingClass"
+        },
+        "stability_class": {
+          "$ref": "#/definitions/supplyStabilityClass"
+        },
+        "availability_state": {
+          "$ref": "#/definitions/supplyAvailabilityState"
+        },
+        "quota_state": {
+          "$ref": "#/definitions/quotaState"
+        },
+        "cost_class": {
+          "$ref": "#/definitions/costClass"
+        },
+        "input_price_per_m": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "output_price_per_m": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "currency": {
+          "type": "string"
+        },
+        "pricing_verified_at": {
+          "type": "string"
+        },
+        "cpa_onboarded": {
+          "type": "boolean"
+        },
+        "cpa_route_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "discovered_at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "supply_id",
+        "source_id",
+        "provider_name",
+        "logical_model_id",
+        "pricing_class",
+        "stability_class",
+        "availability_state",
+        "quota_state"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Supply Availability Probe Result Record",
+      "properties": {
+        "record_type": {
+          "const": "SUPPLY_PROBE_RESULT"
+        },
+        "probe_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supply_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "probe_endpoint": {
+          "type": "string"
+        },
+        "status_code": {
+          "type": "integer"
+        },
+        "generation_verified": {
+          "type": "boolean"
+        },
+        "upstream_model_verified": {
+          "type": "string"
+        },
+        "latency_ms": {
+          "type": "number"
+        },
+        "tokens_used": {
+          "type": "integer"
+        },
+        "probe_cost_usd": {
+          "type": "number"
+        },
+        "error_detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "probed_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "probe_id",
+        "supply_id",
+        "generation_verified",
+        "latency_ms",
+        "probed_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Supply Quota State Event Record",
+      "properties": {
+        "record_type": {
+          "const": "SUPPLY_QUOTA_EVENT"
+        },
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supply_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quota_state": {
+          "$ref": "#/definitions/quotaState"
+        },
+        "remaining_requests": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "remaining_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reset_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "retry_after_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "evidence_source": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "observed_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "event_id",
+        "supply_id",
+        "quota_state",
+        "evidence_source",
+        "observed_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "CPA Route Onboarding Event Record",
+      "properties": {
+        "record_type": {
+          "const": "CPA_ONBOARDING_EVENT"
+        },
+        "onboarding_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supply_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_resource": {
+          "type": "string"
+        },
+        "onboarding_path": {
+          "$ref": "#/definitions/onboardingPath"
+        },
+        "owner_action_request_id": {
+          "type": "string"
+        },
+        "catalog_preserved": {
+          "type": "boolean"
+        },
+        "post_probe_verified": {
+          "type": "boolean"
+        },
+        "fallback_count": {
+          "type": "integer",
+          "maximum": 0
+        },
+        "completed_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "onboarding_id",
+        "supply_id",
+        "provider_name",
+        "model_name",
+        "onboarding_path",
+        "catalog_preserved",
+        "post_probe_verified",
+        "completed_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "Champion Management Rollout Event Record",
+      "properties": {
+        "record_type": {
+          "const": "CHAMPION_ROLLOUT_EVENT"
+        },
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "candidate_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "previous_champion_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from_stage": {
+          "$ref": "#/definitions/championRolloutStage"
+        },
+        "to_stage": {
+          "$ref": "#/definitions/championRolloutStage"
+        },
+        "canary_weight": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "reason_code": {
+          "type": "string"
+        },
+        "hard_gates_passed": {
+          "type": "boolean"
+        },
+        "ephemeral_free_blocked": {
+          "type": "boolean"
+        },
+        "executed_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "event_id",
+        "scope_id",
+        "candidate_model_id",
+        "previous_champion_id",
+        "to_stage",
+        "reason_code",
+        "executed_at"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

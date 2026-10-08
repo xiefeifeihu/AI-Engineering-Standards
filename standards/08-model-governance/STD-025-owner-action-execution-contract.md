@@ -73,6 +73,9 @@ OBSERVE
 | `CPA_ROLLBACK` | `HIGH_RISK_RECOVERY` | `APPROVAL_REQUIRED` | 必须具备明确有效的历史部署凭证 (Provenance) | **实现但 LIVE 默认禁用** |
 | `OLLAMA_PULL_MODEL` | `RESOURCE_MUTATION` | `APPROVAL_REQUIRED` | 必须完成磁盘可用空间与显存容量 Preflight 检查 | **实现但 LIVE 需显式审批** |
 | `OLLAMA_REMOVE_MODEL` | `DESTRUCTIVE` | `DISABLED` | 严格禁止静默删除模型；生产默认阻断 | **LIVE 严格禁用** |
+| `CPA_REGISTER_MODEL_ROUTE` | `RESOURCE_MUTATION` | `APPROVAL_REQUIRED` / `POLICY_PREAUTHORIZED` | 仅限已审批供应商追加模型路由，具备快照与回滚 | **LIVE 启用** (支持 STD-028 预授权安全自接入) |
+| `CPA_DISABLE_MODEL_ROUTE` | `RESOURCE_MUTATION` | `APPROVAL_REQUIRED` / `POLICY_PREAUTHORIZED` | 禁用指定模型路由，不破坏其他模型与容器 | **LIVE 启用** |
+| `CPA_REFRESH_MODEL_CATALOG` | `REVERSIBLE_OPERATIONAL` | `POLICY_PREAUTHORIZED` | 重新拉取上游目录，只读无损 | **LIVE 启用** |
 
 ---
 

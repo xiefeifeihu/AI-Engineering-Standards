@@ -2,6 +2,15 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [2.0.0] - 2026-10-08
+
+### Added
+- **STD-028 Model Supply Autopilot and Champion Management Contract**: Canonical standard for external model supply discovery, free/trial pricing classification, zero-secret availability probing, CPA transactional onboarding, quota health backoff, cost-aware multi-objective routing with Free Capacity Lane, and 5-stage autonomous Champion management.
+- **model-supply-autopilot.schema.json**: JSON Schema validating Model Supply Sources, Discovered Items, Probe Results, Quota Events, CPA Onboarding Events, and Champion Rollout Events.
+- **STD-025 Extension**: Added `CPA_REGISTER_MODEL_ROUTE`, `CPA_DISABLE_MODEL_ROUTE`, and `CPA_REFRESH_MODEL_CATALOG` canonical action types, alongside `POLICY_PREAUTHORIZED` execution mode for approved low-risk non-destructive route registrations.
+
+---
+
 ## [1.9.0] - 2026-10-08
 
 ### Added
