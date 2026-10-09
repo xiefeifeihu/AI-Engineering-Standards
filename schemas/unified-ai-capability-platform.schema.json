@@ -1,0 +1,248 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-engineering-standards.local/schemas/unified-ai-capability-platform.schema.json",
+  "title": "Unified AI Capability Platform Contract Schema (STD-030 v2.1.0)",
+  "description": "Canonical schema for four-tier repository separation, open-weight deployment intelligence, inference engine catalog, hardware profiling, feasibility estimation, multimodal runtime abstraction, and multi-consumer governance.",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "scope"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "enum": ["2.1.0"]
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "DEPLOYMENT_INTELLIGENCE",
+        "MULTIMODAL_RUNTIME",
+        "CONSUMER_REGISTRY",
+        "UNIFIED_PLATFORM"
+      ]
+    }
+  },
+  "definitions": {
+    "engineName": {
+      "type": "string",
+      "enum": [
+        "ollama",
+        "llama.cpp",
+        "vllm",
+        "sglang",
+        "transformers",
+        "nvidia-nim"
+      ]
+    },
+    "engineSupportStatus": {
+      "type": "string",
+      "enum": [
+        "ENGINE_SUPPORTED",
+        "ENGINE_DECLARED",
+        "ENGINE_NOT_VERIFIED",
+        "ENGINE_INCOMPATIBLE"
+      ]
+    },
+    "modelDefinition": {
+      "type": "object",
+      "required": [
+        "model_id",
+        "model_family",
+        "revision",
+        "parameter_count",
+        "total_parameter_count",
+        "active_parameter_count",
+        "architecture",
+        "context_length",
+        "modalities",
+        "open_weights",
+        "license",
+        "weights_url",
+        "download_source",
+        "file_format",
+        "quantization",
+        "deployment_engine",
+        "official_model_card",
+        "metadata_confidence",
+        "last_verified_at"
+      ],
+      "properties": {
+        "model_id": { "type": "string" },
+        "model_family": { "type": "string" },
+        "revision": { "type": "string" },
+        "parameter_count": { "type": "string" },
+        "total_parameter_count": { "type": "number", "minimum": 0 },
+        "active_parameter_count": { "type": "number", "minimum": 0 },
+        "architecture": { "type": "string", "enum": ["dense", "moe", "encoder-decoder", "diffusion"] },
+        "moe_information": {
+          "type": ["object", "null"],
+          "properties": {
+            "num_experts": { "type": "integer" },
+            "active_experts": { "type": "integer" },
+            "shared_experts": { "type": "integer" }
+          }
+        },
+        "context_length": { "type": "integer", "minimum": 1 },
+        "modalities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "open_weights": { "type": "boolean" },
+        "license": { "type": "string" },
+        "commercial_use_constraints": { "type": "string" },
+        "weights_url": { "type": "string", "format": "uri" },
+        "download_source": {
+          "type": "string",
+          "enum": ["huggingface", "modelscope", "ollama_library", "github", "other"]
+        },
+        "file_format": {
+          "type": "string",
+          "enum": ["gguf", "safetensors", "onnx", "bin", "other"]
+        },
+        "quantization": { "type": "string" },
+        "deployment_engine": { "$ref": "#/definitions/engineName" },
+        "official_model_card": { "type": "string", "format": "uri" },
+        "metadata_confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "last_verified_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "hostHardwareProfile": {
+      "type": "object",
+      "required": [
+        "cpu_model",
+        "cpu_cores_physical",
+        "cpu_threads_logical",
+        "system_ram_gb",
+        "system_ram_free_gb",
+        "gpu_available",
+        "disk_free_gb",
+        "scanned_at"
+      ],
+      "properties": {
+        "cpu_model": { "type": "string" },
+        "cpu_cores_physical": { "type": "integer", "minimum": 1 },
+        "cpu_threads_logical": { "type": "integer", "minimum": 1 },
+        "system_ram_gb": { "type": "number", "minimum": 0 },
+        "system_ram_free_gb": { "type": "number", "minimum": 0 },
+        "gpu_available": { "type": "boolean" },
+        "gpu_model": { "type": ["string", "null"] },
+        "gpu_vram_gb": { "type": "number", "minimum": 0 },
+        "gpu_vram_free_gb": { "type": "number", "minimum": 0 },
+        "gpu_compute_capability": { "type": ["string", "null"] },
+        "cuda_driver_version": { "type": ["string", "null"] },
+        "wsl_passthrough": { "type": "boolean" },
+        "disk_free_gb": { "type": "number", "minimum": 0 },
+        "scanned_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "feasibilityAssessment": {
+      "type": "object",
+      "required": [
+        "model_id",
+        "feasibility_status",
+        "weights_memory_gb",
+        "kv_cache_memory_gb",
+        "runtime_overhead_gb",
+        "total_required_memory_gb",
+        "tier_minimum",
+        "tier_recommended",
+        "tier_high_concurrency",
+        "assumptions"
+      ],
+      "properties": {
+        "model_id": { "type": "string" },
+        "feasibility_status": {
+          "type": "string",
+          "enum": [
+            "RUNNABLE_NOW",
+            "RUNNABLE_WITH_OFFLOAD",
+            "HARDWARE_UPGRADE_REQUIRED",
+            "INSUFFICIENT_METADATA",
+            "ENGINE_INCOMPATIBLE"
+          ]
+        },
+        "weights_memory_gb": { "type": "number" },
+        "kv_cache_memory_gb": { "type": "number" },
+        "runtime_overhead_gb": { "type": "number" },
+        "total_required_memory_gb": { "type": "number" },
+        "tier_minimum": { "type": "object" },
+        "tier_recommended": { "type": "object" },
+        "tier_high_concurrency": { "type": "object" },
+        "assumptions": { "type": "string" }
+      }
+    },
+    "multimodalCapabilityEnum": {
+      "type": "string",
+      "enum": [
+        "IMAGE_GENERATION",
+        "IMAGE_EDITING",
+        "VISION_UNDERSTANDING",
+        "TEXT_TO_SPEECH",
+        "SPEECH_TO_TEXT",
+        "AUDIO_UNDERSTANDING",
+        "VIDEO_GENERATION",
+        "VIDEO_UNDERSTANDING",
+        "DOCUMENT_OCR_EXTRACTION",
+        "EMBEDDING_TEXT",
+        "EMBEDDING_MULTIMODAL",
+        "RERANKING",
+        "CODE_COMPLETION",
+        "CODE_REASONING",
+        "FUNCTION_CALLING",
+        "WEB_SEARCH_GROUNDING",
+        "STRUCTURED_EXTRACTION",
+        "LONG_CONTEXT_ANALYSIS"
+      ]
+    },
+    "multimodalJobState": {
+      "type": "string",
+      "enum": [
+        "CREATED",
+        "VALIDATED",
+        "SUBMITTED",
+        "RUNNING",
+        "SUCCEEDED",
+        "FAILED",
+        "CANCELLED"
+      ]
+    },
+    "consumerProfile": {
+      "type": "object",
+      "required": [
+        "consumer_id",
+        "consumer_name",
+        "consumer_type",
+        "autonomy_mode",
+        "allowed_modalities",
+        "registered_at"
+      ],
+      "properties": {
+        "consumer_id": {
+          "type": "string",
+          "enum": [
+            "claude-code",
+            "antigravity",
+            "aikb",
+            "sidecar",
+            "vtip-catalog",
+            "generic-openai",
+            "multimodal-apps"
+          ]
+        },
+        "consumer_name": { "type": "string" },
+        "consumer_type": { "type": "string" },
+        "autonomy_mode": {
+          "type": "string",
+          "enum": ["SHADOW_ONLY", "ADVISORY", "ENFORCED"]
+        },
+        "allowed_modalities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "cost_sensitivity": { "type": "string" },
+        "registered_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}
