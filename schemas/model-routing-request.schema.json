@@ -1,14 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://standards.local/model-routing-request.schema.json",
-  "title": "Model Routing Intent Request Schema",
+  "title": "Model Routing Intent Request Schema (STD-009 v2.1.1)",
   "type": "object",
-  "required": [
-    "task"
-  ],
   "properties": {
     "task": {
-      "type": "string"
+      "type": "string",
+      "description": "Legacy task identifier (backward compatible)"
     },
     "quality": {
       "type": "string",
@@ -48,7 +46,40 @@
       "default": 5
     },
     "consumer": {
-      "type": "string"
+      "type": "string",
+      "description": "Legacy consumer identifier (backward compatible)"
+    },
+    "task_type": {
+      "type": "string",
+      "description": "Canonical specific task type (STD-009 / STD-030, e.g. report_polishing, knowledge_distillation, chat, code)"
+    },
+    "task_family": {
+      "type": "string",
+      "description": "Generic task family identifier (STD-030, e.g. document_transformation, rag_knowledge, coding_agent)"
+    },
+    "capability_profile": {
+      "type": "string",
+      "description": "Named capability profile identifier (STD-030, e.g. faithful_summarization, analytical_reasoning)"
+    },
+    "output_contract": {
+      "type": "string",
+      "description": "Business output contract identifier (STD-030, e.g. markdown_structured_bullets, json_structured_schema)"
+    },
+    "consumer_id": {
+      "type": "string",
+      "description": "Canonical consumer identifier (STD-030, e.g. sidecar, aikb, claude-code)"
     }
-  }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "task"
+      ]
+    },
+    {
+      "required": [
+        "task_type"
+      ]
+    }
+  ]
 }

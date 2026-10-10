@@ -2,7 +2,7 @@
 
 ```text
 STANDARD_ID=STD-010
-VERSION=1.3.0
+VERSION=1.3.1
 STATUS=ACTIVE
 SCOPE=所有向 AI-Hub 上报实际调用结果与多阶段评测反馈的业务消费者 (AI-KB, Sidecar, Coding Agents 等)
 OWNER=AI Platform Governance Committee
@@ -221,3 +221,22 @@ SCHEMA_REF=schemas/model-feedback.schema.json
 - `tests_passed`: 单元测试是否通过
 - `lint_passed`: 静态代码检查是否通过
 - `task_completed`: 编程任务是否最终闭环完成
+
+---
+
+## 15. 通用任务契约与反馈隔离规范 (Generic Task Contract & Failure Isolation - v1.3.1 / v2.1.1)
+
+### 15.1 字段识别与映射
+`POST /api/model/feedback` 同时识别旧字段 (`consumer`, `task`) 与规范新字段 (`consumer_id`, `task_family`, `task_type`, `capability_profile`, `output_contract`)。冲突字段按同义冲突规则处理。
+
+### 15.2 业务软告警 (Soft Warning) 隔离红线
+- 类似 `BULLET_LIMIT_EXCEEDED`、`BULLET_LIMIT_ADVISORY`、`FORMAT_READABILITY_NOTICE` 等业务形态/可读性建议：
+  - **MUST NOT** 标记为技术调用失败 (`success=false`)；
+  - **MUST NOT** 累加技术连续失败计数 (`consecutive_failures`)；
+  - **MUST NOT** 触发熔断器 (`QUARANTINED`)；
+  - **MUST NOT** 记为致命业务驳回 (`rejected` / `discard`)，应记为 `approved_with_note`。
+
+### 15.3 HTTP 200 空结构与超时精准归因
+- 若上游响应状态码为 HTTP 200，但业务内容为空或结构解析失败 (`HTTP200_EMPTY_STRUCTURE`)：
+  - **MUST NOT** 未经底层网络凭证即标记为 `TIMEOUT` 或 `NETWORK_ERROR`；
+  - 应正确归类为结构解析失败或服务商内容异常，严禁伪造网络超时。

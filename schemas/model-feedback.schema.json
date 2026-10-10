@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://standards.local/model-feedback.schema.json",
-  "title": "Model Execution and Multi-Stage Feedback Payload Schema (STD-010 v1.3.0)",
+  "title": "Model Execution and Multi-Stage Feedback Payload Schema (STD-010 v1.3.1 / v2.1.1)",
   "type": "object",
   "required": [
     "model",
@@ -228,6 +228,26 @@
     "task_completed": {
       "type": "boolean",
       "description": "Whether overall coding task was marked completed"
+    },
+    "consumer_id": {
+      "type": "string",
+      "description": "Canonical consumer identifier (STD-030, e.g. sidecar, aikb, claude-code)"
+    },
+    "task_family": {
+      "type": "string",
+      "description": "Generic task family identifier (STD-030, e.g. document_transformation, rag_knowledge, coding_agent)"
+    },
+    "task_type": {
+      "type": "string",
+      "description": "Specific task type identifier (STD-009 / STD-030, e.g. report_polishing, knowledge_distillation, chat, code)"
+    },
+    "capability_profile": {
+      "type": "string",
+      "description": "Named capability profile identifier (STD-030, e.g. faithful_summarization, analytical_reasoning)"
+    },
+    "output_contract": {
+      "type": "string",
+      "description": "Business output contract identifier (STD-030, e.g. markdown_structured_bullets, json_structured_schema)"
     }
   }
 }

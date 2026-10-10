@@ -2,7 +2,7 @@
 
 ```text
 STANDARD_ID=STD-009
-VERSION=1.0.0
+VERSION=2.1.1
 STATUS=ACTIVE
 SCOPE=AI-Hub 候选方案推荐引擎与所有业务消费系统
 OWNER=AI Platform Governance Committee
@@ -78,3 +78,44 @@ SCHEMA_REF=schemas/model-routing-response.schema.json
    - `1 - 9` 样本：`LOW`（中文：低）
    - `10 - 49` 样本：`MEDIUM`（中文：中）
    - `50+` 样本：`HIGH`（中文：高）
+
+---
+
+## 5. 通用任务契约规范 (Generic Task Contract - v2.1.1)
+
+### 5.1 契约字段定义与映射体系
+为消除各业务消费端特定任务与模型治理之间的私有耦合，规范定义以下标准维度：
+- **`consumer_id`**: 规范消费端标识符（依据 STD-030 登记，如 `sidecar`, `aikb`, `claude-code`, `generic-openai`）。
+- **`task_family`**: 通用任务家族（如 `document_transformation`, `rag_knowledge`, `coding_agent`）。
+- **`task_type`**: 具体任务类型（如 `report_polishing`, `knowledge_distillation`, `chat`, `code`）。
+- **`capability_profile`**: 命名能力画像 ID（保持**字符串类型**，如 `faithful_summarization`, `analytical_reasoning`）。
+- **`output_contract`**: 业务输出契约（如 `markdown_structured_bullets`, `json_structured_schema`）。
+
+### 5.2 Sidecar 标准语义基准
+- `consumer_id`: `sidecar` (历史兼容别名 `vtip-ai-sidecar`)
+- `task_family`: `document_transformation`
+- `task_type`: `report_polishing`
+- `capability_profile`: `faithful_summarization`
+- `output_contract`: `markdown_structured_bullets`
+
+### 5.3 双轨兼容与同义字段冲突契约
+1. **向后兼容**: 客户端可使用旧字段（`consumer`, `task`）或规范新字段（`consumer_id`, `task_type`），亦允许混合携带。
+2. **冲突硬拒绝 (422)**:
+   - 若请求同时携带 `consumer` 与 `consumer_id`，经别名归一化后若指向不同属主，服务端 **MUST** 返回结构化 HTTP 422 (`SYNONYMOUS_FIELD_CONFLICT`)，严禁静默覆盖。
+   - 若请求同时携带 `task` 与 `task_type` 且取值不同，服务端 **MUST** 返回结构化 HTTP 422 (`SYNONYMOUS_FIELD_CONFLICT`)，严禁静默降级为其他任务（如严禁将 `report_polishing` 静默降级为 `knowledge_distillation`）。
+3. **未登记消费端鉴权拒绝**:
+   - 若显式提供未在 Consumer Registry 登记的 `consumer_id` / `consumer`，服务端 **MUST** 返回 HTTP 403 (`CONSUMER_NOT_REGISTERED`) 权限拒绝。
+
+### 5.4 路由响应增量元数据
+路由响应在保持既有 `decision_id`, `candidates`, `candidate_plan`, `fallback_policy` 等字段完全不变的基础上，**MUST** 增量附带：
+```json
+{
+  "canonical_consumer_id": "sidecar",
+  "task_family": "document_transformation",
+  "task_type": "report_polishing",
+  "capability_profile": "faithful_summarization",
+  "output_contract": "markdown_structured_bullets",
+  "contract_version": "v2.1.1"
+}
+```
+所有内部字段必须有权威来源，严禁虚构伪画像。

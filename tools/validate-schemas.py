@@ -49,6 +49,32 @@ def test_samples():
     }
     jsonschema.validate(instance=sample_request_high, schema=req_schema)
 
+    # 1b. Test Generic Task Contract v2.1.1 Request Samples
+    sample_request_v211 = {
+        "consumer_id": "sidecar",
+        "task_family": "document_transformation",
+        "task_type": "report_polishing",
+        "capability_profile": "faithful_summarization",
+        "output_contract": "markdown_structured_bullets",
+        "quality": "high",
+        "latency": "normal",
+    }
+    jsonschema.validate(instance=sample_request_v211, schema=req_schema)
+
+    # Mixed request sample (legacy + canonical)
+    sample_request_mixed = {
+        "consumer": "vtip-ai-sidecar",
+        "consumer_id": "sidecar",
+        "task": "report_polishing",
+        "task_type": "report_polishing",
+        "task_family": "document_transformation",
+        "capability_profile": "faithful_summarization",
+        "output_contract": "markdown_structured_bullets",
+        "quality": "high",
+        "latency": "normal",
+    }
+    jsonschema.validate(instance=sample_request_mixed, schema=req_schema)
+
     sample_request_medium = {
         "task": "general_chat",
         "quality": "medium",

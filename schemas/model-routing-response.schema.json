@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://standards.local/model-routing-response.schema.json",
-  "title": "Candidate Execution Plan Response Schema",
+  "title": "Candidate Execution Plan Response Schema (STD-009 v2.1.1)",
   "type": "object",
   "required": [
     "decision_id",
@@ -225,6 +225,30 @@
           "type": "string"
         }
       }
+    },
+    "canonical_consumer_id": {
+      "type": "string",
+      "description": "Canonical consumer identifier after alias resolution (STD-030)"
+    },
+    "task_family": {
+      "type": "string",
+      "description": "Generic task family identifier (STD-030)"
+    },
+    "task_type": {
+      "type": "string",
+      "description": "Canonical specific task type (STD-009 / STD-030)"
+    },
+    "capability_profile": {
+      "type": "string",
+      "description": "Named capability profile identifier (STD-030)"
+    },
+    "output_contract": {
+      "type": "string",
+      "description": "Business output contract identifier (STD-030)"
+    },
+    "contract_version": {
+      "type": "string",
+      "description": "Standards contract version string (e.g. v2.1.1)"
     }
   }
 }

@@ -2,7 +2,7 @@
 
 ```text
 STANDARD_ID=STD-030
-VERSION=2.1.0
+VERSION=2.1.1
 STATUS=ACTIVE
 SCOPE=四库分离架构、模型部署智能(Deployment Intelligence)、6大推理引擎能力目录、只读硬件资源画像、显存/KV-Cache可行性评估、多模态运行时抽象(18项能力分类/异步作业状态机/零提示词二进制持久化/SSRF防护/预算阻断)、多消费端隔离治理(7类消费端/质量反馈隔离/定制路由计划)
 OWNER=AI Platform Governance Committee
@@ -219,6 +219,22 @@ $$\text{Memory}_{\text{total}} = \text{Weights} + \text{KV\_Cache} + \text{Runti
 - `SHADOW_ONLY`: 影子模式，仅记录日志与路由对比，不直接影响线上流量。
 - `ADVISORY`: 建议模式，Hub 提供推荐模型与候选集，消费端可自主决定。
 - `ENFORCED`: 强制路由模式，完全由 Hub 托管动态路由与故障熔断。
+
+---
+
+
+### 6.4 通用任务体系与能力画像 (Generic Task Taxonomy & Capability Profile)
+1. **命名能力画像类型契约**:
+   - `capability_profile` 优先保持**命名字符串 (Profile ID)**，与既有编码 Profile 完全兼容，严禁强行转换为数组类型破坏下游。
+2. **Sidecar 标准语义基准**:
+   - `consumer_id=sidecar`
+   - `task_family=document_transformation`
+   - `task_type=report_polishing`
+   - `capability_profile=faithful_summarization`
+   - `output_contract=markdown_structured_bullets`
+3. **历史记忆兼容与语义隔离**:
+   - 历史别名 `vtip-ai-sidecar` 与规范 `sidecar` 通过只读别名映射查询，严禁物理 UPDATE 或 DELETE 历史 SQLite 数据。
+   - 历史 `task=chat` 或 `vtip_business` 不自动等同于 `report_polishing`；只有确切证据证明任务语义相同的样本才计入对应任务统计。
 
 ---
 

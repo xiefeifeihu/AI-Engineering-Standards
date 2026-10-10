@@ -2,6 +2,30 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [2.1.1] - 2026-10-10
+
+### Added
+- **STD-009 v2.1.1**: 通用任务契约（Generic Task Contract）落地，正式引入 consumer_id, 	ask_family, 	ask_type, capability_profile, output_contract 字段。
+- **STD-009 v2.1.1**: 同义字段冲突硬检验契约（HTTP 422 SYNONYMOUS_FIELD_CONFLICT）与未注册消费端鉴权拒绝（HTTP 403）。
+- **STD-010 v1.3.1**: 多阶段反馈契约支持通用任务字段，明确 BULLET_LIMIT_EXCEEDED 软告警隔离与 HTTP200_EMPTY_STRUCTURE 真实归因。
+- **STD-030 v2.1.1**: 明确 Sidecar 标准语义 (consumer_id=sidecar, 	ask_family=document_transformation, 	ask_type=report_polishing, capability_profile=faithful_summarization, output_contract=markdown_structured_bullets)，锁定 capability_profile 为命名字符串。
+
+### Changed
+- schemas/model-routing-request.schema.json: 支持 nyOf 兼容旧 	ask 与规范 	ask_type，新增通用契约可选字段。
+- schemas/model-feedback.schema.json: 新增通用契约可选字段，继续保持 dditionalProperties: false。
+- schemas/model-routing-response.schema.json: 增补候选执行方案增量元数据定义。
+- schemas/unified-ai-capability-platform.schema.json: 升级 contract_version 至 2.1.1，补齐消费端契约字段。
+
+---
+
+## [2.1.0] - 2026-10-09
+
+### Added
+- **STD-030: Unified AI Capability Platform Contract**: 四库分离架构、模型部署智能、推理引擎能力目录、只读硬件画像、多模态调度与多消费端隔离治理。
+- schemas/unified-ai-capability-platform.schema.json: 统一平台契约元数据 Schema。
+
+---
+
 ## [2.0.0] - 2026-10-08
 
 ### Added
