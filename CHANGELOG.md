@@ -2,6 +2,18 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [2.2.0] - 2026-10-12
+
+### Added
+- **STD-031: Runtime Acceptance Contract (运行时验收契约规范)**:
+  - 确立统一多阶段验收生命周期：SOURCE -> BUILD -> PACKAGE -> DEPLOY -> RUNTIME_VERIFY -> SMOKE_TEST -> PRODUCTION_READY。
+  - 强制技术中立性要求（Technology-Agnostic）：严禁强绑定 Docker 守护进程或容器特异性探针，全面支持原生 Windows、WSL2、Linux 裸金属与容器化运行环境。
+  - 覆盖四大核心工程系统：AI-Hub、AI-KB、vtip-ai-sidecar、vtip-platform-catalog。
+  - 制定统一运行时验收返回报文规范 (untime_acceptance, service, ersion, commit, uild_commit, checks_total, checks_pass, checks_fail, ailed_components)。
+- **schemas/runtime-acceptance.schema.json**: 运行时验收契约 JSON Schema 校验规范及合规样例。
+
+---
+
 ## [2.1.1] - 2026-10-10
 
 ### Added

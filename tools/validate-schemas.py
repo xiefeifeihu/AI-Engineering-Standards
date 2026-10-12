@@ -1117,7 +1117,44 @@ def test_samples():
     }
     jsonschema.validate(instance=sample_onboarding_event, schema=supply_schema)
 
-    print("Sample validation PASS: structures conform to Standards V2.0.0 specifications.")
+    # 18. Test STD-031 Runtime Acceptance Contract Sample
+    with open(SCHEMAS_DIR / "runtime-acceptance.schema.json", "r", encoding="utf-8") as f:
+        runtime_acc_schema = json.load(f)
+
+    sample_runtime_acc = {
+        "runtime_acceptance": True,
+        "service": "AI-Hub",
+        "version": "v0.20.0",
+        "commit": "a45b0fa",
+        "build_commit": "a45b0fa",
+        "stage": "PRODUCTION_READY",
+        "checks_total": 8,
+        "checks_pass": 8,
+        "checks_fail": 0,
+        "failed_components": [],
+        "runtime_identity": {
+            "source_commit": "a45b0fa",
+            "build_commit": "a45b0fa",
+            "live_commit": "a45b0fa",
+            "platform": "Windows-11",
+            "python_version": "3.10.11",
+            "technology_stack": "TECHNOLOGY_AGNOSTIC",
+            "docker_bound": False,
+        },
+        "checks": [
+            {
+                "name": "hub_python_runtime",
+                "stage": "BUILD",
+                "component": "Hub",
+                "passed": True,
+                "detail": "Python version: 3.10.11"
+            }
+        ],
+        "timestamp": "2026-10-12T06:00:00Z"
+    }
+    jsonschema.validate(instance=sample_runtime_acc, schema=runtime_acc_schema)
+
+    print("Sample validation PASS: structures conform to Standards V2.2.0 specifications.")
     return True
 
 def main():

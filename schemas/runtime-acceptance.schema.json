@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/runtime-acceptance.schema.json",
+  "title": "Runtime Acceptance Contract Schema (STD-031)",
+  "type": "object",
+  "required": [
+    "runtime_acceptance",
+    "service",
+    "version",
+    "commit",
+    "build_commit",
+    "checks_total",
+    "checks_pass",
+    "checks_fail",
+    "failed_components"
+  ],
+  "properties": {
+    "runtime_acceptance": {
+      "type": "boolean",
+      "description": "Overall acceptance determination across all stages and components"
+    },
+    "service": {
+      "type": "string",
+      "description": "Service name under test",
+      "enum": ["AI-Hub", "Hub", "AI-KB", "Sidecar", "VTIP"]
+    },
+    "version": {
+      "type": "string",
+      "description": "Release or specification version"
+    },
+    "commit": {
+      "type": "string",
+      "description": "Live git commit hash or current worktree commit"
+    },
+    "build_commit": {
+      "type": "string",
+      "description": "Artifact or build-recorded git commit hash"
+    },
+    "stage": {
+      "type": "string",
+      "description": "Lifecycle stage at conclusion of acceptance run",
+      "enum": [
+        "SOURCE",
+        "BUILD",
+        "PACKAGE",
+        "DEPLOY",
+        "RUNTIME_VERIFY",
+        "SMOKE_TEST",
+        "PRODUCTION_READY"
+      ]
+    },
+    "checks_total": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of executed acceptance checks"
+    },
+    "checks_pass": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of passed acceptance checks"
+    },
+    "checks_fail": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of failed acceptance checks"
+    },
+    "failed_components": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of component names with at least one failed check"
+    },
+    "runtime_identity": {
+      "type": "object",
+      "description": "Authoritative technology-agnostic runtime identity block",
+      "properties": {
+        "source_commit": { "type": "string" },
+        "build_commit": { "type": "string" },
+        "live_commit": { "type": "string" },
+        "platform": { "type": "string" },
+        "python_version": { "type": "string" },
+        "technology_stack": { "type": "string" },
+        "docker_bound": { "type": "boolean" }
+      }
+    },
+    "stages": {
+      "type": "object",
+      "description": "Stage-by-stage execution results breakdown"
+    },
+    "components": {
+      "type": "object",
+      "description": "Component-by-component execution results breakdown"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "passed"],
+        "properties": {
+          "name": { "type": "string" },
+          "stage": { "type": "string" },
+          "component": { "type": "string" },
+          "passed": { "type": "boolean" },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "ISO 8601 UTC timestamp of acceptance evaluation"
+    }
+  },
+  "additionalProperties": true
+}
