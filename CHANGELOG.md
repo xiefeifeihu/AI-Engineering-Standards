@@ -2,6 +2,19 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [2.3.0] - 2026-10-13
+
+### Added
+- **STD-032: AI Platform Release Engineering Contract (AI 平台发布工程契约规范)**:
+  - 定义 12 阶段标准发布生命周期：`PLAN -> CODE -> DEV_TEST -> SECURITY_SCAN -> BUILD -> PACKAGE -> PUBLISH -> DEPLOY -> RUNTIME_VERIFY -> SMOKE_TEST -> PRODUCTION_RELEASE -> TAG`。
+  - 定义六大强制自动化门禁：`SOURCE` (`git clean` + `secret scan`)、`DEV_TEST` (`unit`/`contract`/`integration`/`e2e`)、`BUILD` (`build_metadata`)、`PACKAGE` (`artifact sha256`)、`DEPLOY` (`runtime probe`)、`SMOKE` (`minimal business verification`)。
+  - 统一四项目 `scripts/release/` 目录模板：`release_pipeline.py`、`build_metadata.py`、`runtime_acceptance.py`、`artifact_manifest.py`。
+  - 制定 Git 发布四步铁律 (`commit -> push remote -> create tag -> push tag`) 与五态 Commit 一致性校验 (`LOCAL_HEAD == REMOTE_HEAD == TAG_COMMIT == BUILD_COMMIT == LIVE_COMMIT`)。
+  - 制定 `.artifacts/{acceptance,packages,screenshots,evidence}` 目录规范、`docs/` 6 分类治理与技术中立回滚契约。
+- **schemas/release-engineering.schema.json**: 发布工程契约 JSON Schema 校验规范及合规样例。
+
+---
+
 ## [2.2.0] - 2026-10-12
 
 ### Added
@@ -9,7 +22,8 @@ All notable changes to the AI Engineering Standards baseline are documented in t
   - 确立统一多阶段验收生命周期：SOURCE -> BUILD -> PACKAGE -> DEPLOY -> RUNTIME_VERIFY -> SMOKE_TEST -> PRODUCTION_READY。
   - 强制技术中立性要求（Technology-Agnostic）：严禁强绑定 Docker 守护进程或容器特异性探针，全面支持原生 Windows、WSL2、Linux 裸金属与容器化运行环境。
   - 覆盖四大核心工程系统：AI-Hub、AI-KB、vtip-ai-sidecar、vtip-platform-catalog。
-  - 制定统一运行时验收返回报文规范 (untime_acceptance, service, ersion, commit, uild_commit, checks_total, checks_pass, checks_fail, ailed_components)。
+  - 制定统一运行时验收返回报文规范 (
+untime_acceptance, service, ersion, commit, uild_commit, checks_total, checks_pass, checks_fail, ailed_components)。
 - **schemas/runtime-acceptance.schema.json**: 运行时验收契约 JSON Schema 校验规范及合规样例。
 
 ---

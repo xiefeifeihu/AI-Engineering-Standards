@@ -1154,7 +1154,78 @@ def test_samples():
     }
     jsonschema.validate(instance=sample_runtime_acc, schema=runtime_acc_schema)
 
-    print("Sample validation PASS: structures conform to Standards V2.2.0 specifications.")
+    # 19. Test STD-032 Release Engineering Contract Sample
+    with open(SCHEMAS_DIR / "release-engineering.schema.json", "r", encoding="utf-8") as f:
+        rel_eng_schema = json.load(f)
+
+    sample_rel_eng = {
+        "standard_id": "STD-032",
+        "service": "AI-Hub",
+        "version": "v0.20.1",
+        "tag": "v0.20.1",
+        "pipeline_status": "PASS",
+        "stages": [
+            "PLAN",
+            "CODE",
+            "DEV_TEST",
+            "SECURITY_SCAN",
+            "BUILD",
+            "PACKAGE",
+            "PUBLISH",
+            "DEPLOY",
+            "RUNTIME_VERIFY",
+            "SMOKE_TEST",
+            "PRODUCTION_RELEASE",
+            "TAG",
+        ],
+        "commit_identity": {
+            "LOCAL_HEAD": "a1b2c3d",
+            "REMOTE_HEAD": "a1b2c3d",
+            "TAG_COMMIT": "a1b2c3d",
+            "BUILD_COMMIT": "a1b2c3d",
+            "LIVE_COMMIT": "a1b2c3d",
+            "all_consistent": True,
+        },
+        "gates": {
+            "SOURCE": {"git_clean": True, "secret_scan": True, "passed": True},
+            "DEV_TEST": {
+                "unit_test": True,
+                "contract_test": True,
+                "integration_test": True,
+                "e2e": True,
+                "passed": True,
+            },
+            "BUILD": {"build_metadata_generated": True, "passed": True},
+            "PACKAGE": {
+                "artifact_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "passed": True,
+            },
+            "DEPLOY": {
+                "runtime_probe": True,
+                "technology_agnostic": True,
+                "docker_bound": False,
+                "passed": True,
+            },
+            "SMOKE": {"minimal_business_verification": True, "passed": True},
+        },
+        "artifacts": {
+            "layout_valid": True,
+            "docs_clean": True,
+            "package_path": ".artifacts/packages/Acceptance-AI-Platform-023-RELEASE-ENGINEERING-STANDARDIZATION.zip",
+            "package_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        },
+        "runtime_acceptance": True,
+        "rollback_contract": {
+            "technology_agnostic": True,
+            "docker_bound": False,
+            "target_tag": "v0.20.0",
+            "verified": True,
+        },
+        "timestamp": "2026-10-13T04:00:00Z",
+    }
+    jsonschema.validate(instance=sample_rel_eng, schema=rel_eng_schema)
+
+    print("Sample validation PASS: structures conform to Standards V2.3.0 specifications.")
     return True
 
 def main():

@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/release-engineering.schema.json",
+  "title": "AI Platform Release Engineering Contract Schema (STD-032)",
+  "type": "object",
+  "required": [
+    "standard_id",
+    "service",
+    "version",
+    "tag",
+    "pipeline_status",
+    "stages",
+    "commit_identity",
+    "gates",
+    "artifacts",
+    "runtime_acceptance",
+    "rollback_contract",
+    "timestamp"
+  ],
+  "properties": {
+    "standard_id": {
+      "type": "string",
+      "const": "STD-032"
+    },
+    "service": {
+      "type": "string",
+      "enum": [
+        "AI-Hub",
+        "Hub",
+        "AI-Engineering-Hub",
+        "AI-KB",
+        "Sidecar",
+        "vtip-ai-sidecar",
+        "VTIP",
+        "vtip-platform-catalog"
+      ]
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "pipeline_status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "items": {
+        "type": "string",
+        "enum": [
+          "PLAN",
+          "CODE",
+          "DEV_TEST",
+          "SECURITY_SCAN",
+          "BUILD",
+          "PACKAGE",
+          "PUBLISH",
+          "DEPLOY",
+          "RUNTIME_VERIFY",
+          "SMOKE_TEST",
+          "PRODUCTION_RELEASE",
+          "TAG"
+        ]
+      }
+    },
+    "commit_identity": {
+      "type": "object",
+      "required": [
+        "LOCAL_HEAD",
+        "REMOTE_HEAD",
+        "TAG_COMMIT",
+        "BUILD_COMMIT",
+        "LIVE_COMMIT",
+        "all_consistent"
+      ],
+      "properties": {
+        "LOCAL_HEAD": {
+          "type": "string",
+          "minLength": 7
+        },
+        "REMOTE_HEAD": {
+          "type": "string",
+          "minLength": 7
+        },
+        "TAG_COMMIT": {
+          "type": "string",
+          "minLength": 7
+        },
+        "BUILD_COMMIT": {
+          "type": "string",
+          "minLength": 7
+        },
+        "LIVE_COMMIT": {
+          "type": "string",
+          "minLength": 7
+        },
+        "all_consistent": {
+          "type": "boolean"
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "required": [
+        "SOURCE",
+        "DEV_TEST",
+        "BUILD",
+        "PACKAGE",
+        "DEPLOY",
+        "SMOKE"
+      ],
+      "properties": {
+        "SOURCE": {
+          "type": "object",
+          "required": [
+            "git_clean",
+            "secret_scan",
+            "passed"
+          ],
+          "properties": {
+            "git_clean": {
+              "type": "boolean"
+            },
+            "secret_scan": {
+              "type": "boolean"
+            },
+            "passed": {
+              "type": "boolean"
+            }
+          }
+        },
+        "DEV_TEST": {
+          "type": "object",
+          "required": [
+            "unit_test",
+            "contract_test",
+            "integration_test",
+            "e2e",
+            "passed"
+          ],
+          "properties": {
+            "unit_test": {
+              "type": "boolean"
+            },
+            "contract_test": {
+              "type": "boolean"
+            },
+            "integration_test": {
+              "type": "boolean"
+            },
+            "e2e": {
+              "type": "boolean"
+            },
+            "passed": {
+              "type": "boolean"
+            }
+          }
+        },
+        "BUILD": {
+          "type": "object",
+          "required": [
+            "build_metadata_generated",
+            "passed"
+          ],
+          "properties": {
+            "build_metadata_generated": {
+              "type": "boolean"
+            },
+            "passed": {
+              "type": "boolean"
+            }
+          }
+        },
+        "PACKAGE": {
+          "type": "object",
+          "required": [
+            "artifact_sha256",
+            "passed"
+          ],
+          "properties": {
+            "artifact_sha256": {
+              "type": "string",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "passed": {
+              "type": "boolean"
+            }
+          }
+        },
+        "DEPLOY": {
+          "type": "object",
+          "required": [
+            "runtime_probe",
+            "technology_agnostic",
+            "docker_bound",
+            "passed"
+          ],
+          "properties": {
+            "runtime_probe": {
+              "type": "boolean"
+            },
+            "technology_agnostic": {
+              "type": "boolean",
+              "const": true
+            },
+            "docker_bound": {
+              "type": "boolean",
+              "const": false
+            },
+            "passed": {
+              "type": "boolean"
+            }
+          }
+        },
+        "SMOKE": {
+          "type": "object",
+          "required": [
+            "minimal_business_verification",
+            "passed"
+          ],
+          "properties": {
+            "minimal_business_verification": {
+              "type": "boolean"
+            },
+            "passed": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "layout_valid",
+        "docs_clean",
+        "package_path",
+        "package_sha256"
+      ],
+      "properties": {
+        "layout_valid": {
+          "type": "boolean"
+        },
+        "docs_clean": {
+          "type": "boolean"
+        },
+        "package_path": {
+          "type": "string"
+        },
+        "package_sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        }
+      }
+    },
+    "runtime_acceptance": {
+      "type": "boolean"
+    },
+    "rollback_contract": {
+      "type": "object",
+      "required": [
+        "technology_agnostic",
+        "docker_bound",
+        "target_tag",
+        "verified"
+      ],
+      "properties": {
+        "technology_agnostic": {
+          "type": "boolean",
+          "const": true
+        },
+        "docker_bound": {
+          "type": "boolean",
+          "const": false
+        },
+        "target_tag": {
+          "type": "string"
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      }
+    },
+    "timestamp": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

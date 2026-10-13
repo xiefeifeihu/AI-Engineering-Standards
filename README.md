@@ -44,6 +44,9 @@ LAST_UPDATED=2026-10-07
 | [`STD-025`](./standards/08-model-governance/STD-025-owner-action-execution-contract.md) | **Owner Action Execution Contract** | 控制平面决策、Resource Owner 校验执行、独占租约、幂等恢复、零敏感凭据、事实结果与 Hub 独立验证 |
 | [`STD-026`](./standards/08-model-governance/STD-026-model-scout-and-challenger-contract.md) | **Model Scout and Challenger Contract** | 候选模型侦察源注册、可用性分级、公正挑战战役、冻结公平性规范、微基准测试、记忆衰减与晋升建议 |
 
+| [`STD-031`](./standards/12-acceptance/STD-031-runtime-acceptance-contract.md) | **Runtime Acceptance Contract** | 跨项目运行时验收契约、技术中立探针与统一验收报文 |
+| [`STD-032`](./standards/13-git-release/STD-032-release-engineering-contract.md) | **AI Platform Release Engineering Contract** | 12阶段发布生命周期、五态Commit一致性、强制门禁、Artifact与Git Tag及回滚规范 |
+
 ---
 
 ## 2. 机器可读 JSON Schemas (`schemas/`)
