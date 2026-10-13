@@ -1225,7 +1225,154 @@ def test_samples():
     }
     jsonschema.validate(instance=sample_rel_eng, schema=rel_eng_schema)
 
-    print("Sample validation PASS: structures conform to Standards V2.3.0 specifications.")
+# 20. Test STD-033 Platform Verification Governance Evidence Sample
+    with open(SCHEMAS_DIR / "platform-verification.schema.json", "r", encoding="utf-8") as f:
+        pv_schema = json.load(f)
+
+    sample_platform_verification = {
+        "verification_id": "VERIFY-AI-PLATFORM-026-FINAL",
+        "timestamp": "2026-10-13T09:00:00Z",
+        "overall_status": "READY",
+        "status": "PASS",
+        "platform": {
+            "name": "AI Engineering Platform",
+            "task_id": "AI-Platform-026-ENGINEERING-GOVERNANCE-FINALIZATION",
+            "role": "PLATFORM_ENGINEERING_GOVERNANCE_FINALIZATION",
+            "version": "v2.4.0",
+            "standard_version": "v2.4.0",
+            "governance_standard": "STD-033 (Tri-Layer: STD-031, STD-032, STD-033)",
+            "environment": "Windows-11",
+            "python_version": "3.14.3",
+            "technology_stack": "TECHNOLOGY_AGNOSTIC",
+            "docker_bound": False,
+            "package_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        },
+        "components": {
+            "AI-Hub": {
+                "component": "AI-Hub",
+                "repo_name": "AI-Engineering-Hub",
+                "version": "v0.20.3",
+                "status": "READY",
+                "last_verified_at": "2026-10-13T09:00:00Z",
+                "commit": "f8326fd",
+                "tag": "v0.20.3",
+                "five_way_consistent": True,
+                "runtime": "READY (HTTP 200)",
+                "runtime_passed": True,
+                "dependency_status": "READY (CPA · Ollama · SQLite WAL)",
+                "dependency_passed": True,
+                "smoke_status": "PASS (model/select)",
+                "smoke_passed": True,
+                "endpoint": "http://127.0.0.1:80/health"
+            },
+            "AI-KB": {
+                "component": "AI-KB",
+                "repo_name": "AI-KB",
+                "version": "v0.9.0",
+                "status": "READY",
+                "last_verified_at": "2026-10-13T09:00:00Z",
+                "commit": "cddd081",
+                "tag": "v0.9.0",
+                "five_way_consistent": True,
+                "runtime": "READY (HTTP 200)",
+                "runtime_passed": True,
+                "dependency_status": "READY (RAGFlow · Ollama · Control Center)",
+                "dependency_passed": True,
+                "smoke_status": "PASS (readonly query)",
+                "smoke_passed": True,
+                "endpoint": "http://127.0.0.1:18090/api/health"
+            },
+            "Sidecar": {
+                "component": "Sidecar",
+                "repo_name": "vtip-ai-sidecar",
+                "version": "v0.14.2",
+                "status": "READY",
+                "last_verified_at": "2026-10-13T09:00:00Z",
+                "commit": "3393806",
+                "tag": "v0.14.2",
+                "five_way_consistent": True,
+                "runtime": "READY (HTTP 200)",
+                "runtime_passed": True,
+                "dependency_status": "READY (AI-Hub Gateway · CPA)",
+                "dependency_passed": True,
+                "smoke_status": "PASS (sample transform)",
+                "smoke_passed": True,
+                "endpoint": "http://127.0.0.1:8799/health"
+            },
+            "VTIP": {
+                "component": "VTIP",
+                "repo_name": "vtip-platform-catalog",
+                "version": "v2.6.7",
+                "status": "READY",
+                "last_verified_at": "2026-10-13T09:00:00Z",
+                "commit": "d44c06a",
+                "tag": "v2.6.7",
+                "five_way_consistent": True,
+                "runtime": "READY (HTTP 200)",
+                "runtime_passed": True,
+                "dependency_status": "READY (Confluence/Jira Read-Only · Work Calendar)",
+                "dependency_passed": True,
+                "smoke_status": "PASS (catalog query)",
+                "smoke_passed": True,
+                "endpoint": "http://127.0.0.1:8787/healthz"
+            }
+        },
+        "identity": {
+            "status": "READY",
+            "passed": True,
+            "five_way_consistent": True,
+            "LOCAL_HEAD": "f8326fd",
+            "REMOTE_HEAD": "f8326fd",
+            "TAG": "v0.20.3",
+            "TAG_COMMIT": "f8326fd",
+            "BUILD": "f8326fd",
+            "LIVE": "f8326fd",
+            "by_component": {
+                "AI-Hub": {"all_consistent": True},
+                "AI-KB": {"all_consistent": True},
+                "Sidecar": {"all_consistent": True},
+                "VTIP": {"all_consistent": True}
+            }
+        },
+        "runtime": {
+            "status": "READY",
+            "passed": True,
+            "service_health": "HTTP 200",
+            "process_status": "RUNNING",
+            "endpoint": "ALL_LISTENING",
+            "startup": "LIFESPAN_READY",
+            "by_component": {}
+        },
+        "dependency": {
+            "status": "READY",
+            "passed": True,
+            "non_spof_enforced": True,
+            "CPA": {"status": "READY", "port": 18317},
+            "AI-KB": {"status": "READY", "port": 18090},
+            "RAGFlow": {"status": "READY", "port": 18080},
+            "Ollama": {"status": "READY", "port": 11434},
+            "Database": {"status": "READY", "type": "sqlite_wal"}
+        },
+        "network": {
+            "status": "READY",
+            "passed": True,
+            "expected_network": {"loopback": "127.0.0.1"},
+            "actual_network": {"exposed_lan": False},
+            "dns_alias": {"localhost": "127.0.0.1"},
+            "service_discovery": {"status": "ACTIVE"}
+        },
+        "business_smoke": {
+            "status": "READY",
+            "passed": True,
+            "Hub": {"passed": True, "action": "model/select"},
+            "AI-KB": {"passed": True, "action": "readonly query"},
+            "Sidecar": {"passed": True, "action": "sample transform"},
+            "VTIP": {"passed": True, "action": "catalog query"}
+        }
+    }
+    jsonschema.validate(instance=sample_platform_verification, schema=pv_schema)
+
+    print("Sample validation PASS: structures conform to Standards V2.4.0 specifications.")
     return True
 
 def main():

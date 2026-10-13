@@ -1,14 +1,14 @@
-# AI Engineering Standards (V1.8.0)
+# AI Engineering Standards (V2.4.0)
 
 Canonical engineering standards shared across local AI / Vibe Coding projects.
 
 本项目是开发机跨工程共享的架构标准规范库（Source of Truth），定义网络通信、推理资源共享、智能体接入、上下文管理与工程协作标准。
 
 ```text
-STANDARDS_VERSION=1.8.0
+STANDARDS_VERSION=2.4.0
 STATUS=RELEASED
 BASELINE=AI-ENGINEERING-PLATFORM-V1-001
-LAST_UPDATED=2026-10-07
+LAST_UPDATED=2026-10-13
 ```
 
 ---
@@ -46,12 +46,13 @@ LAST_UPDATED=2026-10-07
 
 | [`STD-031`](./standards/12-acceptance/STD-031-runtime-acceptance-contract.md) | **Runtime Acceptance Contract** | 跨项目运行时验收契约、技术中立探针与统一验收报文 |
 | [`STD-032`](./standards/13-git-release/STD-032-release-engineering-contract.md) | **AI Platform Release Engineering Contract** | 12阶段发布生命周期、五态Commit一致性、强制门禁、Artifact与Git Tag及回滚规范 |
+| [`STD-033`](./standards/12-acceptance/STD-033-platform-verification-governance.md) | **Platform Verification Governance** | 跨项目平台验证中心、五维运行时验收矩阵、统一工程生命周期契约 (14阶段)、证据Schema与验证大盘治理 |
 
 ---
 
 ## 2. 机器可读 JSON Schemas (`schemas/`)
 
-规范库提供 15 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
+规范库提供 20 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
 - `schemas/engineering-manifest.schema.json`
 - `schemas/resource.schema.json`
 - `schemas/endpoint.schema.json`
@@ -66,6 +67,9 @@ LAST_UPDATED=2026-10-07
 - `schemas/model-ops-autopilot.schema.json`
 - `schemas/owner-action-execution.schema.json`
 - `schemas/model-scout-challenger.schema.json`
+- `schemas/runtime-acceptance.schema.json`
+- `schemas/release-engineering.schema.json`
+- `schemas/platform-verification.schema.json`
 
 ---
 

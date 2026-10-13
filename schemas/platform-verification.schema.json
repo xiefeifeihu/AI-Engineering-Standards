@@ -1,0 +1,385 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/platform-verification.schema.json",
+  "title": "Platform Verification Governance Evidence Schema (STD-033)",
+  "description": "Unified platform verification governance evidence schema covering 4 core projects (AI-Hub, AI-KB, Sidecar, VTIP) and 5 runtime acceptance matrix dimensions (Identity, Runtime, Dependency, Network Topology, Business Smoke) under STD-033.",
+  "type": "object",
+  "required": [
+    "verification_id",
+    "timestamp",
+    "platform",
+    "components",
+    "identity",
+    "runtime",
+    "dependency",
+    "network",
+    "business_smoke",
+    "overall_status"
+  ],
+  "properties": {
+    "verification_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique verification execution identifier"
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 UTC timestamp of verification execution"
+    },
+    "platform": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "standard_version",
+        "governance_standard",
+        "technology_stack",
+        "docker_bound"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "standard_version": {
+          "type": "string"
+        },
+        "governance_standard": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "python_version": {
+          "type": "string"
+        },
+        "technology_stack": {
+          "type": "string"
+        },
+        "docker_bound": {
+          "type": "boolean"
+        },
+        "package_sha256": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "components": {
+      "type": "object",
+      "required": [
+        "AI-Hub",
+        "AI-KB",
+        "Sidecar",
+        "VTIP"
+      ],
+      "description": "Per-project verification summary across the 4 core platform projects",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "component",
+          "status",
+          "last_verified_at",
+          "commit",
+          "runtime",
+          "dependency_status",
+          "smoke_status"
+        ],
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "repo_name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "READY",
+              "WARNING",
+              "FAILED"
+            ]
+          },
+          "last_verified_at": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "five_way_consistent": {
+            "type": "boolean"
+          },
+          "runtime": {
+            "type": "string"
+          },
+          "runtime_passed": {
+            "type": "boolean"
+          },
+          "dependency_status": {
+            "type": "string"
+          },
+          "dependency_passed": {
+            "type": "boolean"
+          },
+          "smoke_status": {
+            "type": "string"
+          },
+          "smoke_passed": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "identity": {
+      "type": "object",
+      "required": [
+        "status",
+        "passed",
+        "LOCAL_HEAD",
+        "REMOTE_HEAD",
+        "TAG",
+        "BUILD",
+        "LIVE",
+        "by_component"
+      ],
+      "description": "Dimension 1: Identity Check (LOCAL_HEAD, REMOTE_HEAD, TAG, BUILD, LIVE)",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "READY",
+            "WARNING",
+            "FAILED",
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "five_way_consistent": {
+          "type": "boolean"
+        },
+        "LOCAL_HEAD": {
+          "type": "string"
+        },
+        "REMOTE_HEAD": {
+          "type": "string"
+        },
+        "TAG": {
+          "type": "string"
+        },
+        "TAG_COMMIT": {
+          "type": "string"
+        },
+        "BUILD": {
+          "type": "string"
+        },
+        "LIVE": {
+          "type": "string"
+        },
+        "by_component": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "status",
+        "passed",
+        "service_health",
+        "process_status",
+        "endpoint",
+        "startup",
+        "by_component"
+      ],
+      "description": "Dimension 2: Runtime Check (service health, process status, endpoint, startup)",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "READY",
+            "WARNING",
+            "FAILED",
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "service_health": {
+          "type": "string"
+        },
+        "process_status": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "startup": {
+          "type": "string"
+        },
+        "by_component": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "dependency": {
+      "type": "object",
+      "required": [
+        "status",
+        "passed",
+        "CPA",
+        "AI-KB",
+        "RAGFlow",
+        "Ollama",
+        "Database"
+      ],
+      "description": "Dimension 3: Dependency Check (CPA, AI-KB, RAGFlow, Ollama, Database)",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "READY",
+            "WARNING",
+            "FAILED",
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "non_spof_enforced": {
+          "type": "boolean"
+        },
+        "CPA": {
+          "type": "object"
+        },
+        "AI-KB": {
+          "type": "object"
+        },
+        "RAGFlow": {
+          "type": "object"
+        },
+        "Ollama": {
+          "type": "object"
+        },
+        "Database": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "network": {
+      "type": "object",
+      "required": [
+        "status",
+        "passed",
+        "expected_network",
+        "actual_network",
+        "dns_alias",
+        "service_discovery"
+      ],
+      "description": "Dimension 4: Network Topology Check (expected network, actual network, DNS alias, service discovery)",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "READY",
+            "WARNING",
+            "FAILED",
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "expected_network": {
+          "type": "object"
+        },
+        "actual_network": {
+          "type": "object"
+        },
+        "dns_alias": {
+          "type": "object"
+        },
+        "service_discovery": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "business_smoke": {
+      "type": "object",
+      "required": [
+        "status",
+        "passed",
+        "Hub",
+        "AI-KB",
+        "Sidecar",
+        "VTIP"
+      ],
+      "description": "Dimension 5: Business Smoke Check (Hub: model/select, AI-KB: readonly query, Sidecar: sample transform, VTIP: catalog query)",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "READY",
+            "WARNING",
+            "FAILED",
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "Hub": {
+          "type": "object"
+        },
+        "AI-KB": {
+          "type": "object"
+        },
+        "Sidecar": {
+          "type": "object"
+        },
+        "VTIP": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "overall_status": {
+      "type": "string",
+      "enum": [
+        "READY",
+        "WARNING",
+        "FAILED"
+      ],
+      "description": "Overall platform verification status"
+    }
+  },
+  "additionalProperties": true
+}

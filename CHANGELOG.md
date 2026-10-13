@@ -2,6 +2,23 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [2.4.0] - 2026-10-13
+
+### Added
+- **STD-033: Platform Verification Governance (平台统一验证治理规范)**:
+  - 确立三大标准递进协同体系：STD-031 原子探针基底、STD-032 交付流水线门禁、STD-033 全域验证治理中枢。
+  - 建立 **统一 14 阶段工程生命周期契约 (Unified Engineering Lifecycle Contract)**：PLAN -> DESIGN -> CODE -> DEV_TEST -> SECURITY_SCAN -> BUILD -> PACKAGE -> PUBLISH -> DEPLOY -> RUNTIME_VERIFY -> SMOKE_TEST -> PRODUCTION_READY -> OPERATE -> FEEDBACK。
+  - 确立 **五维运行时验收矩阵 (5-Dimension Runtime Acceptance Matrix)**：Identity Check、Runtime Check、Dependency Check、Network Topology Check、Business Smoke Check。
+  - 确立 schemas/platform-verification.schema.json 机器可读证据模式，支持 20/20 规范模式全量校验。
+  - 统一四大项目 scripts/release/ 模板规范（补齐 
+ollback_check.py，统一输出 
+untime_acceptance.json、
+elease_report.json、rtifact_manifest.json）。
+  - 制定 Git 发布治理六大铁律与 .artifacts/ 四目录（cceptance/, packages/, screenshots/, 
+eports/）治理规范。
+
+---
+
 ## [2.3.0] - 2026-10-13
 
 ### Added
