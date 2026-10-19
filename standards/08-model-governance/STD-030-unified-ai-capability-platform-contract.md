@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-030
-VERSION=2.1.1
+VERSION=2.2.0
 STATUS=ACTIVE
 SCOPE=四库分离架构、模型部署智能(Deployment Intelligence)、6大推理引擎能力目录、只读硬件资源画像、显存/KV-Cache可行性评估、多模态运行时抽象(18项能力分类/异步作业状态机/零提示词二进制持久化/SSRF防护/预算阻断)、多消费端隔离治理(7类消费端/质量反馈隔离/定制路由计划)
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-10-09
+LAST_UPDATED=2026-10-19
 RELATED_STANDARDS=STD-008, STD-009, STD-010, STD-011, STD-021, STD-022, STD-023, STD-024, STD-025, STD-026, STD-027, STD-028
 ```
 
@@ -248,3 +248,33 @@ $$\text{Memory}_{\text{total}} = \text{Weights} + \text{KV\_Cache} + \text{Runti
 5. `docker_socket_security.json`: Docker Socket 挂载审计与权限消除结论。
 
 人类可读的技术报告与验收文档中所引用的性能指标 (如 P95 延迟数值)，**MUST** 与结构化测试证据文件保持严格一致。
+
+---
+
+## 8. 运营控制台导航与能力视图规约 (Operational Console Navigation & Capability Views)
+
+系统运营控制台（Operational Console）**MUST** 围绕业务能力优先、人机权责分明与真实证据驱动原则构建，禁止以技术指标商城替代业务决策。
+
+### 8.1 首页三大核心业务问题 (Three Core Operational Questions)
+控制台首页 **MUST** 显式解答以下三个核心业务问题：
+1. **有哪些 AI 能力？(Abilities Overview)**：优先展示 AI-KB 知识管理（知识问答、提炼、向量检索）、Coding（补丁生成、代码审阅、工具调用）、Sidecar（日报润色、文本润色、格式重构）等业务域能力卡片，明确标出 Champion 胜出模型、调用链路与真实核验时间。
+2. **哪些资源可用？如何发现和取得？(Resource Discovery & Channels)**：展示全网公开服务发现流、CPA 账本同步状态、可用 Provider 账号画像，提供即时手动触发发现扫描的能力。
+3. **效果究竟怎样？需要人做什么？(Task Quality & Human Actions)**：展示业务任务质量画像（事实保真度、执行成功率、人工采纳率），明确列出待人工处理的事项清单（审批、受限申请、凭据配置）。
+
+### 8.2 六大标准运营子菜单 (Six Canonical Sub-Menus)
+运营控制台 **MUST** 提供以下 6 大业务导航子菜单：
+- `overview` (总览)：首页三问架构视图、关键业务指标概览、全局策略概览。
+- `discover` (发现)：全网公开服务自动发现、CPA 供给账本同步、即时扫描触发。
+- `channels` (渠道与路由)：多供应商供应渠道画像、有效模型映射、主备降级链路拓扑。
+- `effects` (效果与策略)：任务质量雷达与评测基线、场景路由权重配置、人工临时策略覆盖。
+- `verify` (验证)：平台验证中心、5 维真实环境技术核验矩阵、Runtime Acceptance 状态。
+- `actions` (处理)：待办工单与人工处理事项、审计状态推进、处理办理记录。
+
+### 8.3 范围限定的人工策略覆盖 (Scoped Strategy Override)
+1. **限定范围覆盖**：运营人员 **MAY** 针对特定任务 (`task_id`) 在指定范围 (`scope`: `session` / `daily` / `permanent`) 内设置临时策略覆盖。
+2. **默认路由保护**：临时策略覆盖 **MUST NOT** 静默修改或破坏系统全局底层 Champion 评选逻辑。
+3. **一键恢复默认**：控制台 **MUST** 提供一键恢复默认（Restore Default）按钮，允许随时清除临时策略并恢复系统默认自治路由。
+4. **审计跟踪记录**：所有策略覆盖与恢复动作 **MUST** 记录操作人、原因、时间戳并持久化进入审计账本。
+
+### 8.4 本地全站检索 (Ctrl+K Global Search)
+控制台 **MUST** 提供全局搜索弹窗快捷键（`Ctrl+K`），支持对能力定义、发现线索、供应渠道、模型列表、人工待办与治理规则的即时全站检索。

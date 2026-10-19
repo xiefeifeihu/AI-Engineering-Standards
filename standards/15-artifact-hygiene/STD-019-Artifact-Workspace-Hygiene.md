@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-019
-VERSION=1.0.0
+VERSION=1.1.0
 STATUS=ACTIVE
 SCOPE=所有 AI 工程仓库的制品分类、存储与清理
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-09-23
+LAST_UPDATED=2026-10-19
 ```
 
 ### 规范性关键词说明 (Normative Keywords)
@@ -31,6 +31,12 @@ LAST_UPDATED=2026-09-23
 | **DEMO** | 演示录屏与截图 | MUST NOT 提交 | `.artifacts/demo/` |
 | **TEMPORARY** | 临时工作文件（草稿、调试输出） | MUST NOT 提交 | `.artifacts/handoff/temporary/` |
 | **ARCHIVE** | 历史交付 ZIP 包 | MUST NOT 提交 | `.artifacts/packages/` |
+
+### 1.1 架构设计图与文档资产规约 (Architecture Design Diagram Assets)
+
+1. **允许的正式文档配图**：经架构评审通过的正式系统架构蓝图、拓扑设计图或技术方案流程图（`.png`, `.jpg`, `.jpeg`, `.svg`）**MAY** 置于 `docs/01-架构设计/` 或 `docs/**/assets/` 下纳入 Git 版本追踪管理。
+2. **测试与验收证据严格隔离**：自动化测试截屏、Playwright E2E UI 截图、临时调试图片 **MUST NOT** 提交至 `docs/`，必须严格归档至 `.artifacts/acceptance/<TASK-ID>/<VERSION>/screenshots/`。
+3. **Docs 治理规则同步**：发布流水线与制品检查中的文档治理门禁 (`verify_docs_governance`) **MUST** 支持识别并放行 `docs/01-架构设计/` 与 `docs/**/assets/` 下的合法设计图资产。
 
 ## 2. .artifacts/ 目录规范
 
