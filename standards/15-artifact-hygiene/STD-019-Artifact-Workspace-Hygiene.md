@@ -1,12 +1,12 @@
-﻿# STD-019: Artifact & Workspace Hygiene Standard (工程制品与工作区卫生规范)
+# STD-019: Artifact & Workspace Hygiene Standard (工程制品与工作区卫生规范)
 
 ```text
 STANDARD_ID=STD-019
-VERSION=1.1.0
+VERSION=1.2.0
 STATUS=ACTIVE
 SCOPE=所有 AI 工程仓库的制品分类、存储与清理
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-10-19
+LAST_UPDATED=2026-10-23
 ```
 
 ### 规范性关键词说明 (Normative Keywords)
@@ -30,19 +30,21 @@ LAST_UPDATED=2026-10-19
 | **ACCEPTANCE** | 验收证据（截图、视频、日志、报告） | MUST NOT 提交 | `.artifacts/acceptance/<TASK>/<VERSION>/` |
 | **DEMO** | 演示录屏与截图 | MUST NOT 提交 | `.artifacts/demo/` |
 | **TEMPORARY** | 临时工作文件（草稿、调试输出） | MUST NOT 提交 | `.artifacts/handoff/temporary/` |
-| **ARCHIVE** | 历史交付 ZIP 包 | MUST NOT 提交 | `.artifacts/packages/` |
+| **ARCHIVE** | 正式与历史交付 ZIP 包 | MUST NOT 提交 | `.artifacts/packages/` |
 
 ### 1.1 架构设计图与文档资产规约 (Architecture Design Diagram Assets)
 
-1. **允许的正式文档配图**：经架构评审通过的正式系统架构蓝图、拓扑设计图或技术方案流程图（`.png`, `.jpg`, `.jpeg`, `.svg`）**MAY** 置于 `docs/01-架构设计/` 或 `docs/**/assets/` 下纳入 Git 版本追踪管理。
-2. **测试与验收证据严格隔离**：自动化测试截屏、Playwright E2E UI 截图、临时调试图片 **MUST NOT** 提交至 `docs/`，必须严格归档至 `.artifacts/acceptance/<TASK-ID>/<VERSION>/screenshots/`。
-3. **Docs 治理规则同步**：发布流水线与制品检查中的文档治理门禁 (`verify_docs_governance`) **MUST** 支持识别并放行 `docs/01-架构设计/` 与 `docs/**/assets/` 下的合法设计图资产。
+1. **允许的正式文档配图**：经架构评审通过的正式系统架构蓝图、拓扑设计图或正式项目图片（`.png`, `.jpg`, `.jpeg`, `.svg`）**MAY** 置于 `docs/01-架构设计/` 或 `docs/**/assets/` 下纳入 Git 版本追踪管理。
+2. **测试与验收证据严格隔离**：自动化测试截屏、Playwright E2E UI 截图、录屏视频、临时调试日志 **MUST NOT** 提交至 `docs/`，必须严格归档至 `.artifacts/acceptance/<TASK-ID>/<VERSION>/`（或 `.artifacts/screenshots/`）。
+3. **Docs 治理规则同步**：发布流水线与制品检查中的文档治理门禁 (`verify_docs_governance`) **MUST** 支持识别并放行 `docs/01-架构设计/` 与 `docs/**/assets/` 下的合法设计图资产，同时拦截任何测试截图、日志或压缩包污染 `docs/`。
+4. **禁止复制 Standards 正文**：各项目仓库 `docs/` 与规则文件 **MUST** 遵循 Thin Reference 模式（`STD-034`），**MUST NOT** 复制 `AI-Engineering-Standards` 的完整规范正文。
 
 ## 2. .artifacts/ 目录规范
 
 1. **根目录隔离**：每个仓库根目录下 **MUST** 维护 `.artifacts/` 目录。
 2. **Git 排除**：`.artifacts/` **MUST** 出现在 `.gitignore` 中，任何子目录或文件 **MUST NOT** 被提交。
-3. **标准子目录结构**：
+3. **正式 ZIP 唯一路径**：`.artifacts/packages/` 是正式交付 ZIP（如 `Acceptance-<TASK-ID>-v<VERSION>.zip`）的**唯一合法路径**，严禁在 `.artifacts/acceptance/` 或仓库根目录下生成正式交付 ZIP。
+4. **标准子目录结构**：
    ```
    .artifacts/
      acceptance/<TASK-ID>/<VERSION>/
@@ -51,7 +53,7 @@ LAST_UPDATED=2026-10-19
        videos/           # 录屏视频
        logs/             # 测试日志
        manifest.json     # 本次验收元数据
-     packages/           # 最终 ZIP 交付包
+     packages/           # 最终 ZIP 交付包（唯一合法目录）及外部 .sha256
      demo/               # 演示资产
      handoff/
        temporary/        # 跨会话临时交接文件
@@ -73,8 +75,8 @@ LAST_UPDATED=2026-10-19
    - `TEMP`：临时文件，确认后删除。
    - `OBSOLETE`：过期废弃制品，确认后删除。
 
-## 5. 旧版打包脚本清理
+## 5. 旧版打包脚本清理与唯一打包器 (`STD-034`)
 
 1. 每个仓库 **MUST** 只保留一个 `scripts/package_acceptance.py` 统一打包脚本。
-2. 历史版本化脚本（如 `package_acceptance_v05*.py`）**MUST** 在版本升级后删除。
-3. 统一脚本 **MUST** 通过 manifest JSON 驱动，支持 `task_id`、`version`、`run_id` 参数化。
+2. 历史版本化脚本（如 `package_acceptance_v05*.py`、`package_v021*_acceptance.py`）**MUST** 在版本升级后清理移除，严禁新建第二个竞争性打包器。
+3. 统一脚本 **MUST** 通过 `manifest.json` 驱动，支持 `task_id`、`version`、`run_id` 参数化，并固定输出至 `.artifacts/packages/`。

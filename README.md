@@ -1,14 +1,14 @@
-# AI Engineering Standards (V2.4.0)
+# AI Engineering Standards (V2.5.0)
 
 Canonical engineering standards shared across local AI / Vibe Coding projects.
 
 本项目是开发机跨工程共享的架构标准规范库（Source of Truth），定义网络通信、推理资源共享、智能体接入、上下文管理与工程协作标准。
 
 ```text
-STANDARDS_VERSION=2.4.0
+STANDARDS_VERSION=2.5.0
 STATUS=RELEASED
 BASELINE=AI-ENGINEERING-PLATFORM-V1-001
-LAST_UPDATED=2026-10-13
+LAST_UPDATED=2026-10-23
 ```
 
 ---
@@ -47,6 +47,7 @@ LAST_UPDATED=2026-10-13
 | [`STD-031`](./standards/12-acceptance/STD-031-runtime-acceptance-contract.md) | **Runtime Acceptance Contract** | 跨项目运行时验收契约、技术中立探针与统一验收报文 |
 | [`STD-032`](./standards/13-git-release/STD-032-release-engineering-contract.md) | **AI Platform Release Engineering Contract** | 12阶段发布生命周期、五态Commit一致性、强制门禁、Artifact与Git Tag及回滚规范 |
 | [`STD-033`](./standards/12-acceptance/STD-033-platform-verification-governance.md) | **Platform Verification Governance** | 跨项目平台验证中心、五维运行时验收矩阵、统一工程生命周期契约 (14阶段)、证据Schema与验证大盘治理 |
+| [`STD-034`](./standards/00-governance/STD-034-coding-agent-execution-governance.md) | **Coding Agent Execution Governance** | 跨工程编程智能体规则契约 (`AGENTS.md`/`CLAUDE.md`)、Thin Reference、Preflight、任务追踪、唯一打包器与 CI 强制机器门禁 |
 
 ---
 

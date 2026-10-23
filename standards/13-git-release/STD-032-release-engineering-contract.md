@@ -129,7 +129,7 @@ LOCAL_HEAD == REMOTE_HEAD == TAG_COMMIT == BUILD_COMMIT == LIVE_COMMIT
   └── evidence/      # 流水线报告、artifact_manifest.json、五态一致性与测试证据
 ```
 
-1. **严禁污染 `docs/`**：`docs/` 目录下 **MUST NOT** 保存任何截图（`.png`、`.jpg`、`.webp`、`.webm`）、压缩包（`.zip`、`.tar.gz`）或临时日志（`.log`、`.tmp`）。
+1. **严禁测试产物污染 `docs/`（允许正式架构图）**：经评审的正式架构图与正式项目图片（`.png`、`.jpg`、`.jpeg`、`.svg`）允许在 `docs/01-架构设计/` 或 `docs/**/assets/` 中追踪（见 `STD-019` 第 1.1 节）；但所有测试截图、录屏录像（`.webp`、`.webm`、`.mp4`）、压缩包（`.zip`、`.tar.gz`）或临时日志（`.log`、`.tmp`）**MUST NOT** 保存在 `docs/` 下，必须归档至 `.artifacts/`。
 2. **正式 ZIP 唯一路径**：所有正式交付 ZIP（如 `Acceptance-<TASK_ID>.zip`）**MUST** 且只能保存在 `.artifacts/packages/`。
 
 ### 6.2 `docs/` 文档分类治理
