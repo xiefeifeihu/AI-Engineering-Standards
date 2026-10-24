@@ -2,7 +2,7 @@
 
 ```text
 STANDARD_ID=STD-034
-VERSION=2.5.0
+VERSION=2.5.1
 STATUS=ACTIVE
 SCOPE=全平台受管工程仓库 (AI-Engineering-Hub, AI-Engineering-Standards, AI-KB, vtip-ai-sidecar, vtip-platform-catalog)
 OWNER=AI Platform Governance Committee
@@ -187,3 +187,19 @@ LOCAL_HEAD == REMOTE_HEAD == TAG_COMMIT == BUILD_COMMIT == LIVE_COMMIT
 2. **`docs/` 正式架构图白名单与测试截图隔离**：
    - `docs/01-架构设计/` 及 `docs/**/assets/` 下允许追踪正式架构图与正式项目设计图片（`.png`、`.jpg`、`.jpeg`、`.svg`）。
    - 除上述正式架构/设计资产目录外，`docs/` 其他子目录下 **MUST NOT** 存放任何 `.png`、`.jpg`、`.webp`、`.mp4`、`.webm`、`.zip`、`.log`、`.tmp` 文件；所有自动化测试截图、录像与日志 **MUST** 归档至 `.artifacts/`。
+
+---
+
+## 8. 生产发布与审批防伪铁律 (Release & Approval Anti-Spoofing Invariants)
+
+1. **禁止绕过审批与伪造审批标记**：
+   - 编程智能体 **MUST NOT** 自行生成或伪造生产审批凭证。
+   - 严禁通过传入 `--release-approved` 或环境变量 `RELEASE_APPROVAL=APPROVED` 在无真实人工审批凭证时冒充正式发布审批。
+2. **禁止伪造运行态身份与生产验收**：
+   - 严禁在未获生产部署授权或未真实执行部署时，通过伪造 JSON 声明目标版本已成为 `LIVE_COMMIT`。
+   - 严禁在远端 CI 失败时，将验收状态填写为 `REMOTE_CI_STATUS=PASS`。
+3. **禁止擅自修改生产服务与网络环境**：
+   - 严禁未经授权停止、替换或篡改运行于正式端口（如 Hub 端口 80、Sidecar 8799、CPA 18117/18317、AI-KB 18080/18090）的在线服务容器。
+   - 严禁擅自修改外部属主仓库（AI-KB、Sidecar、Catalog）的物理凭据与运行配置。
+4. **证据矛盾自动阻断**：
+   - 当交付契约校验器或智能体自身发现制品与运行态证据存在矛盾时，**MUST** 立即将总状态标记为 `FAIL` 或 `BLOCK`，绝不允许隐瞒或强行通过。

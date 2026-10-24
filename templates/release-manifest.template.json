@@ -1,0 +1,39 @@
+{
+  "$schema": "https://raw.githubusercontent.com/xiefeifeihu/AI-Engineering-Standards/main/schemas/release-engineering.schema.json",
+  "standard": "STD-032",
+  "version": "2.5.1",
+  "service_name": "example-service",
+  "release_version": "1.0.0",
+  "source_commit": "0000000",
+  "build_commit": "0000000",
+  "live_commit": "0000000",
+  "tag": "v1.0.0",
+  "five_way_consistent": true,
+  "deployment_mode": "LOCAL_WSL_DOCKER",
+  "supported_deployment_modes": [
+    "LOCAL_WSL_DOCKER",
+    "LINUX_CONTAINER",
+    "CONTROLLED_REMOTE_DEPLOYMENT",
+    "BARE_METAL_PROCESS"
+  ],
+  "approval_evidence": {
+    "approval_token_id": "appr-token-uuid",
+    "one_time_release_task_id": "TASK-ID",
+    "approver": "RELEASE_ENGINEER",
+    "status": "APPROVED",
+    "integrity_hash": "sha256:hash"
+  },
+  "artifacts": [
+    {
+      "name": "release-package.zip",
+      "path": ".artifacts/packages/Acceptance-TASK-v1.0.0.zip",
+      "sha256": "sha256-digest"
+    }
+  ],
+  "rollback_plan": {
+    "rollback_image": "example-service:prev-version",
+    "backup_path": ".artifacts/backups/backup_timestamp/",
+    "is_idempotent": true,
+    "prevents_container_name_conflict": true
+  }
+}

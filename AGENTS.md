@@ -1,6 +1,6 @@
 # AI Engineering Standards — 编码智能体工程治理入口 (AGENTS.md)
 
-> **权威性声明**：本文件 (`AGENTS.md`) 是 `AI-Engineering-Standards` 仓库的项目级编码智能体（Claude Code、Codex、Antigravity 等）统一规则入口。本仓库是全平台工程规范的**唯一事实源 (Single Source of Truth)**（当前基线版本：`2.5.0`，覆盖 `STD-001` 至 `STD-034`）。
+> **权威性声明**：本文件 (`AGENTS.md`) 是 `AI-Engineering-Standards` 仓库的项目级编码智能体（Claude Code、Codex、Antigravity 等）统一规则入口。本仓库是全平台工程规范的**唯一事实源 (Single Source of Truth)**（当前版本：`2.5.1`，覆盖 `STD-001` 至 `STD-034`）。
 
 ---
 
