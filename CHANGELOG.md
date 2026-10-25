@@ -2,6 +2,18 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [2.5.0] - 2026-10-23
+
+### Added
+- **STD-034: Coding Agent Execution Governance & Machine Gate Contract (跨工程编程智能体执行治理与强制机器门禁规范)**:
+  - 确立 15 项跨工程智能体执行治理标准：`AGENTS.md` 项目级规则契约（Rules A–O）、`CLAUDE.md` 客户端适配规则、Thin Reference 薄引用模式、Standards 版本与 Commit 锁定（不可读取时阻断，禁止静默降级）、Agent 任务启动 Preflight（`scripts/agent/preflight.py`）、结构化任务 Context 与 Git 分支关联、修改文件授权范围、测试与证据真实性、唯一 Acceptance 打包器（`scripts/package_acceptance.py`）、CI/CD 12 项强制门禁、五态 Commit 身份、`STD-023` 编码交付 8 阶段状态、未通过门禁禁止 `OVERALL_STATUS=PASS`、跨 Windows/WSL Git 安全规则、非法制品路径与 `docs/` 污染自动检测。
+
+### Changed
+- **STD-016 v1.1.0 / STD-019 v1.2.0 / STD-032 / STD-033**:
+  - 消除规范间冲突：明确正式架构图与正式项目设计图片（`.png`, `.jpg`, `.jpeg`, `.svg`）允许在 `docs/01-架构设计/` 与 `docs/**/assets/` 中由 Git 追踪，而测试截图、录像、日志仍必须严格归档至 `.artifacts/`。
+  - 锁定正式 Acceptance ZIP 的唯一合法输出路径为 `.artifacts/packages/`，严禁在 `.artifacts/acceptance/` 或仓库根目录存放正式 ZIP，严禁项目复制 Standards 全文。
+
+---
 ## [2.4.0] - 2026-10-13
 
 ### Added

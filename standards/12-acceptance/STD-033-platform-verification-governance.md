@@ -2,7 +2,7 @@
 
 ```text
 STANDARD_ID=STD-033
-VERSION=2.4.0
+VERSION=2.5.1
 STATUS=ACTIVE
 TASK_ID=AI-Platform-026-ENGINEERING-GOVERNANCE-FINALIZATION
 ROLE=PLATFORM_ENGINEERING_GOVERNANCE_FINALIZATION
@@ -258,7 +258,7 @@ scripts/release/
 ```
 
 ### 8.2 `docs/` 绝对卫生准则
-- **严禁污染**：`docs/` 目录内 **MUST NOT** 保存任何 `.zip` 压缩包、截图图片（`.png`, `.jpg`, `.webp`）或临时日志（`.log`, `.tmp`）。
+- **严禁测试产物污染（放行正式架构图）**：除 `docs/01-架构设计/` 与 `docs/**/assets/` 下受版本追踪的正式架构图与正式项目图片（`.png`, `.jpg`, `.jpeg`, `.svg`，见 `STD-019` 第 1.1 节）外，`docs/` 目录内 **MUST NOT** 保存任何 `.zip` 压缩包、测试截图/录屏（`.png`, `.jpg`, `.webp`, `.webm`, `.mp4`）或临时日志（`.log`, `.tmp`）。
 - **职责清晰**：
   - `Standards` 仓库：全平台架构与工程治理规范的唯一事实源。
   - 各项目 `docs/`：仅保存该项目的使用说明、部署指南与架构设计文档。
@@ -342,3 +342,45 @@ engineering_governance:
     - ".artifacts/screenshots"
     - ".artifacts/reports"
 ```
+
+
+---
+
+## 10. 部署证据真实性、回滚可靠性与验收事实一致性契约 (Deployment Truth, Rollback & Acceptance Consistency)
+
+### 10.1 真实部署与运行态身份一致性 (Authentic Deployment & Identity Match)
+1. **Source Commit 与 Live Commit 独立取证**：
+   - `SOURCE_COMMIT`：从工作区 Git HEAD 或构建元数据中取证。
+   - `LIVE_COMMIT`：从正在运行的服务进程或容器通过 HTTP 探针（`/health`、`/api/runtime/identity`）实时获取。
+   - 两个标识 **MUST** 独立取证，严禁在未部署时将目标 `SOURCE_COMMIT` 直接覆盖为 `LIVE_COMMIT`。
+2. **未部署时严禁冒充运行态**：
+   - 当任务处于开发、修复或未获生产部署授权状态（如 `PRODUCTION_DEPLOYMENT_AUTHORIZED=false`）时，运行态依然为当前线上服务（如 `v0.21.5` / `9e175c6`）。
+   - `manifest.json`、`verification_summary.json` 及验收报告中，`LIVE_COMMIT` **MUST** 忠实记录当前线上真实 Commit，并标记 `source_build_live_match = false`，`deploy_status = "BLOCK"`，并另设 `reason = "PROTECTED_AWAITING_APPROVAL"`。
+   - **严禁**在未执行真实部署时，在报告中宣称目标版本为线上运行态。
+
+### 10.2 本地测试与远端 CI 结论独立记录 (Local Test vs Remote CI Separation)
+1. 本地执行的测试（如 pytest contract / integration / runtime / security）结论记录为 `LOCAL_TEST_STATUS`。
+2. GitHub Actions 远端真实流水线结论记录为 `REMOTE_CI_STATUS`（附带 `REMOTE_CI_RUN_URL`）。
+3. 两者 **MUST** 分离记录，严禁将本地测试通过冒充远端 CI 通过；若 GitHub Actions 最新结论为 `failure`，验收摘要中 `REMOTE_CI_STATUS` **MUST** 记录为 `FAIL`。
+
+### 10.3 故障注入与回滚可靠性验证 (Fault-Injection & Rollback Resilience)
+1. 部署执行器 **MUST** 在完全隔离的测试环境（非生产端口 80）下通过故障注入测试验证回滚能力：
+   - 验证备份目录与正式数据物理隔离；
+   - 验证旧镜像固定至完整不可变 Image ID 或 Digest；
+   - 验证回滚操作不会因容器命名冲突而崩溃；
+   - 验证重复触发回滚具有幂等性；
+   - 验证回滚后原有编排配置（如 Docker Compose）可再次无缝接管服务；
+   - 验证回滚失败或成功时均产生完整审计日志。
+2. **严禁在生产端口 80 上执行破坏性演练**：生产端口 80 仅在获得正式发布授权且所有前置门禁全绿后，方可执行受控部署。
+
+### 10.4 证据事实矛盾判定法则 (Evidence Contradiction Auto-Fail)
+1. 任一交付物或验收包中，若发现以下事实矛盾：
+   - `manifest.json` 中声明的 `live_commit` 与 `runtime_identity.json` 真实返回不一致；
+   - 报告中宣称 `REMOTE_CI_STATUS=PASS`，但远端 GitHub Actions 实际为 `failure`；
+   - 未执行生产部署却声明 `DEPLOY=PASS`；
+   - 将 Dry Run PASS 冒充正式发布 PASS；
+2. 自动化交付契约门禁 **MUST** 直接判定该验收为 `FAIL`，并在报告中标记不可信任原因。
+
+
+### 10.5 机器证据关联
+验收打包前 MUST 关联源 Commit 的远端 CI 原始结论、原始本地命令/退出码/日志、实时运行身份、部署执行审计及流水线逐阶段结果。摘要不得用本地测试填充远端 CI，不得从 source 推导 live 或 build。无法获取构建身份必须报告 NOT_VERIFIABLE。跨文件身份或阶段结论矛盾 MUST 直接 FAIL；如实记录未部署 BLOCK 的开发验收包可以完整打包，但不能代表生产发布通过。最终 Tag 必须向远端取证，不得用本地候选 Tag 替代。

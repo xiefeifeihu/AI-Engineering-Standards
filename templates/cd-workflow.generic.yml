@@ -1,0 +1,30 @@
+# Adapt placeholders to your project. This template is not production-ready configuration.
+name: Generic approved artifact handoff
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+jobs:
+  verify-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Project build and immutable artifact publication
+        run: python scripts/release/cloud_build.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: immutable-release-manifest
+          path: .artifacts/evidence/release_manifest.json
+  approval:
+    needs: verify-build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: echo "Environment approval is recorded server-side; actor is not approver"
+# Controlled executor reads authenticated reviews, policy and exact build artifact,
+# consumes the release ID transactionally, then dispatches the project's WSL,
+# Linux Docker, remote SSH/agent or native process adapter. Hosted jobs never
+# access the local Docker daemon. Missing adapter/configuration MUST BLOCK.

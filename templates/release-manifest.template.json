@@ -1,0 +1,59 @@
+{
+  "$schema": "https://raw.githubusercontent.com/xiefeifeihu/AI-Engineering-Standards/main/schemas/release-engineering.schema.json",
+  "standard": "STD-032",
+  "version": "2.5.1",
+  "service_name": "example-service",
+  "release_version": "1.0.0",
+  "source_commit": "NOT_VERIFIABLE",
+  "build_commit": "NOT_VERIFIABLE",
+  "live_commit": "NOT_VERIFIABLE",
+  "tag": "v1.0.0",
+  "five_way_consistent": false,
+  "deployment_mode": "LOCAL_WSL_DOCKER",
+  "supported_deployment_modes": [
+    "LOCAL_WSL_DOCKER",
+    "LINUX_CONTAINER",
+    "CONTROLLED_REMOTE_DEPLOYMENT",
+    "BARE_METAL_PROCESS"
+  ],
+  "approval_evidence": {
+    "approval_token_id": "appr-token-uuid",
+    "one_time_release_task_id": "TASK-ID",
+    "approver": null,
+    "status": "BLOCK",
+    "integrity_hash": null,
+    "verification_source": "AUTHENTICATED_APPROVAL_SERVICE",
+    "target_branch": "main",
+    "target_commit": null,
+    "package_digest": null,
+    "expires_at": null
+  },
+  "artifacts": [
+    {
+      "name": "release-package.zip",
+      "path": ".artifacts/packages/Acceptance-TASK-v1.0.0.zip",
+      "sha256": "sha256-digest"
+    }
+  ],
+  "rollback_plan": {
+    "rollback_image": "sha256:<FULL_IMMUTABLE_IMAGE_ID>",
+    "backup_path": ".artifacts/backups/backup_timestamp/",
+    "is_idempotent": true,
+    "prevents_container_name_conflict": true
+  },
+  "overall_status": "BLOCK",
+  "stages": [
+    "SOURCE",
+    "DEV_TEST",
+    "SECURITY_SCAN",
+    "BUILD",
+    "PACKAGE",
+    "PUBLISH",
+    "RELEASE_APPROVAL",
+    "DEPLOY",
+    "RUNTIME_VERIFY",
+    "SMOKE_TEST",
+    "PRODUCTION_RELEASE",
+    "TAG"
+  ]
+}
