@@ -1,91 +1,30 @@
-# Generic CD Workflow Template for AI Platform Release Engineering (STD-032 / STD-034)
-# Demonstrates separation of cloud CI audit and local/controlled production CD executor handoff.
-
-name: AI Platform Controlled CD Pipeline (Generic Template)
-
+# Adapt placeholders to your project. This template is not production-ready configuration.
+name: Generic approved artifact handoff
 on:
-  push:
-    branches:
-      - "main"
-    tags:
-      - "v*"
   workflow_dispatch:
-    inputs:
-      target_version:
-        description: "Target version to release (e.g. 1.0.0)"
-        required: true
-      one_time_release_task_id:
-        description: "One-time Release Task ID (e.g. TASK-RELEASE-20261024)"
-        required: true
-      dry_run:
-        description: "Dry-run verification mode"
-        type: boolean
-        default: false
-
+permissions:
+  contents: read
 concurrency:
-  group: production-cd-deployment
+  group: production-release
   cancel-in-progress: false
-
 jobs:
-  # Stage 1: Cloud Audit & Release Gate
-  cloud-release-gate:
-    name: Cloud CI Verification & Build Gate
+  verify-build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Source Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - name: Project build and immutable artifact publication
+        run: python scripts/release/cloud_build.py
+      - uses: actions/upload-artifact@v4
         with:
-          fetch-depth: 0
-
-      - name: Checkout Standards (Single Source of Truth)
-        uses: actions/checkout@v4
-        with:
-          repository: xiefeifeihu/AI-Engineering-Standards
-          ref: v2.5.1
-          path: AI-Engineering-Standards
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Run Delivery Contract Gate (Fail-Closed)
-        run: |
-          python scripts/ci/verify_delivery_contract.py --mode RELEASE
-
-  # Stage 2: Production Approval & Evidence Handoff (Requires Reviewers)
-  production-approval:
-    name: Production Environment Approval & Evidence Generation
-    needs: cloud-release-gate
+          name: immutable-release-manifest
+          path: .artifacts/evidence/release_manifest.json
+  approval:
+    needs: verify-build
     runs-on: ubuntu-latest
-    environment:
-      name: production
+    environment: production
     steps:
-      - name: Generate Signed Approval Evidence Token
-        run: |
-          # Binds repository, target commit, artifact sha256, approver, task id
-          python -c "
-          import json, time, hashlib
-          token = {
-            'approval_token_id': f'appr-{int(time.time())}',
-            'one_time_release_task_id': '${{ github.event.inputs.one_time_release_task_id || github.run_id }}',
-            'repository': '${{ github.repository }}',
-            'target_commit': '${{ github.sha }}',
-            'approver': '${{ github.actor }}',
-            'approval_source': 'GITHUB_ENVIRONMENT_REVIEW',
-            'status': 'APPROVED'
-          }
-          token['integrity_hash'] = hashlib.sha256(json.dumps(token, sort_keys=True).encode()).hexdigest()
-          with open('approval_evidence.json', 'w') as f:
-            json.dump(token, f, indent=2)
-          "
-
-      - name: Upload Approval Evidence for Controlled Executor
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-approval-evidence
-          path: approval_evidence.json
-
-  # Stage 3: Controlled Execution Handoff
-  # Note: Cloud runner does NOT invoke local docker / wsl directly.
-  # Deployment is executed by the authorized local/on-premise runner consuming the approval token.
+      - run: echo "Environment approval is recorded server-side; actor is not approver"
+# Controlled executor reads authenticated reviews, policy and exact build artifact,
+# consumes the release ID transactionally, then dispatches the project's WSL,
+# Linux Docker, remote SSH/agent or native process adapter. Hosted jobs never
+# access the local Docker daemon. Missing adapter/configuration MUST BLOCK.

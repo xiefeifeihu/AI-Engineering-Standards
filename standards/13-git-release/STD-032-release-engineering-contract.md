@@ -66,7 +66,7 @@ PLAN ──► CODE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD �
 
 ### 3.1 全局 Fail-Closed 中止法则
 1. **前置门禁阻断法则**：若流水线前置任一强制阶段（`SOURCE`/`CODE`、`DEV_TEST`、`SECURITY_SCAN`、`BUILD`、`PACKAGE`、`PUBLISH`、`RELEASE_APPROVAL`）判定为 `FAIL` 或 `BLOCK`，流水线 **MUST** 立即执行全局 Fail-Closed 中止，**MUST NOT** 继续执行 `DEPLOY` 等具有破坏性或写操作的后续阶段。
-2. **未执行阶段标注**：因前置失败中止而未执行的后续阶段，**MUST** 显式标记为 `SKIPPED`，并记录中止原因（`reason: "Skipped due to upstream stage failure"`），严禁静默吞掉或虚假标记为 `PASS`。
+2. **未执行阶段标注**：因前置失败中止而未执行的后续阶段，**MUST** 显式标记为 `BLOCK` 并设置 `executed=false`，并记录中止原因（`reason: "Skipped due to upstream stage failure"`），严禁静默吞掉或虚假标记为 `PASS`。
 
 ### 3.2 RUNTIME_VERIFY 与 TAG 的正确时序契约
 1. **时序因果律**：在正式发布成功前，正式 Release Tag 尚未创建。在第 10 阶段 (`RUNTIME_VERIFY`) 与第 11 阶段 (`SMOKE_TEST`) 执行时，**MUST NOT** 强制要求一个尚未创建的正式 Tag 已经存在并匹配。
@@ -95,7 +95,7 @@ PLAN ──► CODE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD �
    - `approval_source`：审批源标识（如 `GITHUB_ENVIRONMENT_REVIEW` / `LOCAL_AUTHORIZED_KEY`）。
    - `approved_at`：审批通过时间戳。
    - `status`：审批状态（`APPROVED`）。
-   - `integrity_hash`：防伪签名摘要。
+   - `integrity_hash`：传输完整性摘要，**不构成审批真实性证明**；真实性必须由可信发行者签名（验证固定公钥与签名算法）或认证的审批服务 API 独立验证。
 3. **执行器核验四项准则**：
    - 证据中的 `repository` 与本地项目工程标识一致。
    - 证据中的 `target_commit` 与部署目标 Commit 完全一致。
@@ -141,8 +141,17 @@ AI 平台发布工程规范必须支持多种运行部署形态，发布适配�
 2. 备份目录 **MUST** 与正式业务数据物理隔离，并在备份完成后生成 `backup_manifest.json` 记录文件清单与校验哈希。
 
 ### 6.2 容器与服务编排回滚可靠性
-1. **防容器命名冲突**：回滚操作停止并清理失败容器时，**MUST** 先清理残留失败容器，再启动回滚容器，严禁产生容器名称冲突（如 `ai-engineering-hub-rollback` 再次执行冲突）。
+1. **防容器命名冲突**：回滚操作停止并清理失败容器时，**MUST** 通过原编排项目停止并重建失败服务，保留服务归属标签与配置，严禁产生容器名称冲突（如 `ai-engineering-hub-rollback` 再次执行冲突）。
 2. **编排工具可再管理性**：回滚后容器 **MUST** 保持标准服务名称（如 `ai-engineering-hub`），确保日常 `docker compose` 工具仍可继续无缝管理服务。
-3. **旧镜像确定性锁定**：回滚镜像 **MUST** 锁定至明确的历史 Image ID 或准确 Tag（如 `ai-engineering-hub:0.21.5`），严禁使用未经固化的模糊镜像。
+3. **旧镜像确定性锁定**：回滚镜像 **MUST** 锁定至完整的不可变 Image ID 或 Digest（Tag 只能作展示，不能作为恢复身份），严禁使用未经固化的模糊镜像。
 4. **幂等性**：连续多次触发回滚操作 **MUST** 保证幂等安全，不导致服务雪崩或进一步破坏。
 5. **回滚审计留痕**：回滚执行完成后 **MUST** 输出 `rollback_audit.json`，完整记录回滚原因、耗时、前置与恢复后的 Commit 身份。
+
+
+### 4.3 审批来源验证与一次性消费
+审批字段本身不能建立信任。执行器 MUST 从认证审批服务读取审批人身份与决定；发起人不等于审批人。部署输入 MUST 绑定完整仓库、分支、40 位 Commit、不可变制品 Digest、目标版本、审批有效期及一次性任务 ID。执行器 MUST 验证受保护环境的 Required Reviewers、防止自审、分支限制与发布权限；权限不足或字段不可获取时报告 NOT_VERIFIABLE 并阻断。
+
+对于 GitHub，执行器 MUST 验证可信工作流路径、精确源 SHA、真实审批历史及该运行生成的不可变交接制品，重新检查目标 Commit 的最新 CI。一次性任务 ID MUST 在替换服务前通过持久化事务消费；重放或失败重试需要新审批任务。不得将自填姓名、字符串 APPROVED、普通 SHA256 或可编辑本地 JSON 视作签名。
+
+### 6.3 恢复验证
+备份 MUST 覆盖所有实际可写数据挂载，使用数据库一致性备份或经授权的写入静止窗口；仅复制 data/ 不代表完整备份。上线前 MUST 将备份在隔离目录实际恢复并核验摘要与数据库完整性。恢复失败 MUST 阻断部署。回滚 MUST 停止写入后恢复数据并验证原编排归属、健康、Commit 及完整镜像身份，重复执行仍应收敛。备份与原编排配置可能含私人数据，MUST 不进入 Git、日志与验收交付包。

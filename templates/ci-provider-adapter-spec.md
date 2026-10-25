@@ -17,12 +17,15 @@ class CIProviderAdapter:
         self,
         stage_handlers: Dict[str, Callable[[], Dict[str, Any]]],
         stages: List[str] | None = None,
-        fail_closed: bool = True,
-    ) -> Dict[str, Any]: ...
+        ) -> Dict[str, Any]: ...
 ```
 
 ## 3. Mandatory Fail-Closed Contract
-If `fail_closed=True` (default), when any mandatory stage fails (`passed=False` or `status in ("FAIL", "BLOCK")`):
+When any mandatory stage fails (`passed=False` or `status in ("FAIL", "BLOCK")`):
 - Execution of subsequent stages MUST immediately cease.
-- Subsequent stages MUST be marked `SKIPPED` with explanation.
+- Subsequent stages MUST be marked `BLOCK`, `executed=false` with explanation.
 - Destructive stages like `DEPLOY` MUST NEVER execute following an upstream gate failure.
+
+
+## Deployment adapter (all supported modes)
+Each project supplies `verify_approval(request)`, `snapshot(request)`, `deploy(exact_artifact)`, `verify_runtime(expected_identity)` and `rollback(snapshot)`. Results contain status (PASS/FAIL/BLOCK/NOT_VERIFIABLE), executed, command exit codes, observed identity and evidence paths. Snapshot must verify restoration. No adapter may disable mandatory fail-closed behavior. WSL Docker, Linux Docker, authenticated remote deployment and native process managers share this contract; project paths, ports and commands belong only in the project implementation.

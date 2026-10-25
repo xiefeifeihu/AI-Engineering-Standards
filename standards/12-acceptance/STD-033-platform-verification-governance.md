@@ -355,7 +355,7 @@ engineering_governance:
    - 两个标识 **MUST** 独立取证，严禁在未部署时将目标 `SOURCE_COMMIT` 直接覆盖为 `LIVE_COMMIT`。
 2. **未部署时严禁冒充运行态**：
    - 当任务处于开发、修复或未获生产部署授权状态（如 `PRODUCTION_DEPLOYMENT_AUTHORIZED=false`）时，运行态依然为当前线上服务（如 `v0.21.5` / `9e175c6`）。
-   - `manifest.json`、`verification_summary.json` 及验收报告中，`LIVE_COMMIT` **MUST** 忠实记录当前线上真实 Commit，并标记 `source_build_live_match = false`，`deploy_status = "PROTECTED_AWAITING_APPROVAL"`。
+   - `manifest.json`、`verification_summary.json` 及验收报告中，`LIVE_COMMIT` **MUST** 忠实记录当前线上真实 Commit，并标记 `source_build_live_match = false`，`deploy_status = "BLOCK"`，并另设 `reason = "PROTECTED_AWAITING_APPROVAL"`。
    - **严禁**在未执行真实部署时，在报告中宣称目标版本为线上运行态。
 
 ### 10.2 本地测试与远端 CI 结论独立记录 (Local Test vs Remote CI Separation)
@@ -366,7 +366,7 @@ engineering_governance:
 ### 10.3 故障注入与回滚可靠性验证 (Fault-Injection & Rollback Resilience)
 1. 部署执行器 **MUST** 在完全隔离的测试环境（非生产端口 80）下通过故障注入测试验证回滚能力：
    - 验证备份目录与正式数据物理隔离；
-   - 验证旧镜像固定至确切 Image ID 或 Tag；
+   - 验证旧镜像固定至完整不可变 Image ID 或 Digest；
    - 验证回滚操作不会因容器命名冲突而崩溃；
    - 验证重复触发回滚具有幂等性；
    - 验证回滚后原有编排配置（如 Docker Compose）可再次无缝接管服务；
@@ -380,3 +380,7 @@ engineering_governance:
    - 未执行生产部署却声明 `DEPLOY=PASS`；
    - 将 Dry Run PASS 冒充正式发布 PASS；
 2. 自动化交付契约门禁 **MUST** 直接判定该验收为 `FAIL`，并在报告中标记不可信任原因。
+
+
+### 10.5 机器证据关联
+验收打包前 MUST 关联源 Commit 的远端 CI 原始结论、原始本地命令/退出码/日志、实时运行身份、部署执行审计及流水线逐阶段结果。摘要不得用本地测试填充远端 CI，不得从 source 推导 live 或 build。无法获取构建身份必须报告 NOT_VERIFIABLE。跨文件身份或阶段结论矛盾 MUST 直接 FAIL；如实记录未部署 BLOCK 的开发验收包可以完整打包，但不能代表生产发布通过。最终 Tag 必须向远端取证，不得用本地候选 Tag 替代。
