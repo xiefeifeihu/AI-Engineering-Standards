@@ -31,7 +31,7 @@ RELATED_STANDARDS=STD-001, STD-007, STD-014, STD-016, STD-017, STD-019, STD-030,
 
 ### 1.2 制品不可变性与身份锁定 (Artifact Immutability & Identity Lock)
 1. 生产发布只能部署已通过自动化门禁测试、源码经过静态安全扫描并固化确切 Commit 标识的制品。
-2. 容器镜像 **MUST** 显式绑定 `BUILD_COMMIT`（7–40 位 Git SHA）与唯一的 Image Digest / ID；禁止部署 `latest` 浮动标签作为生产正式镜像。
+2. 容器镜像 **MUST** 显式绑定 `BUILD_COMMIT`（完整 40 位 Git SHA，短 SHA 仅作展示）与唯一的 Image Digest / ID；禁止部署 `latest` 浮动标签作为生产正式镜像。
 3. 所有运行时探针 **MUST** 通过标准网络套接字与 HTTP/HTTPS 契约端点（如 `/health`、`/api/runtime/identity`）获取真实运行身份。
 
 ---
@@ -41,24 +41,23 @@ RELATED_STANDARDS=STD-001, STD-007, STD-014, STD-016, STD-017, STD-019, STD-030,
 AI 平台所有受管工程仓库在执行生产版本发布时 **MUST** 完整覆盖以下 12 个标准阶段，并遵循严格的时序因果律：
 
 ```text
-PLAN ──► CODE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACKAGE ──► PUBLISH ──► RELEASE_APPROVAL ──► DEPLOY ──► RUNTIME_VERIFY ──► SMOKE_TEST ──► PRODUCTION_RELEASE ──► TAG
+SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACKAGE ──► PUBLISH ──► RELEASE_APPROVAL ──► DEPLOY ──► RUNTIME_VERIFY ──► SMOKE_TEST ──► PRODUCTION_RELEASE ──► TAG
 ```
 
 | 序号 | 阶段标识 | 阶段名称 | 核心职责与准出判据 |
 | :--- | :--- | :--- | :--- |
-| 1 | `PLAN` | 规划与基线核验 | 确认 `VERSION` 语义化版本号、变更范围及架构/文档治理边界合规。 |
-| 2 | `CODE` | 源码就绪与干净工作区 | 代码提交完成，工作区检查 (`git clean`) 无未提交修改或未跟踪文件。 |
-| 3 | `DEV_TEST` | 开发分层测试 | 真实执行 `unit test`、`contract test`、`integration test`、`e2e` 测试并 100% 通过（`exit_code=0`）。 |
-| 4 | `SECURITY_SCAN` | 安全与凭据扫描 | 执行零密钥扫描 (`secret scan`) 与依赖清单完整性核验，严禁明文 Token/私钥入库。 |
-| 5 | `BUILD` | 构建元数据生成 | 执行 `build_metadata.py` 固化 `build_info.json` 与 `.build_commit`，绑定 `BUILD_COMMIT == LOCAL_HEAD`。 |
-| 6 | `PACKAGE` | 制品打包与校验 | 生成发布包至 `.artifacts/packages/`，计算 `PACKAGE_SHA256` 并输出 `artifact_manifest.json`。 |
-| 7 | `PUBLISH` | 远端分支同步核验 | 严格核验本地提交已推送到远端仓库 (`LOCAL_HEAD == REMOTE_HEAD`)。若本地与远端分支 Commit 不一致，必须判定 `FAIL`。 |
-| 8 | `RELEASE_APPROVAL` | 生产发布审批门禁 | 校验结构化审批证据包（绑定仓库、分支、精确 Commit、制品 Digest、审批身份、一次性发布任务 ID）。无有效审批证据时 **MUST** 标记 `BLOCK` 并阻断后续发布。 |
-| 9 | `DEPLOY` | 受控部署与运行态就绪 | 在经批准的目标环境下，使用受控部署执行器将目标版本部署就绪，通过运行时技术中立探针验证存活。 |
-| 10 | `RUNTIME_VERIFY` | 运行态身份与一致性核验 | 严格校验运行态真实返回的身份：`LOCAL_HEAD == REMOTE_HEAD == BUILD_COMMIT == LIVE_COMMIT`（前置 Tag 未创建时允许 Tag 待创建状态）。 |
-| 11 | `SMOKE_TEST` | 最小业务冒烟验证 | 执行非破坏性只读业务验证，验证核心功能与 API 契约可用。 |
-| 12 | `PRODUCTION_RELEASE` | 生产验收裁决与封版 | 汇总各阶段真实证据生成 `release_execution_report.json`，判定全流水线通过。 |
-| 13 | `TAG` | 正式 Git Tag 固化与推送 | 生产验收确认后，创建正式语义化版本标签 `v<VERSION>` 锁定指向实际发布的精确 Commit，并推送至远端仓库。 |
+| 1 | `SOURCE` | 规划、源码与基线核验 | 只读核验 VERSION、范围、完整 Commit 和 git status；源码已提交且工作区干净。PLAN/CODE 是 SOURCE 的前置活动，不另计发布阶段。 |
+| 2 | `DEV_TEST` | 开发分层测试 | 真实执行 `unit test`、`contract test`、`integration test`、`e2e` 测试并 100% 通过（`exit_code=0`）。 |
+| 3 | `SECURITY_SCAN` | 安全与凭据扫描 | 执行零密钥扫描 (`secret scan`) 与依赖清单完整性核验，严禁明文 Token/私钥入库。 |
+| 4 | `BUILD` | 构建元数据生成 | 执行 `build_metadata.py` 固化 `build_info.json` 与 `.build_commit`，绑定 `BUILD_COMMIT == LOCAL_HEAD`。 |
+| 5 | `PACKAGE` | 制品打包与校验 | 生成发布包至 `.artifacts/packages/`，计算 `PACKAGE_SHA256` 并输出 `artifact_manifest.json`。 |
+| 6 | `PUBLISH` | 远端分支同步核验 | 严格核验本地提交已推送到远端仓库 (`LOCAL_HEAD == REMOTE_HEAD`)。若本地与远端分支 Commit 不一致，必须判定 `FAIL`。 |
+| 7 | `RELEASE_APPROVAL` | 生产发布审批门禁 | 校验结构化审批证据包（绑定仓库、分支、精确 Commit、制品 Digest、审批身份、一次性发布任务 ID）。无有效审批证据时 **MUST** 标记 `BLOCK` 并阻断后续发布。 |
+| 8 | `DEPLOY` | 受控部署与运行态就绪 | 在经批准的目标环境下，使用受控部署执行器将目标版本部署就绪，通过运行时技术中立探针验证存活。 |
+| 9 | `RUNTIME_VERIFY` | 运行态身份与一致性核验 | 严格校验运行态真实返回的身份：`LOCAL_HEAD == REMOTE_HEAD == BUILD_COMMIT == LIVE_COMMIT`（前置 Tag 未创建时允许 Tag 待创建状态）。 |
+| 10 | `SMOKE_TEST` | 最小业务冒烟验证 | 执行非破坏性只读业务验证，验证核心功能与 API 契约可用。 |
+| 11 | `PRODUCTION_RELEASE` | 生产验收裁决与封版 | 汇总各阶段真实证据生成 `release_execution_report.json`，判定全流水线通过。 |
+| 12 | `TAG` | 正式 Git Tag 固化与推送 | 生产验收确认后，创建正式语义化版本标签 `v<VERSION>` 锁定指向实际发布的精确 Commit，并推送至远端仓库。 |
 
 ---
 
@@ -69,7 +68,7 @@ PLAN ──► CODE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD �
 2. **未执行阶段标注**：因前置失败中止而未执行的后续阶段，**MUST** 显式标记为 `BLOCK` 并设置 `executed=false`，并记录中止原因（`reason: "Skipped due to upstream stage failure"`），严禁静默吞掉或虚假标记为 `PASS`。
 
 ### 3.2 RUNTIME_VERIFY 与 TAG 的正确时序契约
-1. **时序因果律**：在正式发布成功前，正式 Release Tag 尚未创建。在第 10 阶段 (`RUNTIME_VERIFY`) 与第 11 阶段 (`SMOKE_TEST`) 执行时，**MUST NOT** 强制要求一个尚未创建的正式 Tag 已经存在并匹配。
+1. **时序因果律**：在正式发布成功前，正式 Release Tag 尚未创建。在第 9 阶段 (`RUNTIME_VERIFY`) 与第 10 阶段 (`SMOKE_TEST`) 执行时，**MUST NOT** 强制要求一个尚未创建的正式 Tag 已经存在并匹配。
 2. **阶段判定准则**：
    - 在部署后核验阶段 (`RUNTIME_VERIFY`)：核心核验四态一致性 `LOCAL_HEAD == REMOTE_HEAD == BUILD_COMMIT == LIVE_COMMIT`。Tag 状态标记为 `PENDING_STAGE_12_CREATION` 或核验本地候选标签。
    - 在标签固化阶段 (`TAG`)：仅在 `PRODUCTION_RELEASE` 验收确认 `PASS` 后，由受控流水线为目标 Commit 创建并推送正式 Tag（`v<VERSION>`），实现最终完整的五态一致性闭环：

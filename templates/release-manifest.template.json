@@ -4,11 +4,11 @@
   "version": "2.5.1",
   "service_name": "example-service",
   "release_version": "1.0.0",
-  "source_commit": "0000000",
-  "build_commit": "0000000",
-  "live_commit": "0000000",
+  "source_commit": "NOT_VERIFIABLE",
+  "build_commit": "NOT_VERIFIABLE",
+  "live_commit": "NOT_VERIFIABLE",
   "tag": "v1.0.0",
-  "five_way_consistent": true,
+  "five_way_consistent": false,
   "deployment_mode": "LOCAL_WSL_DOCKER",
   "supported_deployment_modes": [
     "LOCAL_WSL_DOCKER",
@@ -19,9 +19,14 @@
   "approval_evidence": {
     "approval_token_id": "appr-token-uuid",
     "one_time_release_task_id": "TASK-ID",
-    "approver": "RELEASE_ENGINEER",
-    "status": "APPROVED",
-    "integrity_hash": "sha256:hash"
+    "approver": null,
+    "status": "BLOCK",
+    "integrity_hash": null,
+    "verification_source": "AUTHENTICATED_APPROVAL_SERVICE",
+    "target_branch": "main",
+    "target_commit": null,
+    "package_digest": null,
+    "expires_at": null
   },
   "artifacts": [
     {
@@ -31,9 +36,24 @@
     }
   ],
   "rollback_plan": {
-    "rollback_image": "example-service:prev-version",
+    "rollback_image": "sha256:<FULL_IMMUTABLE_IMAGE_ID>",
     "backup_path": ".artifacts/backups/backup_timestamp/",
     "is_idempotent": true,
     "prevents_container_name_conflict": true
-  }
+  },
+  "overall_status": "BLOCK",
+  "stages": [
+    "SOURCE",
+    "DEV_TEST",
+    "SECURITY_SCAN",
+    "BUILD",
+    "PACKAGE",
+    "PUBLISH",
+    "RELEASE_APPROVAL",
+    "DEPLOY",
+    "RUNTIME_VERIFY",
+    "SMOKE_TEST",
+    "PRODUCTION_RELEASE",
+    "TAG"
+  ]
 }

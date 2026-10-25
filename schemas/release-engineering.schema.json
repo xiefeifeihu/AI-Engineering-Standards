@@ -51,26 +51,41 @@
       ]
     },
     "stages": {
-      "type": "array",
-      "minItems": 12,
-      "maxItems": 12,
-      "items": {
-        "type": "string",
-        "enum": [
-          "PLAN",
-          "CODE",
-          "DEV_TEST",
-          "SECURITY_SCAN",
-          "BUILD",
-          "PACKAGE",
-          "PUBLISH",
-          "DEPLOY",
-          "RUNTIME_VERIFY",
-          "SMOKE_TEST",
-          "PRODUCTION_RELEASE",
-          "TAG"
-        ]
-      }
+      "description": "2.5.1 canonical lifecycle; legacy 2.5.0 sequence accepted for backward compatibility only.",
+      "oneOf": [
+        {
+          "const": [
+            "SOURCE",
+            "DEV_TEST",
+            "SECURITY_SCAN",
+            "BUILD",
+            "PACKAGE",
+            "PUBLISH",
+            "RELEASE_APPROVAL",
+            "DEPLOY",
+            "RUNTIME_VERIFY",
+            "SMOKE_TEST",
+            "PRODUCTION_RELEASE",
+            "TAG"
+          ]
+        },
+        {
+          "const": [
+            "PLAN",
+            "CODE",
+            "DEV_TEST",
+            "SECURITY_SCAN",
+            "BUILD",
+            "PACKAGE",
+            "PUBLISH",
+            "DEPLOY",
+            "RUNTIME_VERIFY",
+            "SMOKE_TEST",
+            "PRODUCTION_RELEASE",
+            "TAG"
+          ]
+        }
+      ]
     },
     "commit_identity": {
       "type": "object",
