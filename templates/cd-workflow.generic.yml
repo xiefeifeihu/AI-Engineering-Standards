@@ -1,5 +1,5 @@
 # Adapt placeholders to your project. This template is not production-ready configuration.
-name: Generic approved artifact handoff
+name: Generic candidate artifact handoff
 on:
   workflow_dispatch:
 permissions:
@@ -23,8 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - run: echo "Environment approval is recorded server-side; actor is not approver"
+      - run: echo "Candidate UNAPPROVED; executor must independently verify configured approval policy"
 # Controlled executor reads authenticated reviews, policy and exact build artifact,
 # consumes the release ID transactionally, then dispatches the project's WSL,
 # Linux Docker, remote SSH/agent or native process adapter. Hosted jobs never
 # access the local Docker daemon. Missing adapter/configuration MUST BLOCK.
+
+# This template illustrates the GITHUB_ENVIRONMENT_REVIEW job topology only.
+# Required reviewers and prevent-self-review must actually be configured and
+# verified through authenticated API. For an explicitly governed local-key
+# profile, publish only a candidate; obtain independent human signing outside CI.
+# Never generate a signing key or reusable approval token on the runner.

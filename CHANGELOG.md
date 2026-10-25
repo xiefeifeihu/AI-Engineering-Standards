@@ -2,6 +2,18 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [2.6.0] - 2026-10-25
+
+### Added
+- STD-032 explicit, mutually exclusive GitHub Environment and protected local-key approval profiles; no automatic fallback.
+- Strict signed-envelope and approval-policy schemas; identity separation, human interaction, revocation, expiry and durable one-time consumption requirements.
+- Schema contract tests and CI execution. Structural validation never establishes a human approval.
+
+### Changed
+- Resolve unconditional Required Reviewers wording while retaining the strict GitHub profile.
+- Candidate workflows cannot claim approval merely because an environment job ran.
+- Correct README release metadata; published v2.5.0/v2.5.1 tags remain immutable.
+
 ## [2.5.0] - 2026-10-23
 
 ### Added

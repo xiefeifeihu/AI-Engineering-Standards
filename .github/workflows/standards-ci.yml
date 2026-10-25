@@ -40,3 +40,6 @@ jobs:
         run: |
           test -f VERSION
           echo "Verified Standards VERSION: $(cat VERSION)"
+
+      - name: Validate approval policy contracts
+        run: python -m unittest discover -s tests -v

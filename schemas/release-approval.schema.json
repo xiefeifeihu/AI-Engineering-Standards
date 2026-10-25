@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/release-approval.schema.json",
+  "title": "STD-032 signed release envelope; structure is not approval proof",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "approval_source",
+    "key_fingerprint",
+    "algorithm",
+    "payload",
+    "signature"
+  ],
+  "properties": {
+    "approval_source": {
+      "const": "LOCAL_AUTHORIZED_KEY"
+    },
+    "key_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "algorithm": {
+      "const": "RSA-PSS-SHA256"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "domain",
+        "repository",
+        "branch",
+        "source_sha",
+        "version",
+        "image",
+        "workflow",
+        "run_id",
+        "run_attempt",
+        "ci_run_id",
+        "release_task_id",
+        "candidate_sha256",
+        "change_summary_sha256",
+        "approver",
+        "issued_at",
+        "expires_at",
+        "decision"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "domain": {
+          "const": "STD-032:production-release:v1"
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "branch": {
+          "const": "main"
+        },
+        "source_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "image": {
+          "type": "string",
+          "pattern": "^ghcr\\.io/[a-z0-9_.-]+/[a-z0-9_./-]+@sha256:[0-9a-f]{64}$"
+        },
+        "workflow": {
+          "type": "string",
+          "pattern": "^\\.github/workflows/[A-Za-z0-9_-]+\\.ya?ml$"
+        },
+        "run_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "run_attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ci_run_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "release_task_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[ -~]+$"
+        },
+        "candidate_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "change_summary_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "approver": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[ -~]+$"
+        },
+        "issued_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])T([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\dZ$",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])T([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\dZ$",
+          "format": "date-time"
+        },
+        "decision": {
+          "enum": [
+            "APPROVED",
+            "REJECTED"
+          ]
+        }
+      }
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 512,
+      "maxLength": 2048,
+      "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+    }
+  }
+}

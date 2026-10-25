@@ -3,6 +3,8 @@
 """Validate All AI Engineering Standards Schemas and Sample Payloads."""
 import json
 import sys
+import unittest
+import jsonschema
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -14,6 +16,7 @@ def validate_schema_structure(schema_path: Path):
             data = json.load(f)
         assert "$schema" in data, "Missing $schema"
         assert "type" in data, "Missing type"
+        jsonschema.validators.validator_for(data).check_schema(data)
         return True, "Valid JSON Schema"
     except Exception as e:
         return False, str(e)
@@ -21,12 +24,6 @@ def validate_schema_structure(schema_path: Path):
 def test_samples():
     print("Testing realistic samples against standard schemas...")
 
-
-    try:
-        import jsonschema
-    except ImportError:
-        print("[WARN] jsonschema not installed, skipping deep payload validation.")
-        return True
 
     with open(SCHEMAS_DIR / "model-routing-request.schema.json", "r", encoding="utf-8") as f:
         req_schema = json.load(f)
@@ -1372,7 +1369,7 @@ def test_samples():
     }
     jsonschema.validate(instance=sample_platform_verification, schema=pv_schema)
 
-    print("Sample validation PASS: structures conform to Standards V2.4.0 specifications.")
+    print(f"Sample validation PASS: Standards {(ROOT / 'VERSION').read_text().strip()}.")
     return True
 
 def main():
@@ -1391,6 +1388,9 @@ def main():
             failed += 1
             
     test_samples()
+    approval_tests = unittest.defaultTestLoader.discover(str(ROOT / 'tests'))
+    if not unittest.TextTestRunner(verbosity=2).run(approval_tests).wasSuccessful():
+        failed += 1
 
     if failed == 0:
         print(f"\nAll {len(schemas)} schemas validated successfully!")

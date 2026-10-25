@@ -2,7 +2,7 @@
 
 ```text
 STANDARD_ID=STD-033
-VERSION=2.5.1
+VERSION=2.6.0
 STATUS=ACTIVE
 TASK_ID=AI-Platform-026-ENGINEERING-GOVERNANCE-FINALIZATION
 ROLE=PLATFORM_ENGINEERING_GOVERNANCE_FINALIZATION
@@ -384,3 +384,7 @@ engineering_governance:
 
 ### 10.5 机器证据关联
 验收打包前 MUST 关联源 Commit 的远端 CI 原始结论、原始本地命令/退出码/日志、实时运行身份、部署执行审计及流水线逐阶段结果。摘要不得用本地测试填充远端 CI，不得从 source 推导 live 或 build。无法获取构建身份必须报告 NOT_VERIFIABLE。跨文件身份或阶段结论矛盾 MUST 直接 FAIL；如实记录未部署 BLOCK 的开发验收包可以完整打包，但不能代表生产发布通过。最终 Tag 必须向远端取证，不得用本地候选 Tag 替代。
+
+### STD-032 审批配置协同 (2.6.0)
+
+生产审批 MUST 使用 STD-032 §4 的显式互斥配置。审计 MUST 区分候选、加密签名验证和独立人工信任边界；schema 合法、workflow 成功、裸布尔值或 Agent 自签不得产生人工 PASS。未知/不可核验边界 MUST BLOCK，禁止自动降级。编码 Agent MUST NOT 注册自有密钥为审批身份、触发签署、输入 PIN 或保存可复用审批凭证。所有证据来源及未执行阶段 MUST 如实记录。

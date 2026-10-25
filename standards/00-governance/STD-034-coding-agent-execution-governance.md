@@ -2,7 +2,7 @@
 
 ```text
 STANDARD_ID=STD-034
-VERSION=2.5.1
+VERSION=2.6.0
 STATUS=ACTIVE
 SCOPE=全平台受管工程仓库 (AI-Engineering-Hub, AI-Engineering-Standards, AI-KB, vtip-ai-sidecar, vtip-platform-catalog)
 OWNER=AI Platform Governance Committee
@@ -203,3 +203,7 @@ LOCAL_HEAD == REMOTE_HEAD == TAG_COMMIT == BUILD_COMMIT == LIVE_COMMIT
    - 严禁擅自修改外部属主仓库（AI-KB、Sidecar、Catalog）的物理凭据与运行配置。
 4. **证据矛盾自动阻断**：
    - 当交付契约校验器或智能体自身发现制品与运行态证据存在矛盾时，**MUST** 立即将总状态标记为 `FAIL` 或 `BLOCK`，绝不允许隐瞒或强行通过。
+
+### STD-032 审批配置协同 (2.6.0)
+
+生产审批 MUST 使用 STD-032 §4 的显式互斥配置。审计 MUST 区分候选、加密签名验证和独立人工信任边界；schema 合法、workflow 成功、裸布尔值或 Agent 自签不得产生人工 PASS。未知/不可核验边界 MUST BLOCK，禁止自动降级。编码 Agent MUST NOT 注册自有密钥为审批身份、触发签署、输入 PIN 或保存可复用审批凭证。所有证据来源及未执行阶段 MUST 如实记录。
