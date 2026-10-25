@@ -1,14 +1,14 @@
-# AI Engineering Standards (V2.5.0)
+# AI Engineering Standards (V2.6.0)
 
 Canonical engineering standards shared across local AI / Vibe Coding projects.
 
 本项目是开发机跨工程共享的架构标准规范库（Source of Truth），定义网络通信、推理资源共享、智能体接入、上下文管理与工程协作标准。
 
 ```text
-STANDARDS_VERSION=2.5.0
+STANDARDS_VERSION=2.6.0
 STATUS=RELEASED
 BASELINE=AI-ENGINEERING-PLATFORM-V1-001
-LAST_UPDATED=2026-10-23
+LAST_UPDATED=2026-10-25
 ```
 
 ---

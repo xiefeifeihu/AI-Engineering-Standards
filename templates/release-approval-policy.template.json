@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0.0",
+  "repository": "example/service",
+  "branch": "main",
+  "approval_mode": "GITHUB_ENVIRONMENT_REVIEW",
+  "workflow": ".github/workflows/cd-production.yml",
+  "environment": "production",
+  "max_age_seconds": 3600
+}

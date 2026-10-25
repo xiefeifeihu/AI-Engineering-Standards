@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-032
-VERSION=2.5.1
+VERSION=2.6.0
 STATUS=ACTIVE
 SCOPE=跨项目生产级 CI/CD 与发布工程契约 (AI-Engineering-Hub, AI-KB, vtip-ai-sidecar, vtip-platform-catalog)、12阶段标准发布流水线、审批交接契约、多部署模式适配、五态Commit一致性证明、强制自动化门禁、制品不可变性与技术中立回滚契约
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-10-24
+LAST_UPDATED=2026-10-25
 RELATED_STANDARDS=STD-001, STD-007, STD-014, STD-016, STD-017, STD-019, STD-030, STD-031, STD-033, STD-034
 ```
 
@@ -102,7 +102,7 @@ SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACK
    - 证据未过期且 `one_time_release_task_id` 匹配当前发布任务。
 
 ### 4.2 GitHub Environment Review 审查与状态核查
-1. 在使用 GitHub Actions 工作流时，涉及生产发布的作业 **MUST** 绑定 `environment: production`，并配置所需的人工审批人员 (Required Reviewers)。
+1. 发布策略 **MUST** 显式选择唯一审批模式 `GITHUB_ENVIRONMENT_REVIEW` 或 `LOCAL_AUTHORIZED_KEY`，且在受控仓库通过独立 PR 和真实 CI 审查。未配置策略 MUST BLOCK；禁止在 GitHub 审批失败时自动降级。使用 `GITHUB_ENVIRONMENT_REVIEW` 时，涉及生产发布的作业 **MUST** 绑定 `environment: production`，配置 Required Reviewers、Prevent Self-review 和仅允许 main 分支的限制；所有原有严格验证仍然适用。
 2. 本地执行器在检查远端审批状态时，若无法直接核验 GitHub API（如无有效 `GH_TOKEN` 或网络受限），**MUST** 将环境审查标记为 `NOT_VERIFIABLE`，严禁在无证据时冒充 `PASS`。
 
 ---
@@ -148,9 +148,21 @@ AI 平台发布工程规范必须支持多种运行部署形态，发布适配�
 
 
 ### 4.3 审批来源验证与一次性消费
-审批字段本身不能建立信任。执行器 MUST 从认证审批服务读取审批人身份与决定；发起人不等于审批人。部署输入 MUST 绑定完整仓库、分支、40 位 Commit、不可变制品 Digest、目标版本、审批有效期及一次性任务 ID。执行器 MUST 验证受保护环境的 Required Reviewers、防止自审、分支限制与发布权限；权限不足或字段不可获取时报告 NOT_VERIFIABLE 并阻断。
+审批字段本身不能建立信任。GitHub 模式执行器 MUST 从认证审批服务读取审批人身份与决定；本地密钥模式 MUST 按 §4.4 验证签名和独立信任边界。发起人、编码 Agent、自动发布执行身份不得充当审批身份。部署输入 MUST 绑定完整仓库、分支、40 位 Commit、不可变制品 Digest、目标版本、审批有效期及一次性任务 ID。GitHub 模式执行器 MUST 验证受保护环境的 Required Reviewers、防止自审、分支限制与发布权限；权限不足或字段不可获取时报告 NOT_VERIFIABLE 并阻断。
 
-对于 GitHub，执行器 MUST 验证可信工作流路径、精确源 SHA、真实审批历史及该运行生成的不可变交接制品，重新检查目标 Commit 的最新 CI。一次性任务 ID MUST 在替换服务前通过持久化事务消费；重放或失败重试需要新审批任务。不得将自填姓名、字符串 APPROVED、普通 SHA256 或可编辑本地 JSON 视作签名。
+两种模式均 MUST 验证 GitHub 认证 API 提供的可信工作流路径、运行 ID 与 attempt、精确源 SHA、该运行生成的不可变交接制品以及目标 main Commit 的最新成功 CI。GitHub 模式还 MUST 核验真实审批历史。一次性任务 ID MUST 在替换服务前通过持久化事务消费；重放或失败重试需要新审批任务。不得将自填姓名、字符串 APPROVED、普通 SHA256 或可编辑本地 JSON 视作签名。
+
+### 4.4 受保护本地密钥审批配置 (LOCAL_AUTHORIZED_KEY)
+
+1. **适用条件**：只有当前私有仓库套餐确实不提供 Environment Required Reviewers 时，治理方 MAY 通过正式发布策略启用本模式。MUST 记录仓库可见性、账户套餐证据来源、功能限制与核验时间。PR rulesets、分支保护审批计数与 Environment 部署审核是不同能力，不能相互替代证明。API 缺失字段 MUST 记为 NOT_VERIFIABLE，不能猜测套餐或据此自动启用。用户/管理员提供的套餐证据 MUST 与 API 实测字段分开记录。官方功能说明：<https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments>。
+2. **候选不等于批准**：云端 workflow 只生成 Candidate / UNAPPROVED 交接制品；`environment: production` 作业运行或成功不代表人工批准。本模式的云端候选生成不依赖不可用的 Required Reviewers，但仍 MUST 验证 main-only、真实 CI 和不可变镜像。执行器 MUST 明确拒绝缺失签名或未知策略。
+3. **独立边界**：密钥 MUST 由独立人工审批身份持有，禁止编码 Agent、CI Runner、部署身份读取、导出或无人工交互调用。MUST 使用需每次真人确认的硬件密钥或受独立账号保护的不可导出密钥；单纯软件文件权限、`human_present=true`、自填账户名或新建同用户密钥不构成隔离证明。若 Agent 具有可绕过隔离的管理员权限，MUST 使用独立设备/硬件确认边界或 BLOCK。私钥 MUST NOT 位于任一项目仓库、`.artifacts`、环境变量、日志或 Agent 可读目录。Agent MUST NOT 点击确认、输入 PIN、签署或保存可复用审批令牌。
+4. **注册与吊销**：受控策略 MUST 固定公钥 SPKI DER SHA256 指纹、算法、审批主体、独立签名边界的外部核验证据引用、有效期与撤销状态。密钥注册/轮换/撤销 MUST 独立人工治理，不允许发布候选携带新公钥建立信任。未知、过期、撤销或缺少可独立核验边界的密钥 MUST BLOCK。签名必须按固定算法与受信公钥验证，禁止算法协商或信任输入中的任意公钥。
+5. **签署内容**：签名 MUST 覆盖 `release-approval.schema.json` 的完整 payload：schema/domain、repository、main、完整 source SHA、目标版本、镜像完整 digest、workflow 路径、run ID/attempt、最新 main CI run ID、候选摘要、变更摘要 SHA256、签发与过期时间、一次性 release_task_id、审批身份和决定。所有值 MUST 从经认证远端事实与已审候选重建并逐项比较；不能信任本地传入的 SHA 或 digest。main 在签署到部署期间变化 MUST 撤销候选并重新执行。
+6. **规范化与算法**：本契约 v1 使用 UTF-8 编码的 ASCII 字符串字段、整数和无嵌套浮点数的 payload；拒绝重复 JSON key、未知字段与非规范值；按字段字典序、无空白分隔符序列化（Python 等价 `json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('ascii')`）。签名固定为 RSA-PSS-SHA256、MGF1-SHA256、salt length 32、公钥至少 3072 bits。公钥指纹为 SPKI DER 的 SHA256；signature 为严格 base64。有效期最长 24 小时，UTC 秒精度，未来签发、已过期或时间不可核验 MUST BLOCK。摘要不是签名。
+7. **人工操作**：独立审批工具 MUST 在同一次交互中展示任务 ID、版本、完整 SHA、完整镜像 digest、workflow/CI run 和完整变更摘要，并允许明确签署或拒绝。显示内容和签署字节 MUST 对应同一候选。拒绝决定不能用于部署。生产代码不得提供生成 Mock 人工审批的选项。签名验证成功只证明密钥持有，不能单独证明人工在场；还 MUST 验证注册边界和提供方的每次确认机制。
+8. **防重放和竞态**：执行器 MUST 在任何 docker pause/stop/up 或持久数据修改前完成全部审批校验，核验撤销状态、当前 main、CI 与镜像，并以持久化原子事务消费任务 ID。账本 MUST 由受控执行器保护，不得因更换工作区或删除普通 artifact 而重置。失败重试需要新的候选和审批；审批不能跨版本、run attempt、仓库或镜像复用。
+9. **测试与证据**：至少覆盖有效签名、篡改/伪造、错误仓库/SHA/digest/版本/run、未知/撤销密钥、过期/未来时间、重放、自审、缺少人工在场、未知模式和 GitHub 正反路径。Mock 仅用于隔离测试，MUST NOT 作为生产批准或边界证明。schema 合法不等于签名有效，更不等于人工审批可信。
 
 ### 6.3 恢复验证
 备份 MUST 覆盖所有实际可写数据挂载，使用数据库一致性备份或经授权的写入静止窗口；仅复制 data/ 不代表完整备份。上线前 MUST 将备份在隔离目录实际恢复并核验摘要与数据库完整性。恢复失败 MUST 阻断部署。回滚 MUST 停止写入后恢复数据并验证原编排归属、健康、Commit 及完整镜像身份，重复执行仍应收敛。备份与原编排配置可能含私人数据，MUST 不进入 Git、日志与验收交付包。
