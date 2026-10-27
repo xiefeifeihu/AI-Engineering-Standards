@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/documentation-metadata.schema.json",
+  "title": "Documentation Metadata Frontmatter Schema",
+  "type": "object",
+  "required": [
+    "document_id",
+    "document_version",
+    "project_id",
+    "document_type",
+    "status",
+    "applies_to_release",
+    "last_updated",
+    "change_summary",
+    "primary_entrypoint"
+  ],
+  "properties": {
+    "document_id": {
+      "type": "string",
+      "pattern": "^DOC-[A-Za-z0-9_-]+$",
+      "description": "Unique identifier for the document, e.g. DOC-HUB-PRODUCT-BASELINE-001"
+    },
+    "document_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "SemVer version of the document"
+    },
+    "project_id": {
+      "type": "string",
+      "description": "Project ID matching engineering-manifest.yaml project.id"
+    },
+    "document_type": {
+      "type": "string",
+      "enum": [
+        "PROJECT_BLUEPRINT",
+        "PRODUCT_BASELINE",
+        "SYSTEM_ARCHITECTURE",
+        "TECHNICAL_DESIGN",
+        "API_CONTRACT",
+        "PROTOTYPE_UX",
+        "TEST_ACCEPTANCE",
+        "RELEASE_OPERATIONS",
+        "DECISION_RECORD",
+        "CROSS_SESSION_HANDOFF",
+        "HISTORICAL_ARCHIVE"
+      ],
+      "description": "Formally standardized document type from STD-035"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "DRAFT",
+        "REVIEW",
+        "ACTIVE",
+        "SUPERSEDED",
+        "ARCHIVED"
+      ],
+      "description": "Document lifecycle status"
+    },
+    "applies_to_release": {
+      "type": "string",
+      "description": "Project release version this document applies to, e.g. v0.21.10"
+    },
+    "last_updated": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "description": "Last update date in ISO format YYYY-MM-DD"
+    },
+    "supersedes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Identifier or reference to the previous document superseded by this one"
+    },
+    "change_summary": {
+      "type": "string",
+      "minLength": 5,
+      "description": "Summary of changes introduced in this document version"
+    },
+    "history_reference": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Path to historical snapshot or reference"
+    },
+    "primary_entrypoint": {
+      "type": "boolean",
+      "description": "True if this document is the primary canonical entrypoint for its type"
+    }
+  },
+  "additionalProperties": false
+}

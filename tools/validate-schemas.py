@@ -1369,6 +1369,44 @@ def test_samples():
     }
     jsonschema.validate(instance=sample_platform_verification, schema=pv_schema)
 
+        # Test Documentation Metadata Schema Sample (STD-035)
+    with open(SCHEMAS_DIR / "documentation-metadata.schema.json", "r", encoding="utf-8") as f:
+        doc_meta_schema = json.load(f)
+    sample_doc_meta = {
+        "document_id": "DOC-HUB-PRODUCT-BASELINE-001",
+        "document_version": "1.0.0",
+        "project_id": "ai-engineering-hub",
+        "document_type": "PRODUCT_BASELINE",
+        "status": "ACTIVE",
+        "applies_to_release": "v0.21.10",
+        "last_updated": "2026-10-27",
+        "supersedes": None,
+        "change_summary": "Unified product baseline for AI Engineering Hub",
+        "history_reference": None,
+        "primary_entrypoint": True
+    }
+    jsonschema.validate(instance=sample_doc_meta, schema=doc_meta_schema)
+
+    # Test Coding Gateway Auto-Context Sample (STD-021)
+    sample_gw_auto_context = {
+        "virtual_model": "hub-code-auto",
+        "protocol": "anthropic_messages",
+        "routing_profile": "auto",
+        "consumer_id": "claude-code",
+        "target_project": "vtip-ai-sidecar",
+        "task_family": "coding_agent",
+        "task_type": "code_refactor",
+        "task_id": "TASK-SIDECAR-001",
+        "run_id": "run-001",
+        "turn_id": "1",
+        "attempt_id": 1,
+        "decision_id": "dec-123",
+        "route_id": "route-cpa-1",
+        "trace_id": "trace-999",
+        "context_origin": "EXPLICIT"
+    }
+    jsonschema.validate(instance=sample_gw_auto_context, schema=gw_schema)
+
     print(f"Sample validation PASS: Standards {(ROOT / 'VERSION').read_text().strip()}.")
     return True
 
