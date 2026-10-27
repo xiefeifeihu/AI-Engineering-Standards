@@ -2,7 +2,7 @@
 
 ```text
 STANDARD_ID=STD-035
-VERSION=2.9.0
+VERSION=2.9.1
 STATUS=ACTIVE
 SCOPE=全平台受管工程仓库 (AI-Engineering-Hub, AI-Engineering-Standards, AI-KB, vtip-ai-sidecar, vtip-platform-catalog 及未来所有受管项目)
 OWNER=AI Platform Governance Committee
@@ -19,6 +19,11 @@ LAST_UPDATED=2026-10-27
 
 ---
 
+### 3.2 DOCUMENT_INDEX 独立语义与主入口排他性
+1. **独立类型与权威入口**：`DOCUMENT-INDEX.md` (或根目录索引文件) **MUST** 使用 `document_type: DOCUMENT_INDEX` 与 `primary_entrypoint: true`。每个工程内 **MUST** 仅存在唯一活跃的文档总索引。
+2. **严禁占用蓝图主入口**：文档总索引 **MUST NOT** 使用 `document_type: PROJECT_BLUEPRINT` 或声明替代项目蓝图。`PROJECT_BLUEPRINT` 是规划蓝图的专属类型，具有独立的权威主入口（`docs/PROJECT-BLUEPRINT.md`）。
+
+
 ## 1. 目标与治理背景 (Background & Objectives)
 
 为杜绝各受管工程在多会话、多智能体协作中出现的“仅有零散增量交接报告、缺乏最新全量文档事实源、历史决策相互矛盾、产品职责无意遗失、架构图与代码脱节”等工程退化问题，本规范定义平台统一的**全生命周期工程文档与产品基线契约**：
@@ -30,9 +35,9 @@ LAST_UPDATED=2026-10-27
 
 ---
 
-## 2. 十一种正式文档类型规范 (Eleven Formal Document Types)
+## 2. 十二种正式文档类型规范 (Twelve Formal Document Types)
 
-受管工程根据项目规模可适当合并部分章节，但以下 11 项文档职责 **MUST** 明确存在、可检索并可追溯：
+受管工程根据项目规模可适当合并部分章节，但以下 12 项文档职责 **MUST** 明确存在、可检索并可追溯：
 
 | 编号 | 文档类型 (DOCUMENT_TYPE) | 标准文件名建议 | 职责说明 |
 |:---|:---|:---|:---|
@@ -47,6 +52,7 @@ LAST_UPDATED=2026-10-27
 | **09** | `DECISION_RECORD` | `DECISION-RECORD.md` / `adr/` | 架构与产品决策记录 (ADR)：重大设计选型、决策背景、权衡考量与后果。 |
 | **10** | `CROSS_SESSION_HANDOFF`| `CROSS-SESSION-HANDOFF.md` | 跨会话交接：与 `STD-020` 协同，记录当前版本状态、已完成事项、未竟事项与下一步操作指南。 |
 | **11** | `HISTORICAL_ARCHIVE` | `archive/<version>/` | 历史版本归档：重大发布版本的冻结快照，支持溯源比对。 |
+| **12** | `DOCUMENT_INDEX` | `DOCUMENT-INDEX.md` | 工程文档总索引：汇总项目所有权威有效文档入口、历史归档映射与生命周期状态。 |
 
 ---
 
@@ -75,7 +81,7 @@ primary_entrypoint: true
 2. `document_version` (string, 必须): 文档语义化版本，格式 `X.Y.Z`。
 3. `project_id` (string, 必须): 所属工程标识，必须与 `engineering-manifest.yaml` 中的 `project.id` 一致。
 4. `document_type` (string, 必须): 必须取自 11 种正式类型枚举值之一：
-   `PROJECT_BLUEPRINT`, `PRODUCT_BASELINE`, `SYSTEM_ARCHITECTURE`, `TECHNICAL_DESIGN`, `API_CONTRACT`, `PROTOTYPE_UX`, `TEST_ACCEPTANCE`, `RELEASE_OPERATIONS`, `DECISION_RECORD`, `CROSS_SESSION_HANDOFF`, `HISTORICAL_ARCHIVE`。
+   `PROJECT_BLUEPRINT`, `PRODUCT_BASELINE`, `SYSTEM_ARCHITECTURE`, `TECHNICAL_DESIGN`, `API_CONTRACT`, `PROTOTYPE_UX`, `TEST_ACCEPTANCE`, `RELEASE_OPERATIONS`, `DECISION_RECORD`, `CROSS_SESSION_HANDOFF`, `HISTORICAL_ARCHIVE`, `DOCUMENT_INDEX`。
 5. `status` (string, 必须): 枚举值 `DRAFT` | `REVIEW` | `ACTIVE` | `SUPERSEDED` | `ARCHIVED`。
 6. `applies_to_release` (string, 必须): 该文档生效对应的工程发布版本（如 `v0.21.10`）。
 7. `last_updated` (string, 必须): ISO 8601 日期格式 `YYYY-MM-DD`。
@@ -128,3 +134,19 @@ primary_entrypoint: true
 1. **权威最新文档表**：列出当前生效的所有 11 类文档权威入口路径、文档 ID、版本及状态。
 2. **历史归档映射表**：列出已归档历史文档、被替代版本、归档路径与关联发布 Tag。
 3. **机器校验门禁**：工程交付门禁（`verify_delivery_contract.py`）将自动核验 `DOCUMENT-INDEX.md` 中引用的所有活跃文档真实存在且元数据符合 Schema。
+
+
+---
+
+## 5. 工程级文档集合与索引验证规则 (Project-Level Collection Governance)
+
+除单份文档 Frontmatter 符合 Schema 之外，工程 CI/CD 与交付门禁 **MUST** 强制执行工程级文档集合验证（`tools/validate-documentation-collection.py`）：
+
+1. **同类文档唯一活跃主入口**：对于每一个 `document_type`，整个工程内 **MUST** 有且仅有一个文档标记为 `status: ACTIVE` 且 `primary_entrypoint: true`。严禁同类文档存在多个活跃主入口。
+2. **文档类型语义纯洁**：`DOCUMENT-INDEX.md` 必须为 `DOCUMENT_INDEX`，不得占用 `PROJECT_BLUEPRINT` 或其他专业文档类型。
+3. **项目标识完全一致**：文档 Frontmatter 中的 `project_id` **MUST** 与当前工程根目录 `engineering-manifest.yaml` 中的 `project.id` 保持完全一致（包含大小写）。
+4. **权威入口真实存在**：文档索引表中的所有权威入口路径（如 `docs/PROJECT-BLUEPRINT.md`）**MUST** 在文件系统中真实存在且大小大于 0 字节。
+5. **历史归档映射真实存在**：文档索引“历史归档映射表”中声明的所有历史文件相对路径 **MUST** 在文件系统中真实存在。
+6. **历史文档生命周期隔离**：历史归档目录（如 `docs/archive/`）下的文档 **MUST NOT** 标记为 `status: ACTIVE` 或 `primary_entrypoint: true`，必须为 `ARCHIVED` 或 `SUPERSEDED`。
+7. **架构图与图源同源**：系统架构文档引用的所有架构图，**MUST** 同时提供可维护源文件（如 Mermaid 代码块、`.drawio` 或 `.puml` 源文件）及对应的高清导出图。
+8. **交付模板合规**：`templates/documentation/` 下的所有标准模板 **MUST** 全部通过 `documentation-metadata.schema.json` 强校验。

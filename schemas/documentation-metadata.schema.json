@@ -42,7 +42,8 @@
         "RELEASE_OPERATIONS",
         "DECISION_RECORD",
         "CROSS_SESSION_HANDOFF",
-        "HISTORICAL_ARCHIVE"
+        "HISTORICAL_ARCHIVE",
+        "DOCUMENT_INDEX"
       ],
       "description": "Formally standardized document type from STD-035"
     },

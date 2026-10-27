@@ -2,7 +2,7 @@
 document_id: "DOC-INDEX-001"
 document_version: "1.0.0"
 project_id: "example-project"
-document_type: "PROJECT_BLUEPRINT"
+document_type: "DOCUMENT_INDEX"
 status: "ACTIVE"
 applies_to_release: "v1.0.0"
 last_updated: "2026-10-27"
