@@ -2,7 +2,7 @@
 
 ```text
 STANDARD_ID=STD-017
-VERSION=2.7.0
+VERSION=2.8.0
 STATUS=ACTIVE
 SCOPE=AI Engineering 平台下所有独立 Git 代码仓库
 OWNER=AI Platform Governance Committee
@@ -43,4 +43,5 @@ LAST_UPDATED=2026-10-27
 ```text
 TAG_COMMIT == LIVE_COMMIT == REMOTE_HEAD
 ```
+在 PERSONAL_LOCAL 启用 AUTO_AFTER_GREEN 自动化发布模式时，正式 Release Tag 亦由受控执行器在 Stage 10 冒烟验证与 Stage 11 验收完全确认 PASS 后自动创建并推送，并执行独立的五态一致性核验闭环；严禁在冒烟未通过或任一前置门禁未满足时提前打标或推送 Tag。
 严禁在仅完成本地标签创建而未推送到远端或未完成独立核验时宣布发布完成。

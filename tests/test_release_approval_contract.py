@@ -213,6 +213,124 @@ class ApprovalContractTests(unittest.TestCase):
         }
         rel_eng_validator.validate(sample)
 
+    def test_personal_local_auto_after_green_valid(self):
+        policy = copy.deepcopy(self.policy)
+        policy['release_profile'] = 'PERSONAL_LOCAL'
+        policy['approval_mode'] = 'AUTO_AFTER_GREEN'
+        policy['auto_after_green'] = {
+            'enabled': True,
+            'target_environment': 'local_wsl',
+            'required_gates': [
+                'PR_MERGED',
+                'REMOTE_CI_PASS',
+                'AUTOMATED_TESTS_PASS',
+                'PLAYWRIGHT_PASS',
+                'SECRETS_SCAN_PASS',
+                'SOURCE_BUILD_COMMIT_UNAMBIGUOUS',
+                'BACKUP_AND_RESTORE_VERIFIED',
+                'ROLLBACK_READY',
+                'CONTROLLED_WSL_EXECUTOR',
+                'HEALTH_AND_SMOKE_RUNNABLE'
+            ],
+            'max_auto_rollback_attempts': 2
+        }
+        self.policy_validator.validate(policy)
+
+    def test_high_assurance_rejects_auto_after_green(self):
+        policy = copy.deepcopy(self.policy)
+        policy['release_profile'] = 'HIGH_ASSURANCE'
+        policy['approval_mode'] = 'AUTO_AFTER_GREEN'
+        policy['auto_after_green'] = {
+            'enabled': True,
+            'target_environment': 'local_wsl',
+            'required_gates': [
+                'PR_MERGED', 'REMOTE_CI_PASS', 'AUTOMATED_TESTS_PASS',
+                'PLAYWRIGHT_PASS', 'SECRETS_SCAN_PASS',
+                'SOURCE_BUILD_COMMIT_UNAMBIGUOUS', 'BACKUP_AND_RESTORE_VERIFIED'
+            ]
+        }
+        errors = list(self.policy_validator.iter_errors(policy))
+        self.assertTrue(errors, 'HIGH_ASSURANCE must reject AUTO_AFTER_GREEN')
+
+    def test_maintainer_release_rejects_auto_after_green(self):
+        policy = copy.deepcopy(self.policy)
+        policy['release_profile'] = 'MAINTAINER_RELEASE'
+        policy['approval_mode'] = 'AUTO_AFTER_GREEN'
+        policy['auto_after_green'] = {
+            'enabled': True,
+            'target_environment': 'local_wsl',
+            'required_gates': [
+                'PR_MERGED', 'REMOTE_CI_PASS', 'AUTOMATED_TESTS_PASS',
+                'PLAYWRIGHT_PASS', 'SECRETS_SCAN_PASS',
+                'SOURCE_BUILD_COMMIT_UNAMBIGUOUS', 'BACKUP_AND_RESTORE_VERIFIED'
+            ]
+        }
+        errors = list(self.policy_validator.iter_errors(policy))
+        self.assertTrue(errors, 'MAINTAINER_RELEASE must reject AUTO_AFTER_GREEN')
+
+    def test_auto_after_green_missing_required_gates_rejected(self):
+        policy = copy.deepcopy(self.policy)
+        policy['release_profile'] = 'PERSONAL_LOCAL'
+        policy['approval_mode'] = 'AUTO_AFTER_GREEN'
+        policy['auto_after_green'] = {
+            'enabled': True,
+            'target_environment': 'local_wsl',
+            'required_gates': ['PR_MERGED']
+        }
+        errors = list(self.policy_validator.iter_errors(policy))
+        self.assertTrue(errors, 'AUTO_AFTER_GREEN with fewer than 7 required gates must be rejected')
+
+    def test_release_engineering_7_stages_auto_after_green(self):
+        rel_eng_validator = validator('release-engineering.schema.json')
+        sample = {
+            'standard_id': 'STD-032',
+            'service': 'AI-Hub',
+            'version': 'v0.21.9',
+            'tag': 'v0.21.9',
+            'release_profile': 'PERSONAL_LOCAL',
+            'pipeline_status': 'PASS',
+            'stages': [
+                'SOURCE_AND_POLICY',
+                'TEST_AND_SECURITY',
+                'BUILD_AND_PUBLISH',
+                'AUTO_AFTER_GREEN_GATE',
+                'BACKUP_AND_DEPLOY',
+                'RUNTIME_AND_SMOKE',
+                'RELEASE_TAG_AND_VERIFY'
+            ],
+            'commit_identity': {
+                'LOCAL_HEAD': 'b' * 40,
+                'REMOTE_HEAD': 'b' * 40,
+                'TAG_COMMIT': 'b' * 40,
+                'BUILD_COMMIT': 'b' * 40,
+                'LIVE_COMMIT': 'b' * 40,
+                'all_consistent': True
+            },
+            'gates': {
+                'SOURCE': {'git_clean': True, 'secret_scan': True, 'passed': True},
+                'DEV_TEST': {'unit_test': True, 'contract_test': True, 'integration_test': True, 'e2e': True, 'passed': True},
+                'BUILD': {'build_metadata_generated': True, 'passed': True},
+                'PACKAGE': {'artifact_sha256': 'b' * 64, 'passed': True},
+                'DEPLOY': {'runtime_probe': True, 'technology_agnostic': True, 'docker_bound': False, 'passed': True},
+                'SMOKE': {'minimal_business_verification': True, 'passed': True}
+            },
+            'artifacts': {
+                'layout_valid': True,
+                'docs_clean': True,
+                'package_path': '.artifacts/packages/Acceptance-AI-HUB.zip',
+                'package_sha256': 'b' * 64
+            },
+            'runtime_acceptance': True,
+            'rollback_contract': {
+                'technology_agnostic': True,
+                'docker_bound': False,
+                'target_tag': 'v0.21.7',
+                'verified': True
+            },
+            'timestamp': '2026-10-27T08:30:00Z'
+        }
+        rel_eng_validator.validate(sample)
+
 
 if __name__ == '__main__':
     unittest.main()
