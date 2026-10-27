@@ -1376,12 +1376,13 @@ def test_samples():
         "document_id": "DOC-HUB-PRODUCT-BASELINE-001",
         "document_version": "1.0.0",
         "project_id": "ai-engineering-hub",
-        "document_type": "PRODUCT_BASELINE",
+        "document_type": "DOCUMENT_INDEX",
+        "document_id": "DOC-HUB-INDEX-001",
         "status": "ACTIVE",
         "applies_to_release": "v0.21.10",
         "last_updated": "2026-10-27",
         "supersedes": None,
-        "change_summary": "Unified product baseline for AI Engineering Hub",
+        "change_summary": "Unified document index for AI Engineering Hub",
         "history_reference": None,
         "primary_entrypoint": True
     }

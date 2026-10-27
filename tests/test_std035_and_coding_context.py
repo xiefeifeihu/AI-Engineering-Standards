@@ -1,3 +1,4 @@
+import sys
 # -*- coding: utf-8 -*-
 """Unit tests for STD-035 Documentation Lifecycle & Coding Gateway Auto Context Contracts."""
 import json
@@ -112,6 +113,49 @@ class TestStd035AndCodingContext(unittest.TestCase):
         }
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.validate(instance=bad_payload, schema=self.gw_schema)
+
+
+    def test_doc_metadata_document_index_type(self):
+        sample = {
+            "document_id": "DOC-HUB-INDEX-001",
+            "document_version": "1.0.0",
+            "project_id": "ai-engineering-hub",
+            "document_type": "DOCUMENT_INDEX",
+            "status": "ACTIVE",
+            "applies_to_release": "v0.21.10",
+            "last_updated": "2026-10-27",
+            "supersedes": None,
+            "change_summary": "Unified project document index",
+            "history_reference": None,
+            "primary_entrypoint": True
+        }
+        jsonschema.validate(instance=sample, schema=self.doc_schema)
+
+    def test_all_documentation_templates_conform_to_schema(self):
+        import yaml
+        templates = list(TEMPLATES_DIR.glob("*.template.md"))
+        self.assertGreater(len(templates), 5, "Templates directory must contain standard templates")
+        for tmpl in templates:
+            text = tmpl.read_text(encoding="utf-8")
+            self.assertTrue(text.startswith("---"), f"Template {tmpl.name} missing frontmatter marker")
+            parts = text.split("---", 2)
+            self.assertGreaterEqual(len(parts), 3, f"Template {tmpl.name} frontmatter malformed")
+            data = yaml.safe_load(parts[1])
+            self.assertIsInstance(data, dict, f"Template {tmpl.name} frontmatter is not a dict")
+            jsonschema.validate(instance=data, schema=self.doc_schema)
+            # Ensure DOCUMENT-INDEX uses DOCUMENT_INDEX type, not PROJECT_BLUEPRINT
+            if tmpl.name == "DOCUMENT-INDEX.template.md":
+                self.assertEqual(data.get("document_type"), "DOCUMENT_INDEX")
+            elif tmpl.name == "PROJECT-BLUEPRINT.template.md":
+                self.assertEqual(data.get("document_type"), "PROJECT_BLUEPRINT")
+
+    def test_document_collection_validator_module(self):
+        import subprocess
+        tool_path = ROOT / "tools" / "validate-documentation-collection.py"
+        self.assertTrue(tool_path.exists(), "validate-documentation-collection.py must exist")
+        # Run help test
+        res = subprocess.run([sys.executable, str(tool_path), "--help"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
 
 if __name__ == "__main__":
     unittest.main()

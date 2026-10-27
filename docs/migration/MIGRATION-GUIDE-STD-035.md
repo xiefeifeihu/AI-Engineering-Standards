@@ -18,4 +18,7 @@
 创建 `docs/archive/<OLD_VERSION>/` 目录，将历史版本文档归档，修改其元数据 `status: "ARCHIVED"`, `primary_entrypoint: false`。
 
 ### Step 4: 建立索引与门禁测试 (Index & Verification)
-创建 `docs/DOCUMENT-INDEX.md`，运行规范检查脚本验证元数据合规性。
+创建 `docs/DOCUMENT-INDEX.md`，注意：
+- 在 Standards v2.9.1+ 中，文档总索引的 `document_type` 必须声明为 `DOCUMENT_INDEX`（不再占用 `PROJECT_BLUEPRINT`）。
+- 其 `primary_entrypoint: true`，且不可与 `docs/PROJECT-BLUEPRINT.md` 冲突。
+- 运行 `python tools/validate-documentation-collection.py` 验证工程级文档集合合规性。
