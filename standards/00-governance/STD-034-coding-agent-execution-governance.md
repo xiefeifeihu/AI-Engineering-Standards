@@ -2,7 +2,7 @@
 
 ```text
 STANDARD_ID=STD-034
-VERSION=2.7.0
+VERSION=2.8.0
 STATUS=ACTIVE
 SCOPE=全平台受管工程仓库 (AI-Engineering-Hub, AI-Engineering-Standards, AI-KB, vtip-ai-sidecar, vtip-platform-catalog)
 OWNER=AI Platform Governance Committee
@@ -34,8 +34,8 @@ LAST_UPDATED=2026-10-27
    - **Rule I（不得伪造模型执行、构建和运行 Commit）**：严禁伪造模型调用记录、耗时、Token 用量，严禁伪造 `SOURCE_COMMIT`、`BUILD_COMMIT`、`LIVE_COMMIT` 或容器/进程运行身份证据（`STD-031` / `STD-032`）。
    - **Rule J（不得用静态 JSON 制造高质量验收结果）**：严禁编写静态生成脚本或手写 JSON 汇总文件来冒充真实测试结果、Playwright 验收结果或运行时探针证据。
    - **Rule K（不得将 HTTP 200 自动认定为业务采纳或编码交付完成）**：技术请求返回 `HTTP 200`（或仅完成 Stage A 执行事件上报 / `MODEL_EXECUTION_SUCCESS`）不等于业务采纳或编码交付完成；必须完成 Stage B 业务质量评估或 `STD-023` 编码交付阶段验证后才能认定对应阶段通过。
-   - **Rule L（不得自动提交人工审核 `PASS`）**：未经真实人工审阅确认，编程智能体不得自动提交或伪造 `human_review` / `HUMAN_ACCEPTED` 为 `PASS`；在 PERSONAL_LOCAL 模式下，智能体不得伪造 `OWNER_LOCAL_CONSENT_RECORDED` 或代替所有者确认部署授权。
-   - **Rule M（正式发布必须执行有效 Standards 的 CI/CD）**：正式发布与里程碑验收必须执行符合当前有效 Standards（`STD-031`、`STD-032`、`STD-033`、`STD-034`）的真实 CI/CD 与交付契约校验门禁，并依据声明的 ReleaseProfile（PERSONAL_LOCAL / MAINTAINER_RELEASE / HIGH_ASSURANCE）严格执行对应门禁。
+   - **Rule L（不得自动提交人工审核 `PASS`）**：未经真实人工审阅确认，编程智能体不得自动提交或伪造 `human_review` / `HUMAN_ACCEPTED` 为 `PASS`；在 PERSONAL_LOCAL 模式下，智能体不得伪造 `OWNER_LOCAL_CONSENT_RECORDED` 或代替所有者确认部署授权。当工程显式声明并配置为 `AUTO_AFTER_GREEN` 模式时，自动部署授权严格受控于全绿机器证据链（PR 合并、Remote CI、测试全过、Playwright、零密钥扫描、Commit 一致、数据库备份与隔离恢复校验、旧镜像与回滚可用、受控 WSL 执行器、冒烟就绪等 10 项门禁全部 PASS），智能体严禁伪造任一门禁证据或越过未通过门禁自动触发部署。
+   - **Rule M（正式发布必须执行有效 Standards 的 CI/CD）**：正式发布与里程碑验收必须执行符合当前有效 Standards（`STD-031`、`STD-032`、`STD-033`、`STD-034`）的真实 CI/CD 与交付契约校验门禁，并依据声明的 ReleaseProfile（PERSONAL_LOCAL / MAINTAINER_RELEASE / HIGH_ASSURANCE）严格执行对应门禁。在 PERSONAL_LOCAL 启用 AUTO_AFTER_GREEN 时，必须完整核验 10 门禁全部 PASS 后由受控执行器自动完成部署与冒烟验收。
    - **Rule N（验收目录与 ZIP 目录必须区分）**：过程验收证据目录（`.artifacts/acceptance/`）与正式交付 ZIP 目录（`.artifacts/packages/`）必须严格隔离，严禁将正式交付 ZIP 存放在 `acceptance` 目录或仓库根目录下。
    - **Rule O（没有全部证据时不得报告 `OVERALL=PASS`）**：任一关键门禁失败、必交证据缺失、未知字段被填为 `PASS` 或存在未闭环项时，严禁报告 `OVERALL=PASS` 或 `OVERALL_STATUS=PASS`。
 3. **资源所有权与测试入口声明**：`AGENTS.md` **MUST** 明确声明本仓库允许修改的目录范围、属主资源边界（`STD-002`）、标准预检入口（`scripts/agent/preflight.py`）、测试命令入口与统一验收打包入口（`scripts/package_acceptance.py`）。

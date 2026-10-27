@@ -2,7 +2,7 @@
 
 ```text
 STANDARD_ID=STD-032
-VERSION=2.7.0
+VERSION=2.8.0
 STATUS=ACTIVE
 SCOPE=跨项目生产级 CI/CD 与发布工程契约、统一 ReleaseProfile 分级发布架构 (PERSONAL_LOCAL, MAINTAINER_RELEASE, HIGH_ASSURANCE) (AI-Engineering-Hub, AI-KB, vtip-ai-sidecar, vtip-platform-catalog)、12阶段标准发布流水线、审批交接契约、多部署模式适配、五态Commit一致性证明、强制自动化门禁、制品不可变性与技术中立回滚契约
 OWNER=AI Platform Governance Committee
@@ -27,16 +27,20 @@ RELATED_STANDARDS=STD-001, STD-007, STD-014, STD-016, STD-017, STD-019, STD-030,
    - **适用场景**：开发者个人控制并运行于本机（Windows 11 / WSL2 / Docker、Linux 桌面或单机进程）的项目（如 AI-Engineering-Hub、AI-KB、个人测试 Sidecar）。
    - **角色与权限**：单人所有者拥有完整开发与运维职责，可独立完成分支开发、PR 创建、CI 执行、PR 审查合并及受控部署。
    - **免除要求**：不强制要求第二个独立审批人、GitHub Environment Required Reviewers、Prevent Self-review、独立硬件签名密钥、RSA-PSS 本地审批工具、分布式防重放签名服务或 12 个物理独立执行器。
-   - **强制保留的硬门禁**：
-     - 真实 GitHub PR 与远端 CI 真实通过（严禁直接向 main 开发或合入）。
-     - 完整精确的源码 Commit 标识与干净工作区。
-     - 敏感信息扫描与零密钥门禁（`STD-007`）。
-     - 真实分层测试（单元、契约、集成）与涉及 UI 时的 Playwright 真实浏览器验收。
-     - 部署前对真实可写数据执行一致性备份，并完成隔离恢复校验与实际回滚能力验证。
-     - 本机所有者当次明确授权（`OWNER_LOCAL_CONSENT_RECORDED`）。
-     - 真实运行态探针、核心业务冒烟与 Source / Remote / Build / Live 四态身份严格一致。
-     - 正式 Git Tag 固化与推送，以及 Tag 创建后的独立核验闭环。
-   - **安全与审计属性**：PERSONAL_LOCAL 的所有者记录是本机操作授权与审计，不构成独立密码学不可抵赖证明。独立外部审批状态标记为 `NOT_APPLICABLE_BY_PROFILE` 或 `OWNER_LOCAL_CONSENT_RECORDED`，严禁标记为 `STD032_INDEPENDENT_APPROVAL=PASS`。所有者授权必须绑定当次精确的 `repository`、`commit`、`version`、`image_digest` 与 `deployment_target`。编码智能体严禁替用户伪造确认；缺少当次授权时生产状态必须保持 `WAITING_OWNER_AUTHORIZATION`。
+   - **支持的审批模式**：
+     1) `OWNER_LOCAL_CONSENT`（交互确认模式）：每次部署需所有者当次明确交互确认（`OWNER_LOCAL_CONSENT_RECORDED`），严禁编码智能体伪造。
+     2) `AUTO_AFTER_GREEN`（全绿自动化发布模式）：个人本机明确声明的自动部署策略。不强制每次人工交互弹窗，但必须在以下 **10 项全绿门禁 (10 Mandatory Green Gates)** 全部无条件满足并完成机器取证后，才允许受控执行器自动推进生产部署与冒烟验收：
+        - **门禁 1 (PR_MERGED)**：真实 GitHub PR 审查并合入 main，本地与远端分支目标 Commit 完全一致。
+        - **门禁 2 (REMOTE_CI_PASS)**：GitHub Actions 真实远端 CI 流水线通过 (`exit_code=0`, status=SUCCESS)。
+        - **门禁 3 (AUTOMATED_TESTS_PASS)**：分层自动化测试（单元、契约、集成）真实执行且 100% 通过。
+        - **门禁 4 (PLAYWRIGHT_PASS)**：涉及前端 UI 变更时，真实 Chromium Playwright 端到端浏览器验收 PASS。
+        - **门禁 5 (SECRETS_SCAN_PASS)**：严格执行 `STD-007` 零密钥门禁，无明文 API Key、Token、私钥泄露。
+        - **门禁 6 (SOURCE_BUILD_COMMIT_UNAMBIGUOUS)**：`SOURCE_COMMIT`、`BUILD_COMMIT`、`TARGET_COMMIT` 标识明确且严格一致。
+        - **门禁 7 (BACKUP_AND_RESTORE_VERIFIED)**：真实生产数据库完成快照备份，且在隔离环境中校验恢复可用。
+        - **门禁 8 (ROLLBACK_READY)**：目标 Docker 引擎已预置并核验上一版本健康镜像，安全回滚路径真实就绪。
+        - **门禁 9 (CONTROLLED_WSL_EXECUTOR)**：必须由受控本地 WSL 执行器执行生产容器替换，严禁云端直接触碰生产环境。
+        - **门禁 10 (HEALTH_AND_SMOKE_RUNNABLE)**：目标版本部署后能够立即执行 `/health`、`/api/runtime/identity` 及业务冒烟测试。
+   - **安全与审计属性**：在 `AUTO_AFTER_GREEN` 下，审批状态记录为 `AUTO_AFTER_GREEN_VERIFIED`，证据链固化全部 10 项门禁的执行证据。任一门禁失败或证据缺失时，必须立即 Fail-Closed 阻断，严禁自动部署。
 
 2. **`MAINTAINER_RELEASE`（团队协作维护者发布模式）**：
    - **适用场景**：多人协同开发工程。
@@ -98,7 +102,9 @@ SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACK
    - **`G1 SOURCE_AND_POLICY`**（源与策略核验）：核验分支、完整 Commit、工作区干净、ReleaseProfile 与合规策略。
    - **`G2 TEST_AND_SECURITY`**（测试与安全扫描）：真实执行单元/契约/集成测试及 Playwright 浏览器验收，执行零密钥扫描。
    - **`G3 BUILD_AND_PUBLISH`**（构建与远端同步）：生成不可变构建元数据，固化镜像 SHA/Digest，严格验证 `LOCAL_HEAD == REMOTE_HEAD`。
-   - **`G4 OWNER_AUTHORIZATION`**（所有者明确授权）：核验当次精确 Commit/Version/Digest，记录 `OWNER_LOCAL_CONSENT_RECORDED`；若无当次授权则保持 `WAITING_OWNER_AUTHORIZATION` 并阻断后续部署。
+   - **`G4 OWNER_AUTHORIZATION / AUTO_AFTER_GREEN_GATE`**（授权与全绿门禁核验）：
+     * 若配置为 `OWNER_LOCAL_CONSENT`：核验当次精确 Commit/Version/Digest，记录 `OWNER_LOCAL_CONSENT_RECORDED`；无授权则保持 `WAITING_OWNER_AUTHORIZATION`。
+     * 若配置为 `AUTO_AFTER_GREEN`：机器强制校验 10 项全绿门禁（PR 合并、Remote CI、测试全过、Playwright、密钥扫描、Commit 一致、备份隔离恢复、旧镜像回滚就绪、受控 WSL 执行器、冒烟就绪），全部 PASS 时记录 `AUTO_AFTER_GREEN_VERIFIED` 并自动推进部署；缺一即标记 `BLOCK` 并阻断。
    - **`G5 BACKUP_AND_DEPLOY`**（备份与受控部署）：真实可写数据一致性备份、隔离恢复验证，通过受控本地执行器拉起目标容器。
    - **`G6 RUNTIME_AND_SMOKE`**（运行态与业务冒烟）：技术中立探针核验存活，严格校验四态一致（`LOCAL == REMOTE == BUILD == LIVE`），执行核心业务冒烟。
    - **`G7 RELEASE_TAG_AND_VERIFY`**（标签固化与独立核验）：生产验收确认后推送正式 Tag（`v<VERSION>`），并通过独立的 `git rev-parse` 核实五态一致（`TAG_COMMIT == LIVE_COMMIT`）。
@@ -126,7 +132,7 @@ SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACK
 
 ### 4.0 ReleaseProfile 与审批模式映射规则
 1. **HIGH_ASSURANCE**：审批模式必须为 `GITHUB_ENVIRONMENT_REVIEW` 或 `LOCAL_AUTHORIZED_KEY`。必须执行严格的独立人工审查与密码学签名验证。
-2. **PERSONAL_LOCAL**：审批模式允许配置为 `OWNER_LOCAL_CONSENT`（亦支持经配置的 `LOCAL_AUTHORIZED_KEY` / `GITHUB_ENVIRONMENT_REVIEW`）。在 `OWNER_LOCAL_CONSENT` 模式下，不强制要求 RSA-PSS 密钥签名，但必须取得所有者当次明确授权记录并记录于审计日志中。
+2. **PERSONAL_LOCAL**：审批模式支持配置为 `OWNER_LOCAL_CONSENT` 或 `AUTO_AFTER_GREEN`（亦支持经配置的 `LOCAL_AUTHORIZED_KEY` / `GITHUB_ENVIRONMENT_REVIEW`）。在 `OWNER_LOCAL_CONSENT` 模式下记录当次明确交互授权；在 `AUTO_AFTER_GREEN` 模式下由受控流水线核验证据链满足全部 10 项全绿门禁后自动放行部署。
 3. **MAINTAINER_RELEASE**：审批模式允许为 `MAINTAINER_APPROVAL` 或 `GITHUB_ENVIRONMENT_REVIEW`。
 
 ### 4.1 严禁单凭布尔值冒充正式审批

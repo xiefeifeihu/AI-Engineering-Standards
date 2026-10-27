@@ -1,0 +1,27 @@
+﻿{
+  "schema_version": "1.1.0",
+  "release_profile": "PERSONAL_LOCAL",
+  "repository": "example/service",
+  "branch": "main",
+  "approval_mode": "AUTO_AFTER_GREEN",
+  "workflow": ".github/workflows/cd-production.yml",
+  "environment": "local-production",
+  "max_age_seconds": 3600,
+  "auto_after_green": {
+    "enabled": true,
+    "target_environment": "local_wsl",
+    "required_gates": [
+      "PR_MERGED",
+      "REMOTE_CI_PASS",
+      "AUTOMATED_TESTS_PASS",
+      "PLAYWRIGHT_PASS",
+      "SECRETS_SCAN_PASS",
+      "SOURCE_BUILD_COMMIT_UNAMBIGUOUS",
+      "BACKUP_AND_RESTORE_VERIFIED",
+      "ROLLBACK_READY",
+      "CONTROLLED_WSL_EXECUTOR",
+      "HEALTH_AND_SMOKE_RUNNABLE"
+    ],
+    "max_auto_rollback_attempts": 2
+  }
+}

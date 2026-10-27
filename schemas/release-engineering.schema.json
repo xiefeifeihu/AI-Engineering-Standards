@@ -108,6 +108,28 @@
             "G6_RUNTIME_AND_SMOKE",
             "G7_RELEASE_TAG_AND_VERIFY"
           ]
+        },
+        {
+          "const": [
+            "SOURCE_AND_POLICY",
+            "TEST_AND_SECURITY",
+            "BUILD_AND_PUBLISH",
+            "AUTO_AFTER_GREEN_GATE",
+            "BACKUP_AND_DEPLOY",
+            "RUNTIME_AND_SMOKE",
+            "RELEASE_TAG_AND_VERIFY"
+          ]
+        },
+        {
+          "const": [
+            "G1_SOURCE_AND_POLICY",
+            "G2_TEST_AND_SECURITY",
+            "G3_BUILD_AND_PUBLISH",
+            "G4_AUTO_AFTER_GREEN_GATE",
+            "G5_BACKUP_AND_DEPLOY",
+            "G6_RUNTIME_AND_SMOKE",
+            "G7_RELEASE_TAG_AND_VERIFY"
+          ]
         }
       ]
     },

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://standards.local/release-approval-policy.schema.json",
-  "title": "STD-032 release approval policy supporting multi-profile governance (PERSONAL_LOCAL, MAINTAINER_RELEASE, HIGH_ASSURANCE)",
+  "title": "STD-032 release approval policy supporting multi-profile governance (PERSONAL_LOCAL, MAINTAINER_RELEASE, HIGH_ASSURANCE, AUTO_AFTER_GREEN)",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -40,7 +40,8 @@
         "GITHUB_ENVIRONMENT_REVIEW",
         "LOCAL_AUTHORIZED_KEY",
         "OWNER_LOCAL_CONSENT",
-        "MAINTAINER_APPROVAL"
+        "MAINTAINER_APPROVAL",
+        "AUTO_AFTER_GREEN"
       ]
     },
     "workflow": {
@@ -156,6 +157,52 @@
           }
         }
       }
+    },
+    "auto_after_green": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "target_environment",
+        "required_gates"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "target_environment": {
+          "type": "string",
+          "enum": [
+            "local_wsl",
+            "localhost",
+            "local_docker"
+          ]
+        },
+        "required_gates": {
+          "type": "array",
+          "minItems": 7,
+          "items": {
+            "type": "string",
+            "enum": [
+              "PR_MERGED",
+              "REMOTE_CI_PASS",
+              "AUTOMATED_TESTS_PASS",
+              "PLAYWRIGHT_PASS",
+              "SECRETS_SCAN_PASS",
+              "SOURCE_BUILD_COMMIT_UNAMBIGUOUS",
+              "BACKUP_AND_RESTORE_VERIFIED",
+              "ROLLBACK_READY",
+              "CONTROLLED_WSL_EXECUTOR",
+              "HEALTH_AND_SMOKE_RUNNABLE"
+            ]
+          }
+        },
+        "max_auto_rollback_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        }
+      }
     }
   },
   "allOf": [
@@ -225,7 +272,8 @@
             "enum": [
               "OWNER_LOCAL_CONSENT",
               "LOCAL_AUTHORIZED_KEY",
-              "GITHUB_ENVIRONMENT_REVIEW"
+              "GITHUB_ENVIRONMENT_REVIEW",
+              "AUTO_AFTER_GREEN"
             ]
           }
         }
@@ -294,6 +342,29 @@
         },
         "required": [
           "release_profile"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "approval_mode"
+        ],
+        "properties": {
+          "approval_mode": {
+            "const": "AUTO_AFTER_GREEN"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "release_profile": {
+            "const": "PERSONAL_LOCAL"
+          }
+        },
+        "required": [
+          "release_profile",
+          "auto_after_green"
         ]
       }
     }
