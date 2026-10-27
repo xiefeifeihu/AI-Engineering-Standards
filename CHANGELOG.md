@@ -2,6 +2,24 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [2.9.0] - 2026-10-27
+
+### Added
+- **STD-035: Documentation Lifecycle & Project Baseline Contract (全生命周期工程文档与产品基线契约规范)**:
+  - 规范 11 种正式工程文档类型（蓝图、产品基线、架构、技术方案、API契约、原型UX、测试验收、发布运维、决策记录、跨会话交接、历史归档）。
+  - 确立最新全量与历史演进双重保证：每个项目始终保持一份最新全量文档集合，同时保留不可篡改的历史演进。
+  - 单一权威入口规则 (`PRIMARY_ENTRYPOINT=true`)，杜绝多份互相矛盾的最新版本。
+  - 提供 `schemas/documentation-metadata.schema.json` 结构化元数据契约与校验器。
+  - 提供 11 种正式文档模板 (`templates/documentation/`) 与受管工程迁移指南 (`docs/migration/MIGRATION-GUIDE-STD-035.md`)。
+- **Coding Gateway 统一自动上下文与治理契约 (`STD-021` / `schemas/coding-gateway.schema.json`)**:
+  - 新增统一上下文字段：`consumer_id`, `target_project`, `task_family`, `task_type`, `task_id`, `run_id`, `session_id`, `turn_id`, `attempt_id`, `decision_id`, `route_id`, `trace_id`, `context_origin`。
+  - 严格分离 `consumer_id` (调用客户端如 Claude Code) 与 `target_project` (被操作工程如 Sidecar)。
+  - 自动分配 TaskId / RunId 与会话保持规则（`EXPLICIT`, `CLIENT_SESSION`, `GATEWAY_GENERATED`, `CLIENT_ADAPTER`），禁止从自然语言 Prompt 文本推测或虚构 TaskId。
+
+### Changed
+- **STD-020 Cross-Session Handoff**: 增加与 STD-035 协同契约，规定新启动会话必须按序优先读取主索引、蓝图、产品基线、架构与接口契约。
+- **Tools & Tests**: `validate-schemas.py` 扩充 STD-035 元数据与 Coding Gateway 自动上下文样本校验，新增 `tests/test_std035_and_coding_context.py` 单元测试套件。
+
 ## [2.6.0] - 2026-10-25
 
 ### Added

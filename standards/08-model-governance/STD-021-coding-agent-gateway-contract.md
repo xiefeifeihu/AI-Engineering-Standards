@@ -136,3 +136,42 @@ SCHEMA_REF=schemas/coding-gateway.schema.json
 
 1. 编程智能体在配置 `ANTHROPIC_BASE_URL` 或 OpenAI `base_url` 时，仅使用本地网关凭据或留空，**严禁**配置云端提供商真实密钥。
 2. Hub 依据内部 `credential_reference` 解析上游密钥（存储于机器机密存储区或内存），绝不在请求链路、响应头、前端 DOM、日志或交付归档包中暴露任何提供商明文密钥。
+
+---
+
+## 8. 统一上下文模型与自动 Task/Run 治理 (Unified Context Model & Automated Task Governance)
+
+为实现 Claude Code、WorkBuddy、OpenCode 等编码智能体在日常编码时免去繁琐的手动指定 TaskId，同时保留独立验收时的严格显式追踪能力，网关定义统一调用上下文模型：
+
+### 8.1 核心上下文字段定义
+| 字段名称 | 类型 | 含义与职责说明 |
+|:---|:---|:---|
+| `consumer_id` | string | **真正发起调用的客户端应用或编码智能体**（如 `claude-code`, `workbuddy`, `opencode`, `aider`）。 |
+| `target_project` | string/null | **被该智能体开发或操作的目标工程**（如 `vtip-ai-sidecar`, `ai-engineering-hub`）。 |
+| `task_family` | string | 任务族类（如 `coding_agent`, `knowledge_distillation`, `text_polishing`）。 |
+| `task_type` | string | 细分任务类型（如 `code_generation`, `refactor`, `bug_fix`, `test_generation`）。 |
+| `task_id` | string | 业务或编码任务唯一标识符。 |
+| `run_id` | string | 一次具体执行会话或执行轮次标识。 |
+| `session_id` | string/null | 客户端会话标识符。 |
+| `turn_id` | string/int | 交互轮次序号或标识。 |
+| `attempt_id` | integer | 当前轮次内的模型调用尝试序号（>=1）。 |
+| `decision_id` | string/null | 模型路由决策生成的唯一追踪 ID。 |
+| `route_id` | string/null | 选定命中路由唯一 ID。 |
+| `trace_id` | string/null | 端到端分布式链路追踪 ID。 |
+| `context_origin` | enum | 上下文来源：`EXPLICIT` \| `CLIENT_SESSION` \| `GATEWAY_GENERATED` \| `CLIENT_ADAPTER`。 |
+
+### 8.2 关键实体分离铁律
+1. **Consumer 与 Target Project 严格分离**：
+   - 严禁因为 Claude Code 正在修改 `vtip-ai-sidecar` 源码，就把 `consumer_id` 记成 `vtip-ai-sidecar`；`consumer_id` 必须为 `claude-code`，`target_project` 为 `vtip-ai-sidecar`。
+   - 严禁将 `target_project` 视为身份认证凭据。
+2. **目标工程确权原则 (Target Project Verification)**：
+   - `target_project` 允许的可信来源包括：请求头（`X-Target-Project`）、受控项目 Manifest、已登记 Workspace、受控客户端适配配置。
+   - 若项目身份无法确认，`target_project` **MUST** 置为 `null`，严禁通过解析自然语言 Prompt 文本猜测或虚构项目归属。
+
+### 8.3 自动 TaskId / RunId 分配规则
+1. **显式指定优先**：客户端提供了合法的 `X-Task-Id` / `X-Run-Id`，网关 **MUST** 优先采用显式 ID，并将 `context_origin` 标记为 `EXPLICIT`。
+2. **基于稳定 Session 的关联**：客户端未提供 TaskId，但提供了稳定、可信的客户端 Session ID（如 `X-Session-Id` 或 Claude Code 会话 ID），网关 **MUST** 为该 Session 创建或关联稳定 TaskId，并将 `context_origin` 标记为 `CLIENT_SESSION`。同一 Session 的多轮对话保持关联，不同 Session 严禁错误合并。
+3. **独立请求自动创建**：无 TaskId 且无可靠 Session ID 时，网关 **MUST** 为当前请求创建全新的、唯一且稳定的 TaskId 和 RunId，并将 `context_origin` 标记为 `GATEWAY_GENERATED`。严禁凭 Prompt 文本猜测与历史任务合并。
+4. **适配器接入标记**：由特定客户端包装脚本或适配器转换后接入的，标记为 `CLIENT_ADAPTER`。
+5. **账本记录与诊断可溯**：所有自动生成的 ID 均 **MUST** 持久化记录至真实调用账本，支持调用诊断按 Consumer、Project、Task、Run 检索。
+

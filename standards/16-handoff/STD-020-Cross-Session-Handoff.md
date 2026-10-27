@@ -56,3 +56,18 @@ LAST_UPDATED=2026-09-23
 
 1. 不同仓库的交接文档 **MUST** 独立存放，**MUST NOT** 跨仓库混合内容。
 2. 对只读仓库（AI-KB、VTIP Platform）的交接 **MUST** 以外部文档形式存放，严禁修改目标仓库。
+
+---
+
+## 6. 与 STD-035 文档体系协同契约 (Coordination with STD-035)
+
+1. **交接文档的生命周期地位**：跨会话交接（`CROSS_SESSION_HANDOFF`）是 `STD-035` 全生命周期 11 类正式文档之一。
+2. **新会话启动必读顺序**：任何新会话或编码智能体（Claude Code, Codex, Antigravity 等）进入仓库时，**MUST** 按如下顺序读取工程事实源：
+   - 1. `docs/DOCUMENT-INDEX.md`（项目文档主索引）
+   - 2. `docs/PROJECT-BLUEPRINT.md`（最新全量项目规划蓝图）
+   - 3. `docs/PRODUCT-BASELINE.md`（最新全量产品基线与冻结决策）
+   - 4. `docs/SYSTEM-ARCHITECTURE.md`（最新系统架构图文）
+   - 5. `docs/04-API契约/` 或 `docs/API-CONTRACT.md`（接口契约）
+   - 6. 最新 Durable/Temporary Handoff（最后一次工作会话交接）
+3. **禁止以聊天摘要代替工程全貌**：新会话严禁仅凭上一轮增量交接摘要推断项目全貌或改动未声明的产品基线职责。
+
