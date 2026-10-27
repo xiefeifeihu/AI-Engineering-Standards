@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-032
-VERSION=2.6.0
+VERSION=2.7.0
 STATUS=ACTIVE
-SCOPE=跨项目生产级 CI/CD 与发布工程契约 (AI-Engineering-Hub, AI-KB, vtip-ai-sidecar, vtip-platform-catalog)、12阶段标准发布流水线、审批交接契约、多部署模式适配、五态Commit一致性证明、强制自动化门禁、制品不可变性与技术中立回滚契约
+SCOPE=跨项目生产级 CI/CD 与发布工程契约、统一 ReleaseProfile 分级发布架构 (PERSONAL_LOCAL, MAINTAINER_RELEASE, HIGH_ASSURANCE) (AI-Engineering-Hub, AI-KB, vtip-ai-sidecar, vtip-platform-catalog)、12阶段标准发布流水线、审批交接契约、多部署模式适配、五态Commit一致性证明、强制自动化门禁、制品不可变性与技术中立回滚契约
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-10-25
+LAST_UPDATED=2026-10-27
 RELATED_STANDARDS=STD-001, STD-007, STD-014, STD-016, STD-017, STD-019, STD-030, STD-031, STD-033, STD-034
 ```
 
@@ -17,6 +17,35 @@ RELATED_STANDARDS=STD-001, STD-007, STD-014, STD-016, STD-017, STD-019, STD-030,
 - **SHOULD / 应当**：在有充分合理理由的前提下可以例外，但常规情况下必须遵守。
 - **SHOULD NOT / 不宜**：不推荐的做法，存在隐患或更优实践。
 - **MAY / 可以**：完全可选功能或扩展实现。
+
+
+### 1.3 统一 ReleaseProfile 分级发布架构 (Unified ReleaseProfile Architecture)
+
+为解决不同工程场景（单人开发、团队协作、高保障生产）治理成本与安全要求的平衡问题，全平台统一建立三类 ReleaseProfile。受管工程必须在 `engineering-manifest.yaml` 或发布审批策略中显式声明所采用的 Profile，严禁未经声明隐式降级：
+
+1. **`PERSONAL_LOCAL`（单人所有者本地生产模式）**：
+   - **适用场景**：开发者个人控制并运行于本机（Windows 11 / WSL2 / Docker、Linux 桌面或单机进程）的项目（如 AI-Engineering-Hub、AI-KB、个人测试 Sidecar）。
+   - **角色与权限**：单人所有者拥有完整开发与运维职责，可独立完成分支开发、PR 创建、CI 执行、PR 审查合并及受控部署。
+   - **免除要求**：不强制要求第二个独立审批人、GitHub Environment Required Reviewers、Prevent Self-review、独立硬件签名密钥、RSA-PSS 本地审批工具、分布式防重放签名服务或 12 个物理独立执行器。
+   - **强制保留的硬门禁**：
+     - 真实 GitHub PR 与远端 CI 真实通过（严禁直接向 main 开发或合入）。
+     - 完整精确的源码 Commit 标识与干净工作区。
+     - 敏感信息扫描与零密钥门禁（`STD-007`）。
+     - 真实分层测试（单元、契约、集成）与涉及 UI 时的 Playwright 真实浏览器验收。
+     - 部署前对真实可写数据执行一致性备份，并完成隔离恢复校验与实际回滚能力验证。
+     - 本机所有者当次明确授权（`OWNER_LOCAL_CONSENT_RECORDED`）。
+     - 真实运行态探针、核心业务冒烟与 Source / Remote / Build / Live 四态身份严格一致。
+     - 正式 Git Tag 固化与推送，以及 Tag 创建后的独立核验闭环。
+   - **安全与审计属性**：PERSONAL_LOCAL 的所有者记录是本机操作授权与审计，不构成独立密码学不可抵赖证明。独立外部审批状态标记为 `NOT_APPLICABLE_BY_PROFILE` 或 `OWNER_LOCAL_CONSENT_RECORDED`，严禁标记为 `STD032_INDEPENDENT_APPROVAL=PASS`。所有者授权必须绑定当次精确的 `repository`、`commit`、`version`、`image_digest` 与 `deployment_target`。编码智能体严禁替用户伪造确认；缺少当次授权时生产状态必须保持 `WAITING_OWNER_AUTHORIZATION`。
+
+2. **`MAINTAINER_RELEASE`（团队协作维护者发布模式）**：
+   - **适用场景**：多人协同开发工程。
+   - **协作机制**：团队成员从 main 创建特性分支编码并提交 PR，通过自动化 CI 门禁后由具备权限的 Maintainer 审查合入，并由受控执行器执行发布。不强制每个开发机配备硬件签名密钥。
+
+3. **`HIGH_ASSURANCE`（高保障严格发布模式）**：
+   - **适用场景**：对发布完整性与密码学审计有极高要求的关键环境。
+   - **安全机制**：完整保留 `STD-032 v2.6.0` 规范的 12 阶段物理生命周期、独立审批身份、RSA-PSS 硬件密钥签名核验、防重放及 Fail Closed 严格阻断机制。
+   - **禁止降级**：绝不允许因为存在 PERSONAL_LOCAL 模式而削弱 HIGH_ASSURANCE 的安全约束。
 
 ---
 
@@ -61,6 +90,20 @@ SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACK
 
 ---
 
+
+### 2.1 阶段执行形式：HIGH_ASSURANCE 12 阶段与 PERSONAL_LOCAL 7 组逻辑门禁
+
+1. **HIGH_ASSURANCE 严格 12 阶段**：必须按标准时序因果律依次执行 12 个独立物理阶段。
+2. **PERSONAL_LOCAL 7 组逻辑门禁 (7 Logical Gate Groups)**：允许将 12 阶段合并为 7 组可追溯的逻辑核验门禁，不需要为生成报告而模拟 12 个独立物理进程：
+   - **`G1 SOURCE_AND_POLICY`**（源与策略核验）：核验分支、完整 Commit、工作区干净、ReleaseProfile 与合规策略。
+   - **`G2 TEST_AND_SECURITY`**（测试与安全扫描）：真实执行单元/契约/集成测试及 Playwright 浏览器验收，执行零密钥扫描。
+   - **`G3 BUILD_AND_PUBLISH`**（构建与远端同步）：生成不可变构建元数据，固化镜像 SHA/Digest，严格验证 `LOCAL_HEAD == REMOTE_HEAD`。
+   - **`G4 OWNER_AUTHORIZATION`**（所有者明确授权）：核验当次精确 Commit/Version/Digest，记录 `OWNER_LOCAL_CONSENT_RECORDED`；若无当次授权则保持 `WAITING_OWNER_AUTHORIZATION` 并阻断后续部署。
+   - **`G5 BACKUP_AND_DEPLOY`**（备份与受控部署）：真实可写数据一致性备份、隔离恢复验证，通过受控本地执行器拉起目标容器。
+   - **`G6 RUNTIME_AND_SMOKE`**（运行态与业务冒烟）：技术中立探针核验存活，严格校验四态一致（`LOCAL == REMOTE == BUILD == LIVE`），执行核心业务冒烟。
+   - **`G7 RELEASE_TAG_AND_VERIFY`**（标签固化与独立核验）：生产验收确认后推送正式 Tag（`v<VERSION>`），并通过独立的 `git rev-parse` 核实五态一致（`TAG_COMMIT == LIVE_COMMIT`）。
+3. **真实性与不可伪造性要求**：无论采用 12 阶段还是 7 组门禁，每个阶段/门禁必须记录真实 `started_at`、`finished_at`、`exit_code`、`input_commit`、`output_digest`、`evidence_ref` 与状态，严禁伪造固定 150ms 耗时，严禁填充未运行阶段为 `PASS`。
+
 ## 3. 全局 Fail-Closed 门禁与时序契约 (Fail-Closed Gate & Ordering Contract)
 
 ### 3.1 全局 Fail-Closed 中止法则
@@ -79,6 +122,12 @@ SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACK
 ---
 
 ## 4. 审批到执行器交接契约 (Approval to Executor Handshake Contract)
+
+
+### 4.0 ReleaseProfile 与审批模式映射规则
+1. **HIGH_ASSURANCE**：审批模式必须为 `GITHUB_ENVIRONMENT_REVIEW` 或 `LOCAL_AUTHORIZED_KEY`。必须执行严格的独立人工审查与密码学签名验证。
+2. **PERSONAL_LOCAL**：审批模式允许配置为 `OWNER_LOCAL_CONSENT`（亦支持经配置的 `LOCAL_AUTHORIZED_KEY` / `GITHUB_ENVIRONMENT_REVIEW`）。在 `OWNER_LOCAL_CONSENT` 模式下，不强制要求 RSA-PSS 密钥签名，但必须取得所有者当次明确授权记录并记录于审计日志中。
+3. **MAINTAINER_RELEASE**：审批模式允许为 `MAINTAINER_APPROVAL` 或 `GITHUB_ENVIRONMENT_REVIEW`。
 
 ### 4.1 严禁单凭布尔值冒充正式审批
 1. **禁止假审批**：流水线与部署执行器 **MUST NOT** 仅凭命令行参数 `--release-approved`、`--approved` 或环境变量 `RELEASE_APPROVAL=APPROVED` 单独判定为正式生产审批。

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://standards.local/release-approval-policy.schema.json",
-  "title": "STD-032 explicit approval policy; external trust evidence required",
+  "title": "STD-032 release approval policy supporting multi-profile governance (PERSONAL_LOCAL, MAINTAINER_RELEASE, HIGH_ASSURANCE)",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -15,7 +15,18 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "1.0.0"
+      "enum": [
+        "1.0.0",
+        "1.1.0"
+      ]
+    },
+    "release_profile": {
+      "type": "string",
+      "enum": [
+        "PERSONAL_LOCAL",
+        "MAINTAINER_RELEASE",
+        "HIGH_ASSURANCE"
+      ]
     },
     "repository": {
       "type": "string",
@@ -27,7 +38,9 @@
     "approval_mode": {
       "enum": [
         "GITHUB_ENVIRONMENT_REVIEW",
-        "LOCAL_AUTHORIZED_KEY"
+        "LOCAL_AUTHORIZED_KEY",
+        "OWNER_LOCAL_CONSENT",
+        "MAINTAINER_APPROVAL"
       ]
     },
     "workflow": {
@@ -35,12 +48,32 @@
       "pattern": "^\\.github/workflows/[A-Za-z0-9_-]+\\.ya?ml$"
     },
     "environment": {
-      "const": "production"
+      "type": "string",
+      "minLength": 1
     },
     "max_age_seconds": {
       "type": "integer",
       "minimum": 1,
       "maximum": 86400
+    },
+    "owner_consent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operator_identity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "confirmation_channel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "require_explicit_consent": {
+          "type": "boolean"
+        }
+      }
     },
     "local_authorized_key": {
       "type": "object",
@@ -132,7 +165,10 @@
           "approval_mode": {
             "const": "LOCAL_AUTHORIZED_KEY"
           }
-        }
+        },
+        "required": [
+          "approval_mode"
+        ]
       },
       "then": {
         "required": [
@@ -145,6 +181,120 @@
             "local_authorized_key"
           ]
         }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "release_profile"
+        ],
+        "properties": {
+          "release_profile": {
+            "const": "HIGH_ASSURANCE"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "approval_mode": {
+            "enum": [
+              "GITHUB_ENVIRONMENT_REVIEW",
+              "LOCAL_AUTHORIZED_KEY"
+            ]
+          },
+          "environment": {
+            "const": "production"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "release_profile"
+        ],
+        "properties": {
+          "release_profile": {
+            "const": "PERSONAL_LOCAL"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "approval_mode": {
+            "enum": [
+              "OWNER_LOCAL_CONSENT",
+              "LOCAL_AUTHORIZED_KEY",
+              "GITHUB_ENVIRONMENT_REVIEW"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "release_profile"
+        ],
+        "properties": {
+          "release_profile": {
+            "const": "MAINTAINER_RELEASE"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "approval_mode": {
+            "enum": [
+              "MAINTAINER_APPROVAL",
+              "GITHUB_ENVIRONMENT_REVIEW"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "approval_mode"
+        ],
+        "properties": {
+          "approval_mode": {
+            "const": "OWNER_LOCAL_CONSENT"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "release_profile": {
+            "const": "PERSONAL_LOCAL"
+          }
+        },
+        "required": [
+          "release_profile"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "approval_mode"
+        ],
+        "properties": {
+          "approval_mode": {
+            "const": "MAINTAINER_APPROVAL"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "release_profile": {
+            "const": "MAINTAINER_RELEASE"
+          }
+        },
+        "required": [
+          "release_profile"
+        ]
       }
     }
   ]

@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-017
-VERSION=1.0.0
+VERSION=2.7.0
 STATUS=ACTIVE
 SCOPE=AI Engineering 平台下所有独立 Git 代码仓库
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-09-23
+LAST_UPDATED=2026-10-27
 ```
 
 ### 规范性关键词说明 (Normative Keywords)
@@ -34,3 +34,13 @@ LAST_UPDATED=2026-09-23
 - `MAJOR`: 重大架构突破或破坏性变更
 - `MINOR`: 新增兼容功能、规范扩展或功能升级
 - `PATCH`: 向后兼容的缺陷修复与 Conformance Patch
+
+---
+
+## 3. 正式发布 Tag 独立核验闭环 (Post-Tag Verification)
+
+正式 Release Tag 必须在生产验收完全确认 PASS 后创建并推送至远端仓库。Tag 创建后，流水线必须执行独立的 `git rev-parse` 与远端标签核验，确保：
+```text
+TAG_COMMIT == LIVE_COMMIT == REMOTE_HEAD
+```
+严禁在仅完成本地标签创建而未推送到远端或未完成独立核验时宣布发布完成。

@@ -47,7 +47,9 @@
       "type": "string",
       "enum": [
         "PASS",
-        "FAIL"
+        "FAIL",
+        "BLOCK",
+        "WAITING_OWNER_AUTHORIZATION"
       ]
     },
     "stages": {
@@ -83,6 +85,28 @@
             "SMOKE_TEST",
             "PRODUCTION_RELEASE",
             "TAG"
+          ]
+        },
+        {
+          "const": [
+            "SOURCE_AND_POLICY",
+            "TEST_AND_SECURITY",
+            "BUILD_AND_PUBLISH",
+            "OWNER_AUTHORIZATION",
+            "BACKUP_AND_DEPLOY",
+            "RUNTIME_AND_SMOKE",
+            "RELEASE_TAG_AND_VERIFY"
+          ]
+        },
+        {
+          "const": [
+            "G1_SOURCE_AND_POLICY",
+            "G2_TEST_AND_SECURITY",
+            "G3_BUILD_AND_PUBLISH",
+            "G4_OWNER_AUTHORIZATION",
+            "G5_BACKUP_AND_DEPLOY",
+            "G6_RUNTIME_AND_SMOKE",
+            "G7_RELEASE_TAG_AND_VERIFY"
           ]
         }
       ]
@@ -309,6 +333,14 @@
     },
     "timestamp": {
       "type": "string"
+    },
+    "release_profile": {
+      "type": "string",
+      "enum": [
+        "PERSONAL_LOCAL",
+        "MAINTAINER_RELEASE",
+        "HIGH_ASSURANCE"
+      ]
     }
   },
   "additionalProperties": true
