@@ -1,9 +1,15 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
+  "release_profile": "PERSONAL_LOCAL",
   "repository": "example/service",
   "branch": "main",
-  "approval_mode": "GITHUB_ENVIRONMENT_REVIEW",
+  "approval_mode": "OWNER_LOCAL_CONSENT",
   "workflow": ".github/workflows/cd-production.yml",
-  "environment": "production",
-  "max_age_seconds": 3600
+  "environment": "local-production",
+  "max_age_seconds": 3600,
+  "owner_consent": {
+    "operator_identity": "local-owner",
+    "confirmation_channel": "terminal_prompt",
+    "require_explicit_consent": true
+  }
 }

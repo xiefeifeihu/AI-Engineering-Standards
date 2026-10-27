@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-034
-VERSION=2.6.0
+VERSION=2.7.0
 STATUS=ACTIVE
 SCOPE=全平台受管工程仓库 (AI-Engineering-Hub, AI-Engineering-Standards, AI-KB, vtip-ai-sidecar, vtip-platform-catalog)
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-10-23
+LAST_UPDATED=2026-10-27
 ```
 
 ### 规范性关键词说明 (Normative Keywords)
@@ -34,8 +34,8 @@ LAST_UPDATED=2026-10-23
    - **Rule I（不得伪造模型执行、构建和运行 Commit）**：严禁伪造模型调用记录、耗时、Token 用量，严禁伪造 `SOURCE_COMMIT`、`BUILD_COMMIT`、`LIVE_COMMIT` 或容器/进程运行身份证据（`STD-031` / `STD-032`）。
    - **Rule J（不得用静态 JSON 制造高质量验收结果）**：严禁编写静态生成脚本或手写 JSON 汇总文件来冒充真实测试结果、Playwright 验收结果或运行时探针证据。
    - **Rule K（不得将 HTTP 200 自动认定为业务采纳或编码交付完成）**：技术请求返回 `HTTP 200`（或仅完成 Stage A 执行事件上报 / `MODEL_EXECUTION_SUCCESS`）不等于业务采纳或编码交付完成；必须完成 Stage B 业务质量评估或 `STD-023` 编码交付阶段验证后才能认定对应阶段通过。
-   - **Rule L（不得自动提交人工审核 `PASS`）**：未经真实人工审阅确认，编程智能体不得自动提交或伪造 `human_review` / `HUMAN_ACCEPTED` 为 `PASS`。
-   - **Rule M（正式发布必须执行有效 Standards 的 CI/CD）**：正式发布与里程碑验收必须执行符合当前有效 Standards（`STD-031`、`STD-032`、`STD-033`、`STD-034`）的真实 CI/CD 与交付契约校验门禁。
+   - **Rule L（不得自动提交人工审核 `PASS`）**：未经真实人工审阅确认，编程智能体不得自动提交或伪造 `human_review` / `HUMAN_ACCEPTED` 为 `PASS`；在 PERSONAL_LOCAL 模式下，智能体不得伪造 `OWNER_LOCAL_CONSENT_RECORDED` 或代替所有者确认部署授权。
+   - **Rule M（正式发布必须执行有效 Standards 的 CI/CD）**：正式发布与里程碑验收必须执行符合当前有效 Standards（`STD-031`、`STD-032`、`STD-033`、`STD-034`）的真实 CI/CD 与交付契约校验门禁，并依据声明的 ReleaseProfile（PERSONAL_LOCAL / MAINTAINER_RELEASE / HIGH_ASSURANCE）严格执行对应门禁。
    - **Rule N（验收目录与 ZIP 目录必须区分）**：过程验收证据目录（`.artifacts/acceptance/`）与正式交付 ZIP 目录（`.artifacts/packages/`）必须严格隔离，严禁将正式交付 ZIP 存放在 `acceptance` 目录或仓库根目录下。
    - **Rule O（没有全部证据时不得报告 `OVERALL=PASS`）**：任一关键门禁失败、必交证据缺失、未知字段被填为 `PASS` 或存在未闭环项时，严禁报告 `OVERALL=PASS` 或 `OVERALL_STATUS=PASS`。
 3. **资源所有权与测试入口声明**：`AGENTS.md` **MUST** 明确声明本仓库允许修改的目录范围、属主资源边界（`STD-002`）、标准预检入口（`scripts/agent/preflight.py`）、测试命令入口与统一验收打包入口（`scripts/package_acceptance.py`）。
@@ -74,7 +74,8 @@ LAST_UPDATED=2026-10-23
 5. **工程 Manifest (`engineering-manifest.yaml`)**：核验项目 `engineering-manifest.yaml` 存在且符合 `STD-001` Schema 要求。
 6. **任务授权范围 (Authorized Scope)**：核验当前分支相对于基线修改的文件列表均在授权目录范围内，且未跨仓修改禁改工程。
 7. **有效发布脚本 (Release Scripts Presence)**：核验 `scripts/release/` 标准组件及唯一打包器 `scripts/package_acceptance.py` 存在且有效。
-8. **Git 安全状态 (Git Safety State)**：核验 `.artifacts/` 已被 `.gitignore` 排除且 `git ls-files .artifacts` 为空，无跨系统文件权限污染或锁文件残留。
+8. **Git 安全状态 (Git Safety State)**
+9. **ReleaseProfile 适配核验**：核验项目 `engineering-manifest.yaml` 中声明的 `release_profile` 与当前发布模式匹配，检查是否具备相应的授权与门禁配置。：核验 `.artifacts/` 已被 `.gitignore` 排除且 `git ls-files .artifacts` 为空，无跨系统文件权限污染或锁文件残留。
 
 ---
 

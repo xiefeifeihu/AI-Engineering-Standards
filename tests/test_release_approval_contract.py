@@ -109,5 +109,110 @@ class ApprovalContractTests(unittest.TestCase):
             self.assertTrue(list(self.envelope_validator.iter_errors(envelope)))
 
 
+
+    def test_personal_local_owner_consent_valid(self):
+        policy = copy.deepcopy(self.policy)
+        policy['release_profile'] = 'PERSONAL_LOCAL'
+        policy['approval_mode'] = 'OWNER_LOCAL_CONSENT'
+        policy['owner_consent'] = {
+            'operator_identity': 'local-owner',
+            'confirmation_channel': 'terminal_prompt',
+            'require_explicit_consent': True,
+        }
+        self.policy_validator.validate(policy)
+
+    def test_personal_local_no_hardware_key_required(self):
+        policy = copy.deepcopy(self.policy)
+        policy['release_profile'] = 'PERSONAL_LOCAL'
+        policy['approval_mode'] = 'OWNER_LOCAL_CONSENT'
+        self.assertNotIn('local_authorized_key', policy)
+        self.policy_validator.validate(policy)
+
+    def test_high_assurance_cannot_use_owner_consent(self):
+        policy = copy.deepcopy(self.policy)
+        policy['release_profile'] = 'HIGH_ASSURANCE'
+        policy['approval_mode'] = 'OWNER_LOCAL_CONSENT'
+        errors = list(self.policy_validator.iter_errors(policy))
+        self.assertTrue(errors, "HIGH_ASSURANCE must reject OWNER_LOCAL_CONSENT")
+
+    def test_high_assurance_requires_production_env(self):
+        policy = copy.deepcopy(self.policy)
+        policy['release_profile'] = 'HIGH_ASSURANCE'
+        policy['approval_mode'] = 'GITHUB_ENVIRONMENT_REVIEW'
+        policy['environment'] = 'local-dev'
+        errors = list(self.policy_validator.iter_errors(policy))
+        self.assertTrue(errors, "HIGH_ASSURANCE must require production environment")
+
+    def test_maintainer_release_valid(self):
+        policy = copy.deepcopy(self.policy)
+        policy['release_profile'] = 'MAINTAINER_RELEASE'
+        policy['approval_mode'] = 'MAINTAINER_APPROVAL'
+        self.policy_validator.validate(policy)
+
+    def test_maintainer_approval_requires_maintainer_release_profile(self):
+        policy = copy.deepcopy(self.policy)
+        policy['release_profile'] = 'HIGH_ASSURANCE'
+        policy['approval_mode'] = 'MAINTAINER_APPROVAL'
+        errors = list(self.policy_validator.iter_errors(policy))
+        self.assertTrue(errors, "HIGH_ASSURANCE must reject MAINTAINER_APPROVAL")
+
+    def test_unknown_release_profile_rejected(self):
+        policy = copy.deepcopy(self.policy)
+        policy['release_profile'] = 'UNTRUSTED_COMMUNITY'
+        errors = list(self.policy_validator.iter_errors(policy))
+        self.assertTrue(errors, "Unknown release_profile must be rejected")
+
+    def test_release_engineering_7_stages_personal_local(self):
+        rel_eng_validator = validator('release-engineering.schema.json')
+        sample = {
+            "standard_id": "STD-032",
+            "service": "AI-Hub",
+            "version": "v0.21.8",
+            "tag": "v0.21.8",
+            "release_profile": "PERSONAL_LOCAL",
+            "pipeline_status": "PASS",
+            "stages": [
+                "SOURCE_AND_POLICY",
+                "TEST_AND_SECURITY",
+                "BUILD_AND_PUBLISH",
+                "OWNER_AUTHORIZATION",
+                "BACKUP_AND_DEPLOY",
+                "RUNTIME_AND_SMOKE",
+                "RELEASE_TAG_AND_VERIFY"
+            ],
+            "commit_identity": {
+                "LOCAL_HEAD": "a" * 40,
+                "REMOTE_HEAD": "a" * 40,
+                "TAG_COMMIT": "a" * 40,
+                "BUILD_COMMIT": "a" * 40,
+                "LIVE_COMMIT": "a" * 40,
+                "all_consistent": True
+            },
+            "gates": {
+                "SOURCE": {"git_clean": True, "secret_scan": True, "passed": True},
+                "DEV_TEST": {"unit_test": True, "contract_test": True, "integration_test": True, "e2e": True, "passed": True},
+                "BUILD": {"build_metadata_generated": True, "passed": True},
+                "PACKAGE": {"artifact_sha256": "a" * 64, "passed": True},
+                "DEPLOY": {"runtime_probe": True, "technology_agnostic": True, "docker_bound": False, "passed": True},
+                "SMOKE": {"minimal_business_verification": True, "passed": True}
+            },
+            "artifacts": {
+                "layout_valid": True,
+                "docs_clean": True,
+                "package_path": ".artifacts/packages/Acceptance-TEST.zip",
+                "package_sha256": "a" * 64
+            },
+            "runtime_acceptance": True,
+            "rollback_contract": {
+                "technology_agnostic": True,
+                "docker_bound": False,
+                "target_tag": "v0.21.7",
+                "verified": True
+            },
+            "timestamp": "2026-10-27T08:00:00Z"
+        }
+        rel_eng_validator.validate(sample)
+
+
 if __name__ == '__main__':
     unittest.main()

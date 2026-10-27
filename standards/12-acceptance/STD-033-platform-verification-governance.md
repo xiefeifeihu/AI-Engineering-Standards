@@ -2,13 +2,13 @@
 
 ```text
 STANDARD_ID=STD-033
-VERSION=2.6.0
+VERSION=2.7.0
 STATUS=ACTIVE
 TASK_ID=AI-Platform-026-ENGINEERING-GOVERNANCE-FINALIZATION
 ROLE=PLATFORM_ENGINEERING_GOVERNANCE_FINALIZATION
 SCOPE=跨项目统一验证中心 (Platform Verification Center)、五维运行时验收矩阵 (Identity / Runtime / Dependency / Network Topology / Business Smoke)、统一工程生命周期契约 (Engineering Lifecycle Contract: PLAN -> ... -> FEEDBACK)、证据 Schema (platform-verification.schema.json)、验证大盘 (Verify Dashboard) 及 STD-031/STD-032/STD-033 协同治理关系
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-10-13
+LAST_UPDATED=2026-10-27
 RELATED_STANDARDS=STD-001, STD-003, STD-005, STD-012, STD-014, STD-016, STD-019, STD-030, STD-031, STD-032
 ```
 

@@ -9,6 +9,7 @@ project:
   id: "project-unique-id"                   # 全局唯一项目英文小写标识，如 ai-kb-infra, vtip-platform-catalog
   name: "项目显示名称"
   purpose: "项目的核心定位与业务目的简述"
+  release_profile: "PERSONAL_LOCAL"            # PERSONAL_LOCAL | MAINTAINER_RELEASE | HIGH_ASSURANCE
   repo_path_hints:
     windows: "D:\\Projects\\your-project"
     wsl: "/mnt/d/Projects/your-project"
