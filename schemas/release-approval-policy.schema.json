@@ -75,12 +75,7 @@
           "type": "boolean",
           "const": true
         }
-      },
-      "required": [
-        "operator_identity",
-        "confirmation_channel",
-        "require_explicit_consent"
-      ]
+      }
     },
     "local_authorized_key": {
       "type": "object",
