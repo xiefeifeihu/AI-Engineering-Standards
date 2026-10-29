@@ -388,3 +388,14 @@ engineering_governance:
 ### STD-032 审批配置协同 (2.6.0)
 
 生产审批 MUST 使用 STD-032 §4 的显式互斥配置。审计 MUST 区分候选、加密签名验证和独立人工信任边界；schema 合法、workflow 成功、裸布尔值或 Agent 自签不得产生人工 PASS。未知/不可核验边界 MUST BLOCK，禁止自动降级。编码 Agent MUST NOT 注册自有密钥为审批身份、触发签署、输入 PIN 或保存可复用审批凭证。所有证据来源及未执行阶段 MUST 如实记录。
+
+
+---
+
+## 11. 双阶段发布测试事实源与远端无 PR 治理（v2.10.0）
+
+- 取消 PR 作为强制发布状态：`SOURCE_ON_MAIN` / `MAIN_COMMIT_VERIFIED` 取代 `PR_MERGED`；确认目标远端 main Commit 与真实 main CI 成功，不以功能分支 CI、截图或主观确认代替。
+- `PRE_RELEASE_STATUS` 记录发布前分层测试、候选构建、真实 CI、安全、隔离备份恢复及可回滚性；不表示生产业务已验证。
+- `POST_DEPLOY_STATUS` 记录部署后真实生产端点、真实浏览器或业务客户端执行的关键用户旅程、实际业务输出、真实依赖与负面用例；必须绑定 `LIVE_COMMIT`、本次部署 Run ID、制品身份与原始证据。
+- 最终业务就绪判定以 `POST_DEPLOY_REAL_ACCEPTANCE` 为权威，前提是 `PRE_RELEASE_STATUS=PASS`；任一前置不合格或部署后失败时全局 `OVERALL_STATUS` 不得 PASS，禁止打正式 Tag；必要时自动回滚。
+- 实际没有运行服务的规范与文档类发布明确为 `NON_RUNTIME_ARTIFACT`，以正式仓库/Tag、Schema 与真实消费端兼容测试证明交付，不得编造 Live 业务执行。

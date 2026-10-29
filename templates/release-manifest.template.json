@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/xiefeifeihu/AI-Engineering-Standards/main/schemas/release-engineering.schema.json",
   "standard": "STD-032",
-  "version": "2.9.2",
+  "version": "2.10.0",
   "service_name": "example-service",
   "release_version": "1.0.0",
   "source_commit": "NOT_VERIFIABLE",
@@ -61,5 +61,15 @@
     "PRODUCTION_RELEASE",
     "TAG"
   ],
-  "release_profile": "PERSONAL_LOCAL"
+  "release_profile": "PERSONAL_LOCAL",
+  "pre_release_qualification": {
+    "status": "BLOCK",
+    "evidence_ref": null
+  },
+  "post_deploy_real_acceptance": {
+    "status": "BLOCK",
+    "deployment_kind": "SERVICE",
+    "live_commit": null,
+    "evidence_ref": null
+  }
 }

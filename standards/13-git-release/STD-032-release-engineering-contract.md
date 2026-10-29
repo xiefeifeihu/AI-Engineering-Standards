@@ -2,7 +2,7 @@
 
 ```text
 STANDARD_ID=STD-032
-VERSION=2.9.2
+VERSION=2.10.0
 STATUS=ACTIVE
 SCOPE=跨项目生产级 CI/CD 与发布工程契约、统一 ReleaseProfile 分级发布架构 (PERSONAL_LOCAL, MAINTAINER_RELEASE, HIGH_ASSURANCE) (AI-Engineering-Hub, AI-KB, vtip-ai-sidecar, vtip-platform-catalog)、12阶段标准发布流水线、审批交接契约、多部署模式适配、五态Commit一致性证明、强制自动化门禁、制品不可变性与技术中立回滚契约
 OWNER=AI Platform Governance Committee
@@ -25,26 +25,26 @@ RELATED_STANDARDS=STD-001, STD-007, STD-014, STD-016, STD-017, STD-019, STD-030,
 
 1. **`PERSONAL_LOCAL`（单人所有者本地生产模式）**：
    - **适用场景**：开发者个人控制并运行于本机（Windows 11 / WSL2 / Docker、Linux 桌面或单机进程）的项目（如 AI-Engineering-Hub、AI-KB、个人测试 Sidecar）。
-   - **角色与权限**：同一自然人可以同时为开发者、GitHub 仓库所有者和本地生产发布操作者；可由编码 Agent 在既定策略授权下发起 PR，并在真实远端 CI、仓库分支保护和必需检查通过后自动合并。PR 合并 **不等于** 生产审批，生产部署仍须满足所选的 `OWNER_LOCAL_CONSENT` 或 `AUTO_AFTER_GREEN`。
+   - **角色与权限**：同一自然人可以同时为开发者、GitHub 仓库所有者和本机生产发布操作者。**不要求建立 PR**：Agent 可在经授权的仓库直接更新 `main`；必须先通过发布前本地验证，推送后再由远端 `main` CI 独立验证；受保护分支若禁止直接推送必须遵守现有 GitHub 权限策略，不得强推或绕过保护。代码合入与生产部署授权严格分离。
    - **免除要求**：不强制要求第二个独立审批人、GitHub Environment Required Reviewers、Prevent Self-review、独立硬件签名密钥、RSA-PSS 本地审批工具、分布式防重放签名服务或 12 个物理独立执行器。
    - **支持的审批模式**：
      1) `OWNER_LOCAL_CONSENT`（交互确认模式）：每次部署需所有者当次明确交互确认（`OWNER_LOCAL_CONSENT_RECORDED`），严禁编码智能体伪造。
      2) `AUTO_AFTER_GREEN`（全绿自动化发布模式）：个人本机明确声明的自动部署策略。不强制每次人工交互弹窗，但必须在以下 **10 项全绿门禁 (10 Mandatory Green Gates)** 全部无条件满足并完成机器取证后，才允许受控执行器自动推进生产部署与冒烟验收：
-        - **门禁 1 (PR_MERGED)**：真实 GitHub PR 审查并合入 main，本地与远端分支目标 Commit 完全一致。
-        - **门禁 2 (REMOTE_CI_PASS)**：GitHub Actions 真实远端 CI 流水线通过 (`exit_code=0`, status=SUCCESS)。
-        - **门禁 3 (AUTOMATED_TESTS_PASS)**：分层自动化测试（单元、契约、集成）真实执行且 100% 通过。
-        - **门禁 4 (PLAYWRIGHT_PASS)**：涉及前端 UI 变更时，真实 Chromium Playwright 端到端浏览器验收 PASS。
+        - **门禁 1 (MAIN_COMMIT_VERIFIED)**：真实 GitHub 远端 `main` HEAD 与拟发布精确 40 位 Commit 严格一致；本地 `main` 已同步并通过源码与工作区状态审计。**不检查 PR、也不把 PR 当作强制阶段**。
+        - **门禁 2 (REMOTE_CI_PASS)**：**发布目标 `main` Commit** 对应的 GitHub Actions 远端 CI 必须实际完成且 `conclusion=success`；功能分支 CI 不能替代。
+        - **门禁 3 (AUTOMATED_TESTS_PASS)**：发布前独立候选环境中，单元、契约、集成与适用的端到端测试真实执行且通过，保留原始日志。
+        - **门禁 4 (PLAYWRIGHT_PASS)**：涉及 UI 变更时在候选环境完成真实 Chromium/Playwright 自动化测试；无 UI 变更须提供可复核的范围判定并标明 `NOT_APPLICABLE`。此项仅说明发布前验证通过，不替代真实生产浏览器验收。
         - **门禁 5 (SECRETS_SCAN_PASS)**：严格执行 `STD-007` 零密钥门禁，无明文 API Key、Token、私钥泄露。
         - **门禁 6 (SOURCE_BUILD_COMMIT_UNAMBIGUOUS)**：`SOURCE_COMMIT`、`BUILD_COMMIT`、`TARGET_COMMIT` 标识明确且严格一致。
         - **门禁 7 (BACKUP_AND_RESTORE_VERIFIED)**：真实生产数据库完成快照备份，且在隔离环境中校验恢复可用。
         - **门禁 8 (ROLLBACK_READY)**：目标 Docker 引擎已预置并核验上一版本健康镜像，安全回滚路径真实就绪。
         - **门禁 9 (CONTROLLED_WSL_EXECUTOR)**：必须由受控本地 WSL 执行器执行生产容器替换，严禁云端直接触碰生产环境。
-        - **门禁 10 (HEALTH_AND_SMOKE_RUNNABLE)**：目标版本部署后能够立即执行 `/health`、`/api/runtime/identity` 及业务冒烟测试。
-   - **安全与审计属性**：在 `AUTO_AFTER_GREEN` 下，审批状态记录为 `AUTO_AFTER_GREEN_VERIFIED`，证据链固化全部 10 项门禁的执行证据。任一门禁失败或证据缺失时，必须立即 Fail-Closed 阻断，严禁自动部署。
+        - **门禁 10 (HEALTH_AND_SMOKE_RUNNABLE)**：部署前确认真实生产探针、自动化回归脚本和回滚执行器均已就绪；**不允许凭“可运行”宣称生产验收已成功**。部署后必须执行 §2.2 的第二阶段。
+   - **安全与审计属性**：`AUTO_AFTER_GREEN_VERIFIED` 仅表示允许开始受控生产部署。十项发布前机器门禁任一失败必须阻断部署。部署之后的 `POST_DEPLOY_REAL_ACCEPTANCE` 是另一个独立且不可省略的门禁；失败时不可打正式 Tag，必须执行故障处置或回滚，不得借发布前测试覆盖失败事实。
 
 2. **`MAINTAINER_RELEASE`（团队协作维护者发布模式）**：
    - **适用场景**：多人协同开发工程。
-   - **协作机制**：团队成员从 main 创建特性分支编码并提交 PR，通过自动化 CI 门禁后由具备权限的 Maintainer 审查合入，并由受控执行器执行发布。不强制每个开发机配备硬件签名密钥。
+   - **协作机制**：标准本身不要求 PR。可由有权限的 Maintainer 在现有仓库规则下把受审代码提交到 `main`，依赖独立 `main` CI 与真实维护者授权发布；组织现存强制代码审查或分支保护不得绕过。团队审批和生产发布权限不得因取消 PR 而被取消。
 
 3. **`HIGH_ASSURANCE`（高保障严格发布模式）**：
    - **适用场景**：对发布完整性与密码学审计有极高要求的关键环境。
@@ -80,7 +80,7 @@ SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACK
 | 序号 | 阶段标识 | 阶段名称 | 核心职责与准出判据 |
 | :--- | :--- | :--- | :--- |
 | 1 | `SOURCE` | 规划、源码与基线核验 | 只读核验 VERSION、范围、完整 Commit 和 git status；源码已提交且工作区干净。PLAN/CODE 是 SOURCE 的前置活动，不另计发布阶段。 |
-| 2 | `DEV_TEST` | 开发分层测试 | 真实执行 `unit test`、`contract test`、`integration test`、`e2e` 测试并 100% 通过（`exit_code=0`）。 |
+| 2 | `DEV_TEST` | **第一阶段：发布前自动化验证** | 在候选环境执行单元、契约、集成、受控 E2E 与安全测试，验证允许进入生产部署的前提。环境差异导致的生产能力未验证不得标记生产 PASS。 |
 | 3 | `SECURITY_SCAN` | 安全与凭据扫描 | 执行零密钥扫描 (`secret scan`) 与依赖清单完整性核验，严禁明文 Token/私钥入库。 |
 | 4 | `BUILD` | 构建元数据生成 | 执行 `build_metadata.py` 固化 `build_info.json` 与 `.build_commit`，绑定 `BUILD_COMMIT == LOCAL_HEAD`。 |
 | 5 | `PACKAGE` | 制品打包与校验 | 生成发布包至 `.artifacts/packages/`，计算 `PACKAGE_SHA256` 并输出 `artifact_manifest.json`。 |
@@ -88,8 +88,8 @@ SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACK
 | 7 | `RELEASE_APPROVAL` | 生产发布审批门禁 | 校验结构化审批证据包（绑定仓库、分支、精确 Commit、制品 Digest、审批身份、一次性发布任务 ID）。无有效审批证据时 **MUST** 标记 `BLOCK` 并阻断后续发布。 |
 | 8 | `DEPLOY` | 受控部署与运行态就绪 | 在经批准的目标环境下，使用受控部署执行器将目标版本部署就绪，通过运行时技术中立探针验证存活。 |
 | 9 | `RUNTIME_VERIFY` | 运行态身份与一致性核验 | 严格校验运行态真实返回的身份：`LOCAL_HEAD == REMOTE_HEAD == BUILD_COMMIT == LIVE_COMMIT`（前置 Tag 未创建时允许 Tag 待创建状态）。 |
-| 10 | `SMOKE_TEST` | 最小业务冒烟验证 | 执行非破坏性只读业务验证，验证核心功能与 API 契约可用。 |
-| 11 | `PRODUCTION_RELEASE` | 生产验收裁决与封版 | 汇总各阶段真实证据生成 `release_execution_report.json`，判定全流水线通过。 |
+| 10 | `SMOKE_TEST` | **第二阶段：部署后真实环境自动化验收** | 对已部署目标版本使用真实生产入口、真实网络/数据库/网关与必要的安全测试账号，执行非破坏性业务任务与浏览器交互并核查真实结果；不是仅 HTTP 200 或容器健康检查。 |
+| 11 | `PRODUCTION_RELEASE` | 生产验收裁决与封版 | 发布前门禁必须全部通过；**最终真实可用性结论以第二阶段在当前 LIVE_COMMIT 下的自动化业务验收为准**，生成双阶段独立原始证据和统一裁决。任一失败不得给出总体 PASS。 |
 | 12 | `TAG` | 正式 Git Tag 固化与推送 | 生产验收确认后，创建正式语义化版本标签 `v<VERSION>` 锁定指向实际发布的精确 Commit，并推送至远端仓库。 |
 
 ---
@@ -104,13 +104,25 @@ SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACK
    - **`G3 BUILD_AND_PUBLISH`**（构建与远端同步）：生成不可变构建元数据，固化镜像 SHA/Digest，严格验证 `LOCAL_HEAD == REMOTE_HEAD`。
    - **`G4 OWNER_AUTHORIZATION / AUTO_AFTER_GREEN_GATE`**（授权与全绿门禁核验）：
      * 若配置为 `OWNER_LOCAL_CONSENT`：核验当次精确 Commit/Version/Digest，记录 `OWNER_LOCAL_CONSENT_RECORDED`；无授权则保持 `WAITING_OWNER_AUTHORIZATION`。
-     * 若配置为 `AUTO_AFTER_GREEN`：机器强制核验完整 10 项门禁（PR 合并、Remote CI、测试全过、Playwright、密钥扫描、Commit 一致、备份隔离恢复、旧版回滚就绪、受控本地执行器、健康及冒烟就绪）。无 UI 变更时 Playwright 只能凭源码差异证据标记 `NOT_APPLICABLE(NO_UI_CHANGE)`，不得伪装 PASS；非 WSL 形态的受控本地执行器须提交等效隔离/授权/审计证据并满足同一控制目标。其余门禁必须真实 PASS，缺一即 BLOCK。部署后仍须执行当次真实 Runtime Acceptance 和业务冒烟。
+     * 若配置为 `AUTO_AFTER_GREEN`：机器强制核验完整 10 项门禁（main 目标 Commit 已验证、main 远端 CI、测试全过、Playwright、密钥扫描、Commit 一致、备份隔离恢复、旧版回滚就绪、受控本地执行器、健康与冒烟可执行）。无 UI 变更时 Playwright 只能凭源码差异证据标记 `NOT_APPLICABLE(NO_UI_CHANGE)`，不得伪装 PASS；非 WSL 形态的受控本地执行器须提交等效隔离/授权/审计证据并满足同一控制目标。其余门禁必须真实 PASS，缺一即 BLOCK。部署后仍须执行当次真实 Runtime Acceptance 和业务冒烟。
    - **`G5 BACKUP_AND_DEPLOY`**（备份与受控部署）：真实可写数据一致性备份、隔离恢复验证，通过受控本地执行器拉起目标容器。
    - **`G6 RUNTIME_AND_SMOKE`**（运行态与业务冒烟）：技术中立探针核验存活，严格校验四态一致（`LOCAL == REMOTE == BUILD == LIVE`），执行核心业务冒烟。
    - **`G7 RELEASE_TAG_AND_VERIFY`**（标签固化与独立核验）：生产验收确认后推送正式 Tag（`v<VERSION>`），并通过独立的 `git rev-parse` 核实五态一致（`TAG_COMMIT == LIVE_COMMIT`）。
-3. **真实性与不可伪造性要求**：无论采用 12 阶段还是 7 组门禁，每个阶段/门禁必须记录真实 `started_at`、`finished_at`、`exit_code`、`input_commit`、`output_digest`、`evidence_ref` 与状态，严禁伪造固定 150ms 耗时，严禁填充未运行阶段为 `PASS`。
+3. **真实性与不可伪造性要求**：无论采用 12 阶段还是 7 组门禁，每个阶段/门禁必须记录真实 `started_at`、`finished_at`、`exit_code`、`input_commit`、`output_digest`、`evidence_ref` 与状态。必须区分部署前候选测试与部署后真实环境测试，严禁伪造耗时、以历史日志替代当次运行或填充未运行阶段为 `PASS`。
 
 ## 3. 全局 Fail-Closed 门禁与时序契约 (Fail-Closed Gate & Ordering Contract)
+
+### 2.2 两阶段自动化测试与最终判定（强制）
+
+1. **第一阶段：`PRE_RELEASE_QUALIFICATION`**。在任何生产写操作前执行候选版本的单元、契约、集成、安全、必要的浏览器 E2E、备份隔离恢复与构建一致性检查；**目标是判断是否允许部署**，而非证明实际生产业务已可用。完成后仅产生 `PRE_RELEASE_STATUS`，必须保留真实执行日志、Commit、制品身份与运行环境；失败一票否决。
+2. **第二阶段：`POST_DEPLOY_REAL_ACCEPTANCE`**。受控部署后、正式发布裁决和 Tag 之前，针对**当前实际运行服务**的真实域名/端口/容器/网络/数据库/CPA/Ollama/外部依赖，使用真实浏览器、API、任务调用和可审计且非破坏性的模拟用户旅程检验业务结果。必须至少涵盖产品基线中的**关键操作入口、跨组件连接、实际数据读取/处理、真实响应内容、错误及降级路径**，按项目可验证的授权范围执行。输出每个用例的目标、真实输入类型、可见结果、关键断言、证据位置、LIVE_COMMIT、时间戳与状态。
+3. **生产真实验收优先**：`PRE_RELEASE=PASS` 只能允许部署；若 `POST_DEPLOY=FAIL|BLOCK|NOT_VERIFIABLE`，总体必须 `BLOCK` 或 `FAIL`，禁止 Tag 与宣称生产可用。后者 PASS 不得冲销前者 FAIL。两者均通过且 Source/Build/Live 一致、回滚就绪时方可裁决 `PRODUCTION_RELEASE=PASS`。Tag 创建后必须独立校验最终五态一致。
+4. **“真实”等效范围**：生产环境自动化测试应尽可能模拟真人的实际操作，包括真实浏览器点击、筛选、保存/读取或授权的沙盒写回、模型推理与业务结果比对；**覆盖到的操作可以代替重复手工测试**，但未覆盖的用例、主观质量/人工采纳、不可安全自动执行的写入仍要明确标 `DEFERRED` 或 `NOT_VERIFIABLE`，不得声称等于全部人工验收。真实生产测试必须采用只读、专用测试租户/数据或受控可回滚写入，绝不删除真实业务数据或消耗未经授权的付费额度。
+5. **负面用例与异常检出**：必须验证真实权限拒绝、限流/额度异常、网络中断及恢复、路由不可用、空结果、错误提示、菜单可达与浏览器行为；不能以页面能加载、统计不为零或截图不同哈希作为核心通过条件。关键验证失败必须输出最小复现、根因线索和修复任务。
+6. **证据隔离**：`.artifacts/acceptance/<TASK>/<VERSION>/pre_release/` 与 `post_deploy/` 必须分开；必须附带同一次执行 Run ID、目标 Commit、LIVE_COMMIT、执行入口和原始测试日志、截图/录像、探针输出。候选服务端口截图、旧版本截图、Mock 或静态 JSON 不得替代后者。
+7. **没有长期运行服务的 Standards/文档/静态制品**：可显式声明 `deployment_kind=NON_RUNTIME_ARTIFACT` 并采用正式发布目标的真实制品/Schema/消费端契约验证；不能伪装执行过容器生产 E2E。正式测试范围之外的跨项目运行效果另记为 `DEFERRED`，不作为纯规范制品自身的运行服务测试。
+
+
 
 ### 3.1 全局 Fail-Closed 中止法则
 1. **前置门禁阻断法则**：若流水线前置任一强制阶段（`SOURCE`/`CODE`、`DEV_TEST`、`SECURITY_SCAN`、`BUILD`、`PACKAGE`、`PUBLISH`、`RELEASE_APPROVAL`）判定为 `FAIL` 或 `BLOCK`，流水线 **MUST** 立即执行全局 Fail-Closed 中止，**MUST NOT** 继续执行 `DEPLOY` 等具有破坏性或写操作的后续阶段。
@@ -164,14 +176,14 @@ SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACK
 
 1. **共同强制项**：审批字段本身不能建立信任。所有发布必须绑定完整仓库、`main`、40 位目标 Commit、目标版本、**带类型的不可变制品身份**、有效期、一次性任务 ID 和当次受控执行器；执行器必须在替换服务或修改生产数据之前核验审批策略与证据，并通过持久化原子事务消费任务 ID。过期、重放、身份不符、环境变化或证据不可核验 MUST BLOCK。无论模式如何，Source/Build/Live/Tag、备份隔离恢复、回滚和 Runtime Acceptance **MUST** 保持真实。
 2. **`PERSONAL_LOCAL + OWNER_LOCAL_CONSENT`**：同一自然人可为开发者、仓库所有者与本机操作者。所有者 **MUST** 在本次可信本机操作界面明确确认或拒绝，该界面必须展示仓库、版本、完整 Commit、制品类型与完整身份、任务 ID、目标环境和变更摘要；确认事件必须由受控本地授权组件从真实操作者会话采集，并绑定当前候选、有效期、一次性任务 ID、可信会话和审计记录。编码 Agent **MUST NOT** 代按确认键、注入交互输入、预生成批准票据或通过可编辑 JSON 模拟。无需第二审批人、GitHub Environment Required Reviewers 或硬件签名；若执行器无法区分真人交互与 Agent 操作，必须 `WAITING_OWNER_AUTHORIZATION`，不得自称已获确认。JSON Schema 结构校验不构成人类交互真实性证明。
-3. **`PERSONAL_LOCAL + AUTO_AFTER_GREEN`**：该模式不需要逐次人工点击，但必须预先在受信策略中显式启用，并由受控本地执行器逐项核验 §1.3 的 **全部 10 项** 门禁的真实外部证据（包括精确 Commit、已合入 PR、当前 main 对应的远端 CI、真实测试输出、密钥扫描、制品身份、隔离恢复、上一稳定版本回滚、受控执行器和部署后健康/冒烟）。单个布尔字段或自填的 `PASS` 不构成证据。无 UI 变化时 Playwright 可记录 `NOT_APPLICABLE`，但必须有实际 diff 与适用性判定原始证据；没有数据库的工程必须证明可写状态盘点和应恢复资产，不得假绿。非 WSL 部署可以用经过授权、隔离且可审计的同等本地执行器满足第九门禁，不能直接跳过。满足后记录 `AUTO_AFTER_GREEN_VERIFIED`；任一必要证据缺失即 BLOCK。
+3. **`PERSONAL_LOCAL + AUTO_AFTER_GREEN`**：该模式不需要逐次人工点击，但必须预先在受信策略中显式启用，并由受控本地执行器逐项核验 §1.3 的 **全部 10 项** 门禁的真实外部证据（包括精确 Commit 已同步并固定在远端 main、当前 main 对应的远端 CI、真实测试输出、密钥扫描、制品身份、隔离恢复、上一稳定版本回滚、受控执行器和部署后健康/冒烟）。单个布尔字段或自填的 `PASS` 不构成证据。无 UI 变化时 Playwright 可记录 `NOT_APPLICABLE`，但必须有实际 diff 与适用性判定原始证据；没有数据库的工程必须证明可写状态盘点和应恢复资产，不得假绿。非 WSL 部署可以用经过授权、隔离且可审计的同等本地执行器满足第九门禁，不能直接跳过。满足后记录 `AUTO_AFTER_GREEN_VERIFIED`；任一必要证据缺失即 BLOCK。
 4. **`MAINTAINER_RELEASE`**：通过受认证的 Maintainer/Environment 审查机制确定授权，不允许把个人本地自动放行策略映射到团队发布。执行器必须验证受信身份与仓库授权权限。
 5. **`HIGH_ASSURANCE`**：严格沿用独立审批身份、认证 GitHub Environment 审批或 §4.4 受保护硬件/独立账号密钥模式，MUST 验证 Required Reviewers、防自审、受保护分支、审批签名及独立信任边界（按选择模式适用），不可降级。
-6. **远端 CI 与一次性防重放**：所有模式均必须从受信远端 GitHub API 校验对应 Commit 的 CI、PR 与策略要求，并在本机受控执行器中核验一次性任务账本。历史证据可作为诊断参考，但不能充当新目标版本的 Live 验收。不可核验则报告 `NOT_VERIFIABLE` 并阻断生产裁决。
+6. **远端 CI 与一次性防重放**：所有模式均必须从受信远端 GitHub API 校验目标 main Commit 与对应远端 CI、仓库权限及已配置分支保护，不要求查询 PR；在本机受控执行器中核验一次性任务账本。历史证据可作为诊断参考，但不能充当新目标版本的 Live 验收。不可核验则报告 `NOT_VERIFIABLE` 并阻断生产裁决。
 
 ### 4.4 受保护本地密钥审批配置 (LOCAL_AUTHORIZED_KEY)
 
-1. **适用条件**：只有当前私有仓库套餐确实不提供 Environment Required Reviewers 时，治理方 MAY 通过正式发布策略启用本模式。MUST 记录仓库可见性、账户套餐证据来源、功能限制与核验时间。PR rulesets、分支保护审批计数与 Environment 部署审核是不同能力，不能相互替代证明。API 缺失字段 MUST 记为 NOT_VERIFIABLE，不能猜测套餐或据此自动启用。用户/管理员提供的套餐证据 MUST 与 API 实测字段分开记录。官方功能说明：<https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments>。
+1. **适用条件**：只有当前私有仓库套餐确实不提供 Environment Required Reviewers 时，治理方 MAY 通过正式发布策略启用本模式。MUST 记录仓库可见性、账户套餐证据来源、功能限制与核验时间。代码分支保护与 Environment 部署审核是不同能力，不能相互替代证明。API 缺失字段 MUST 记为 NOT_VERIFIABLE，不能猜测套餐或据此自动启用。用户/管理员提供的套餐证据 MUST 与 API 实测字段分开记录。官方功能说明：<https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments>。
 2. **候选不等于批准**：云端 workflow 只生成 Candidate / UNAPPROVED 交接制品；`environment: production` 作业运行或成功不代表人工批准。本模式的云端候选生成不依赖不可用的 Required Reviewers，但仍 MUST 验证 main-only、真实 CI 和不可变镜像。执行器 MUST 明确拒绝缺失签名或未知策略。
 3. **独立边界**：密钥 MUST 由独立人工审批身份持有，禁止编码 Agent、CI Runner、部署身份读取、导出或无人工交互调用。MUST 使用需每次真人确认的硬件密钥或受独立账号保护的不可导出密钥；单纯软件文件权限、`human_present=true`、自填账户名或新建同用户密钥不构成隔离证明。若 Agent 具有可绕过隔离的管理员权限，MUST 使用独立设备/硬件确认边界或 BLOCK。私钥 MUST NOT 位于任一项目仓库、`.artifacts`、环境变量、日志或 Agent 可读目录。Agent MUST NOT 点击确认、输入 PIN、签署或保存可复用审批令牌。
 4. **注册与吊销**：受控策略 MUST 固定公钥 SPKI DER SHA256 指纹、算法、审批主体、独立签名边界的外部核验证据引用、有效期与撤销状态。密钥注册/轮换/撤销 MUST 独立人工治理，不允许发布候选携带新公钥建立信任。未知、过期、撤销或缺少可独立核验边界的密钥 MUST BLOCK。签名必须按固定算法与受信公钥验证，禁止算法协商或信任输入中的任意公钥。
@@ -189,9 +201,14 @@ SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACK
 4. `FILE_SHA256`：非容器制品的完整文件 SHA256，必须附制品路径/名称和非容器部署方式。两个 `sha256:` 字符串相同格式并不意味着同类证据可比较。
 5. 结构化契约使用 `artifact_identity.kind` 和 `artifact_identity.value`，运行时按 kind 校验，绝不跨类型宽松匹配。不得通过前缀截断、镜像 Tag、`latest` 或值互相包含替代精确核验。
 
-### 4.6 个人本地工程 PR 自动合并和自动发布边界
+### 4.6 不依赖 PR 的 main 提交与自动化 CD 边界
 
-在受信策略显式允许的 `PERSONAL_LOCAL` 工程，编码 Agent **MAY** 在真实必需检查全绿、无未解决的强制审查意见、满足仓库分支保护且目标 `main` 未漂移时，通过 GitHub API 自动合并自己的 PR；无需为单人本机项目额外引入第二审批人。**PR 自动合并仅处理版本控制协作，不是生产发布授权。** 随后的生产构建/备份/恢复/部署/验收/Tag 必须依 `OWNER_LOCAL_CONSENT` 或 `AUTO_AFTER_GREEN` 的发布模式分别审计。未 Push 的本地分支、只测试了功能分支的 CI、旧容器的测试截图以及已存在的 ZIP 均不得宣告生产发布完成。
+1. **取消 PR 强制机制**：本标准所有 ReleaseProfile 均不把 PR 创建/合并作为发布合规的前置门禁。开发者可以先在本地隔离分支做发布前测试，再以非强推方式更新 main；个人本机仓库在策略允许时也可以直接提交至 main。若 GitHub 仓库实际配置禁止直接推送，**MUST** 遵循受保护分支规则，不能要求 Agent 违规绕过；由仓库所有者调整可行的受控分支策略后方可采用无 PR 流程。
+2. **主要事实源**：发布对象唯一是远端 `main` 的精确 40 位 Commit。任何独立功能分支、暂存区或候选镜像的测试都不能替代该 Commit 的 `main` CI。单人项目可在策略声明下由编程 Agent 自动提交、Push、等待远端 main CI 全绿，无需人工点击合并。
+3. **严格独立的两阶段自动化**：发布前机器门禁全部真实通过、审批模式满足后才允许部署；部署后必须执行第二次生产入口的真实业务自动化验收。后者决定生产可用性最终结论，失败须阻断发布封版和 Tag，并执行回滚/问题修复。
+4. **保持高保障边界**：`MAINTAINER_RELEASE`、`HIGH_ASSURANCE` 的维护者或独立人工审批要求保持不变；取消 PR **不等于** 取消审查人或批准、远端 CI、审计、反重放和不可变制品身份。
+5. **严格禁止假完成**：只在本地完成开发、只有功能分支 CI、生产仍运行旧容器、未执行真实业务验收、旧截图和旧验收包均不可宣称生产 PASS。
+
 
 ---
 

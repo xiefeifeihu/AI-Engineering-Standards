@@ -75,6 +75,15 @@ SOURCE ──► BUILD ──► PACKAGE ──► DEPLOY ──► RUNTIME_VERI
 
 ---
 
+## 2.1 生产部署后真实业务验收优先级（STD-014 双阶段对齐）
+
+- `SOURCE/BUILD/PACKAGE` 及部署前候选测试属于 `PRE_RELEASE_QUALIFICATION`，结论仅为允许部署，不等于生产就绪。
+- 运行态 `RUNTIME_VERIFY` 成功后必须执行 `POST_DEPLOY_REAL_ACCEPTANCE`。它使用当前真实生产入口运行非破坏性自动化用户旅程，包括必要的浏览器交互、模型推理、真实业务输出断言以及关键依赖与异常路径核验；真实成本、授权和副作用必须受控。
+- `PRODUCTION_READY` 必须同时满足发布前全部硬门禁 PASS、部署后真实功能验收 PASS、Live 身份一致。HTTP 200/健康检查/存在截图均不充分。若 POST_DEPLOY FAIL 或关键路径 NOT_VERIFIABLE，不得将 `runtime_acceptance=true` 用于生产交付裁决。
+- 自动化能替代已覆盖操作的重复人工验证，但未覆盖、主观业务质量、人工采纳与高风险写入必须记录 `DEFERRED`，不能虚构 PASS。无服务的规范库等允许显式 `NON_RUNTIME_ARTIFACT` 路径。
+
+---
+
 ## 3. 技术中立性约束 (Technology-Agnostic Invariants)
 
 ### 3.1 严禁强绑定 Docker (Strict Prohibition of Docker Daemon Binding)

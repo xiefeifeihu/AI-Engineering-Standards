@@ -1,11 +1,11 @@
-# AI Engineering Standards (V2.9.2)
+# AI Engineering Standards (V2.10.0)
 
 Canonical engineering standards shared across local AI / Vibe Coding projects.
 
 本项目是开发机跨工程共享的架构标准规范库（Source of Truth），定义网络通信、推理资源共享、智能体接入、上下文管理与工程协作标准。
 
 ```text
-STANDARDS_VERSION=2.9.2
+STANDARDS_VERSION=2.10.0
 STATUS=RELEASED
 BASELINE=AI-ENGINEERING-PLATFORM-V1-001
 LAST_UPDATED=2026-10-29
@@ -87,3 +87,12 @@ LAST_UPDATED=2026-10-29
 ## 4. 废弃内容归档 (`deprecated/`)
 
 - [`Cloud CPA 隧道旧管理脚本废弃说明`](./deprecated/CLOUD-CPA-TUNNEL-DEPRECATED.md)（替代脚本：`scripts/cpa/cloud-cpa-tunnel.cmd`）
+
+
+## v2.10.0 治理更新（2026-10-29）
+
+- 正式版本发布 **不再要求 PR**；根据明确的 ReleaseProfile/仓库权限直接更新 `main`，以目标 main Commit 的远端 GitHub CI 成功为准。
+- `AUTO_AFTER_GREEN` 第 1 门禁更名为 `MAIN_COMMIT_VERIFIED`（取代 `PR_MERGED`），保持十项门禁数量与严格程度。
+- 强制 **发布前候选测试 + 部署后真实环境用户旅程自动化验收** 两阶段。部署后业务真实验收是最终生产可用性判定依据，发布前绿色不代表线上可用。
+- `HIGH_ASSURANCE` 独立授权、不可变制品身份、备份隔离恢复、反重放与回滚边界保持。
+- 具体要求：STD-014、STD-017、STD-031、STD-032、STD-033、STD-034。

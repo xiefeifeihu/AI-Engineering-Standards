@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-034
-VERSION=2.8.0
+VERSION=2.10.0
 STATUS=ACTIVE
 SCOPE=全平台受管工程仓库 (AI-Engineering-Hub, AI-Engineering-Standards, AI-KB, vtip-ai-sidecar, vtip-platform-catalog)
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-10-27
+LAST_UPDATED=2026-10-29
 ```
 
 ### 规范性关键词说明 (Normative Keywords)
@@ -25,19 +25,19 @@ LAST_UPDATED=2026-10-27
 2. **十五项强制工程铁律 (`Rules A–O`)**：每个项目的 `AGENTS.md` **MUST** 完整声明并执行以下 15 项核心治理规则：
    - **Rule A（开始工作先核验 Git 和 Standards）**：开始任务前必须先执行只读基线核查，核验当前 Git 分支、`LOCAL_HEAD`、`REMOTE_HEAD`、`MAIN_HEAD`、`WORKTREE_STATUS`（`git status -sb`），以及 `AI-Engineering-Standards` 的当前 `VERSION` 与 `HEAD Commit`。
    - **Rule B（Standards 是统一规范唯一事实源）**：`AI-Engineering-Standards` 是全平台工程规范唯一事实源（Single Source of Truth）。业务与平台仓库不得复制完整 Standards 正文或另立冲突规范。
-   - **Rule C（不直接修改 `main`）**：严禁直接在 `main` / `master` 分支上开发或直接向 `main` 提交代码；必须从干净基线创建独立分支并通过 PR 与 CI 门禁合入。
+   - **Rule C（不强制 PR、保护正式 main）**：Standard **不要求** PR 创建或合并。已获仓库所有者授权且 GitHub 分支策略允许时，个人本地工程的 Agent 可以从干净基线直接提交/Push 到 `main`，但必须先通过候选验证，再等待目标 main Commit 的真实远端 CI 全绿；禁止强推、覆盖他人修改、绕过分支保护或通过候选分支 CI 代替 main CI。MAINTAINER_RELEASE / HIGH_ASSURANCE 的独立审查和授权边界不改变。
    - **Rule D（保护现有工作区）**：严禁覆盖、丢弃或清理工作区中已有的未提交修改或历史验收成果；严禁使用 `git reset --hard`、`git clean -fd`、`git push --force`。
    - **Rule E（严格遵守跨仓修改边界）**：严格遵循 `STD-002` / `STD-017` 及任务授权范围，严禁越权修改未授权仓库。
    - **Rule F（零密钥与隐私保护）**：严格执行 `STD-007`，严禁向 Git、日志或交付包提交任何 Token、API Key、Cookie、Authorization 头、私钥、真实生产完整正文或私人本地配置（如 `.env`、`settings.local.json`）。
    - **Rule G（实际运行测试后才能报告 `PASS`）**：所有测试状态必须基于真实执行的测试命令、`exit_code=0` 及原始测试日志输出（`STD-014`），严禁未运行或失败时报告 `PASS`。
-   - **Rule H（单元测试不能替代 Playwright 和真实业务验收）**：单元测试仅验证局部逻辑，不得替代涉及 UI 变更时的 Playwright 真实浏览器验收（`STD-015`）及端到端真实业务链路验收。
+   - **Rule H（发布前与部署后两次自动化）**：单元、契约、集成和候选 Playwright 是发布前质量门禁；正式部署后必须再对真实 LIVE 服务执行实际用户任务与端到端业务自动化验证（`STD-014`、`STD-015`、`STD-031`）。仅有发布前绿灯不得宣称生产功能已验收。
    - **Rule I（不得伪造模型执行、构建和运行 Commit）**：严禁伪造模型调用记录、耗时、Token 用量，严禁伪造 `SOURCE_COMMIT`、`BUILD_COMMIT`、`LIVE_COMMIT` 或容器/进程运行身份证据（`STD-031` / `STD-032`）。
    - **Rule J（不得用静态 JSON 制造高质量验收结果）**：严禁编写静态生成脚本或手写 JSON 汇总文件来冒充真实测试结果、Playwright 验收结果或运行时探针证据。
    - **Rule K（不得将 HTTP 200 自动认定为业务采纳或编码交付完成）**：技术请求返回 `HTTP 200`（或仅完成 Stage A 执行事件上报 / `MODEL_EXECUTION_SUCCESS`）不等于业务采纳或编码交付完成；必须完成 Stage B 业务质量评估或 `STD-023` 编码交付阶段验证后才能认定对应阶段通过。
-   - **Rule L（不得自动提交人工审核 `PASS`）**：未经真实人工审阅确认，编程智能体不得自动提交或伪造 `human_review` / `HUMAN_ACCEPTED` 为 `PASS`；在 PERSONAL_LOCAL 模式下，智能体不得伪造 `OWNER_LOCAL_CONSENT_RECORDED` 或代替所有者确认部署授权。当工程显式声明并配置为 `AUTO_AFTER_GREEN` 模式时，自动部署授权严格受控于全绿机器证据链（PR 合并、Remote CI、测试全过、Playwright、零密钥扫描、Commit 一致、数据库备份与隔离恢复校验、旧镜像与回滚可用、受控 WSL 执行器、冒烟就绪等 10 项门禁全部 PASS），智能体严禁伪造任一门禁证据或越过未通过门禁自动触发部署。
+   - **Rule L（不得自动提交人工审核 `PASS`）**：未经真实人工审阅确认，编程智能体不得自动提交或伪造 `human_review` / `HUMAN_ACCEPTED` 为 `PASS`；在 PERSONAL_LOCAL 模式下，智能体不得伪造 `OWNER_LOCAL_CONSENT_RECORDED` 或代替所有者确认部署授权。当工程显式声明并配置为 `AUTO_AFTER_GREEN` 模式时，自动部署授权严格受控于全绿机器证据链（main Commit 核验、main CI、发布前测试、Playwright、零密钥扫描、Commit 一致、数据库备份与隔离恢复校验、旧镜像与回滚可用、受控本地执行器、冒烟可执行等 10 项门禁全部 PASS），智能体严禁伪造任一门禁证据或越过未通过门禁自动触发部署。
    - **Rule M（正式发布必须执行有效 Standards 的 CI/CD）**：正式发布与里程碑验收必须执行符合当前有效 Standards（`STD-031`、`STD-032`、`STD-033`、`STD-034`）的真实 CI/CD 与交付契约校验门禁，并依据声明的 ReleaseProfile（PERSONAL_LOCAL / MAINTAINER_RELEASE / HIGH_ASSURANCE）严格执行对应门禁。在 PERSONAL_LOCAL 启用 AUTO_AFTER_GREEN 时，必须完整核验 10 门禁全部 PASS 后由受控执行器自动完成部署与冒烟验收。
    - **Rule N（验收目录与 ZIP 目录必须区分）**：过程验收证据目录（`.artifacts/acceptance/`）与正式交付 ZIP 目录（`.artifacts/packages/`）必须严格隔离，严禁将正式交付 ZIP 存放在 `acceptance` 目录或仓库根目录下。
-   - **Rule O（没有全部证据时不得报告 `OVERALL=PASS`）**：任一关键门禁失败、必交证据缺失、未知字段被填为 `PASS` 或存在未闭环项时，严禁报告 `OVERALL=PASS` 或 `OVERALL_STATUS=PASS`。
+   - **Rule O（生产实际验收结果优先）**：任一发布前门禁失败、部署后真实业务验收失败/不可核验、必交证据缺失、未知字段被填为 PASS 或存在未闭环关键项时，严禁报告 `OVERALL=PASS`。生产最终结论依赖 **POST_DEPLOY_REAL_ACCEPTANCE** 的真实功能结果，而不是仅依赖候选 CI、健康探针或截图。
 3. **资源所有权与测试入口声明**：`AGENTS.md` **MUST** 明确声明本仓库允许修改的目录范围、属主资源边界（`STD-002`）、标准预检入口（`scripts/agent/preflight.py`）、测试命令入口与统一验收打包入口（`scripts/package_acceptance.py`）。
 
 ---
