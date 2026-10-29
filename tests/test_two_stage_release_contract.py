@@ -1,7 +1,9 @@
 """STD-014/STD-032 two-stage live acceptance contract: positive and negative cases."""
 import copy
 import unittest
-from datetime import datetime, timedelta, timezone
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.validate_two_stage_release import validate_record
 
 SHA = "a" * 40
