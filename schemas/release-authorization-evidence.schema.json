@@ -1,0 +1,491 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/release-authorization-evidence.schema.json",
+  "title": "STD-032 typed per-run authorization evidence (schema != approval proof)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "release_profile",
+    "approval_source",
+    "repository",
+    "target_commit",
+    "target_branch",
+    "target_version",
+    "one_time_release_task_id",
+    "artifact_identity",
+    "approved_at",
+    "expires_at",
+    "operator_identity",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "release_profile": {
+      "enum": [
+        "PERSONAL_LOCAL",
+        "MAINTAINER_RELEASE",
+        "HIGH_ASSURANCE"
+      ]
+    },
+    "approval_source": {
+      "enum": [
+        "OWNER_LOCAL_CONSENT",
+        "AUTO_AFTER_GREEN",
+        "MAINTAINER_APPROVAL",
+        "GITHUB_ENVIRONMENT_REVIEW",
+        "LOCAL_AUTHORIZED_KEY"
+      ]
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "target_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "target_branch": {
+      "const": "main"
+    },
+    "target_version": {
+      "type": "string",
+      "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "one_time_release_task_id": {
+      "type": "string",
+      "minLength": 4
+    },
+    "artifact_identity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "LOCAL_DOCKER_IMAGE_ID"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "OCI_MANIFEST_DIGEST"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "REGISTRY_REPODIGEST"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._:/-]+@sha256:[0-9a-f]{64}$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "FILE_SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          }
+        }
+      ]
+    },
+    "approved_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "operator_identity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "OWNER_LOCAL_CONSENT_RECORDED",
+        "AUTO_AFTER_GREEN_VERIFIED",
+        "MAINTAINER_APPROVED",
+        "GITHUB_ENVIRONMENT_APPROVED",
+        "LOCAL_AUTHORIZED_KEY_VERIFIED"
+      ]
+    },
+    "owner_consent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_ref",
+        "trusted_interaction_ref",
+        "decision"
+      ],
+      "properties": {
+        "session_ref": {
+          "type": "string",
+          "minLength": 8
+        },
+        "trusted_interaction_ref": {
+          "type": "string",
+          "minLength": 8
+        },
+        "decision": {
+          "const": "APPROVED"
+        }
+      }
+    },
+    "machine_gates": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gate_id",
+          "status",
+          "evidence_ref"
+        ],
+        "properties": {
+          "gate_id": {
+            "enum": [
+              "PR_MERGED",
+              "REMOTE_CI_PASS",
+              "AUTOMATED_TESTS_PASS",
+              "PLAYWRIGHT_PASS",
+              "SECRETS_SCAN_PASS",
+              "SOURCE_BUILD_COMMIT_UNAMBIGUOUS",
+              "BACKUP_AND_RESTORE_VERIFIED",
+              "ROLLBACK_READY",
+              "CONTROLLED_WSL_EXECUTOR",
+              "HEALTH_AND_SMOKE_RUNNABLE"
+            ]
+          },
+          "status": {
+            "const": "PASS"
+          },
+          "evidence_ref": {
+            "type": "string",
+            "minLength": 8
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "approval_source"
+        ],
+        "properties": {
+          "approval_source": {
+            "const": "OWNER_LOCAL_CONSENT"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "release_profile": {
+            "const": "PERSONAL_LOCAL"
+          },
+          "status": {
+            "const": "OWNER_LOCAL_CONSENT_RECORDED"
+          }
+        },
+        "required": [
+          "owner_consent"
+        ],
+        "not": {
+          "required": [
+            "machine_gates"
+          ]
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "owner_consent"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "approval_source"
+        ],
+        "properties": {
+          "approval_source": {
+            "const": "AUTO_AFTER_GREEN"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "release_profile": {
+            "const": "PERSONAL_LOCAL"
+          },
+          "status": {
+            "const": "AUTO_AFTER_GREEN_VERIFIED"
+          }
+        },
+        "required": [
+          "machine_gates"
+        ],
+        "allOf": [
+          {
+            "properties": {
+              "machine_gates": {
+                "contains": {
+                  "properties": {
+                    "gate_id": {
+                      "const": "PR_MERGED"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "machine_gates": {
+                "contains": {
+                  "properties": {
+                    "gate_id": {
+                      "const": "REMOTE_CI_PASS"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "machine_gates": {
+                "contains": {
+                  "properties": {
+                    "gate_id": {
+                      "const": "AUTOMATED_TESTS_PASS"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "machine_gates": {
+                "contains": {
+                  "properties": {
+                    "gate_id": {
+                      "const": "PLAYWRIGHT_PASS"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "machine_gates": {
+                "contains": {
+                  "properties": {
+                    "gate_id": {
+                      "const": "SECRETS_SCAN_PASS"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "machine_gates": {
+                "contains": {
+                  "properties": {
+                    "gate_id": {
+                      "const": "SOURCE_BUILD_COMMIT_UNAMBIGUOUS"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "machine_gates": {
+                "contains": {
+                  "properties": {
+                    "gate_id": {
+                      "const": "BACKUP_AND_RESTORE_VERIFIED"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "machine_gates": {
+                "contains": {
+                  "properties": {
+                    "gate_id": {
+                      "const": "ROLLBACK_READY"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "machine_gates": {
+                "contains": {
+                  "properties": {
+                    "gate_id": {
+                      "const": "CONTROLLED_WSL_EXECUTOR"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "machine_gates": {
+                "contains": {
+                  "properties": {
+                    "gate_id": {
+                      "const": "HEALTH_AND_SMOKE_RUNNABLE"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "machine_gates"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "release_profile"
+        ],
+        "properties": {
+          "release_profile": {
+            "const": "HIGH_ASSURANCE"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "approval_source": {
+            "enum": [
+              "GITHUB_ENVIRONMENT_REVIEW",
+              "LOCAL_AUTHORIZED_KEY"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "release_profile"
+        ],
+        "properties": {
+          "release_profile": {
+            "const": "MAINTAINER_RELEASE"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "approval_source": {
+            "enum": [
+              "MAINTAINER_APPROVAL",
+              "GITHUB_ENVIRONMENT_REVIEW"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
