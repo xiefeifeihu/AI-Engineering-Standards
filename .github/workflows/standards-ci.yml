@@ -40,3 +40,60 @@ jobs:
 
       - name: Validate approval policy contracts
         run: python -m unittest discover -s tests -v
+
+  publish-version-tag:
+    name: Publish Standards Tag after main CI
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate-standards
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout current exact main commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify and publish immutable annotated Standards Tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::VERSION must be SemVer MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          tag="v$version"
+          current_sha="$(git rev-parse HEAD)"
+          if [[ "$current_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::HEAD does not match workflow target SHA"
+            exit 1
+          fi
+          remote_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [[ "$remote_main" != "$current_sha" ]]; then
+            echo "::error::main has moved; stale workflow cannot tag older commit"
+            exit 1
+          fi
+          existing="$(git ls-remote origin "refs/tags/$tag")"
+          if [[ -n "$existing" ]]; then
+            git fetch origin "refs/tags/$tag:refs/tags/$tag"
+            peeled="$(git rev-parse "$tag^{commit}")"
+            if [[ "$peeled" != "$current_sha" ]]; then
+              echo "::error::Existing Tag points to another commit; no overwrite"
+              exit 1
+            fi
+            echo "Tag already verified: $tag -> $peeled"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$tag" "$current_sha" -m "Standards $tag - validated main CI"
+            git push origin "refs/tags/$tag"
+          fi
+          remote_peeled="$(git ls-remote origin "refs/tags/$tag^{}" | awk '{print $1}')"
+          if [[ "$remote_peeled" != "$current_sha" ]]; then
+            echo "::error::Remote peeled Tag does not match this main commit"
+            exit 1
+          fi
+          echo "STANDARDS_TAG=$tag" >> "$GITHUB_STEP_SUMMARY"
+          echo "STANDARDS_PEELED_COMMIT=$remote_peeled" >> "$GITHUB_STEP_SUMMARY"
+          echo "PUBLISHED_NON_RUNTIME_ARTIFACT=true" >> "$GITHUB_STEP_SUMMARY"

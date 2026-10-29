@@ -55,3 +55,7 @@ TAG_COMMIT == LIVE_COMMIT == REMOTE_HEAD
 2. 远端 main 最新精确 Commit 与目标 Commit 一致，且绑定该 Commit 的远端 GitHub Actions CI **实际成功**，方可进入发布审批与生产部署。功能分支测试不能冒充 main CI。
 3. 发布前 Stage 1 全绿仅代表候选可部署；部署后 Stage 2 在当前 LIVE_COMMIT 上的真实用户旅程自动化验收 PASS 才能形成最终生产裁决；然后打 Tag 并远端核验。
 4. NON_RUNTIME_ARTIFACT 工程（如规范仓库）必须声明其不具有线上服务，使用真实主分支版本制品与 Schema/消费端契约验收，不得伪造生产服务测试。
+
+## 5. 非运行时 Standards 规范仓库自动发布标签
+
+Standards 属于 NON_RUNTIME_ARTIFACT。main 更新并且该准确 Commit 的真实远端 Schema/契约 CI 全部通过后，受控 GitHub Actions 可以自动发布与校验其 VERSION 对应的附注 Tag。不得为 Standards 伪造部署后 Docker/HTTP 业务验收。工作流必须先确认远端 main HEAD 仍等于 CI 运行 SHA、版本合法，且 Tag 不存在或已指向同一个 Commit；冲突则 BLOCK，禁止覆盖 Tag。消费该标准的 AI-Hub / AI-KB / SideCar / VTIP 仍须独立完成各自真实生产验收。
