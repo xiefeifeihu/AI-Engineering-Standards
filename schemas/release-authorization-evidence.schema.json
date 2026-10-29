@@ -21,7 +21,10 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "1.0.0"
+      "enum": [
+        "1.0.0",
+        "1.1.0"
+      ]
     },
     "release_profile": {
       "enum": [
@@ -197,7 +200,8 @@
               "BACKUP_AND_RESTORE_VERIFIED",
               "ROLLBACK_READY",
               "CONTROLLED_WSL_EXECUTOR",
-              "HEALTH_AND_SMOKE_RUNNABLE"
+              "HEALTH_AND_SMOKE_RUNNABLE",
+              "MAIN_COMMIT_VERIFIED"
             ]
           },
           "status": {
@@ -279,7 +283,10 @@
                 "contains": {
                   "properties": {
                     "gate_id": {
-                      "const": "PR_MERGED"
+                      "enum": [
+                        "PR_MERGED",
+                        "MAIN_COMMIT_VERIFIED"
+                      ]
                     }
                   },
                   "required": [
@@ -483,6 +490,94 @@
               "MAINTAINER_APPROVAL",
               "GITHUB_ENVIRONMENT_REVIEW"
             ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "schema_version",
+          "approval_source"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": "1.1.0"
+          },
+          "approval_source": {
+            "const": "AUTO_AFTER_GREEN"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "machine_gates": {
+            "contains": {
+              "properties": {
+                "gate_id": {
+                  "const": "MAIN_COMMIT_VERIFIED"
+                }
+              },
+              "required": [
+                "gate_id"
+              ]
+            },
+            "not": {
+              "contains": {
+                "properties": {
+                  "gate_id": {
+                    "const": "PR_MERGED"
+                  }
+                },
+                "required": [
+                  "gate_id"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "schema_version",
+          "approval_source"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": "1.0.0"
+          },
+          "approval_source": {
+            "const": "AUTO_AFTER_GREEN"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "machine_gates": {
+            "contains": {
+              "properties": {
+                "gate_id": {
+                  "const": "PR_MERGED"
+                }
+              },
+              "required": [
+                "gate_id"
+              ]
+            },
+            "not": {
+              "contains": {
+                "properties": {
+                  "gate_id": {
+                    "const": "MAIN_COMMIT_VERIFIED"
+                  }
+                },
+                "required": [
+                  "gate_id"
+                ]
+              }
+            }
           }
         }
       }

@@ -1,5 +1,5 @@
-﻿{
-  "schema_version": "1.1.0",
+{
+  "schema_version": "1.2.0",
   "release_profile": "PERSONAL_LOCAL",
   "repository": "example/service",
   "branch": "main",
@@ -11,7 +11,7 @@
     "enabled": true,
     "target_environment": "local_wsl",
     "required_gates": [
-      "PR_MERGED",
+      "MAIN_COMMIT_VERIFIED",
       "REMOTE_CI_PASS",
       "AUTOMATED_TESTS_PASS",
       "PLAYWRIGHT_PASS",

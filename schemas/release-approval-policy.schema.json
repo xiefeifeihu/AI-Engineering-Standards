@@ -17,7 +17,8 @@
     "schema_version": {
       "enum": [
         "1.0.0",
-        "1.1.0"
+        "1.1.0",
+        "1.2.0"
       ]
     },
     "release_profile": {
@@ -195,7 +196,8 @@
               "BACKUP_AND_RESTORE_VERIFIED",
               "ROLLBACK_READY",
               "CONTROLLED_WSL_EXECUTOR",
-              "HEALTH_AND_SMOKE_RUNNABLE"
+              "HEALTH_AND_SMOKE_RUNNABLE",
+              "MAIN_COMMIT_VERIFIED"
             ]
           },
           "maxItems": 10,
@@ -439,6 +441,40 @@
           "required": [
             "auto_after_green"
           ]
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "schema_version",
+          "approval_mode"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": "1.2.0"
+          },
+          "approval_mode": {
+            "const": "AUTO_AFTER_GREEN"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "auto_after_green": {
+            "properties": {
+              "required_gates": {
+                "contains": {
+                  "const": "MAIN_COMMIT_VERIFIED"
+                },
+                "not": {
+                  "contains": {
+                    "const": "PR_MERGED"
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
