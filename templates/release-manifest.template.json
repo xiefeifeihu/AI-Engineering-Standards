@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/xiefeifeihu/AI-Engineering-Standards/main/schemas/release-engineering.schema.json",
   "standard": "STD-032",
-  "version": "2.7.0",
+  "version": "2.9.2",
   "service_name": "example-service",
   "release_version": "1.0.0",
   "source_commit": "NOT_VERIFIABLE",
@@ -18,15 +18,20 @@
   ],
   "approval_evidence": {
     "approval_token_id": "appr-token-uuid",
-    "one_time_release_task_id": "TASK-ID",
+    "one_time_release_task_id": "TASK-ID-UNIQUE-ONCE",
     "approver": null,
-    "status": "OWNER_LOCAL_CONSENT_RECORDED",
+    "status": "WAITING_OWNER_AUTHORIZATION",
     "integrity_hash": null,
     "verification_source": "OWNER_LOCAL_CONSENT",
     "target_branch": "main",
     "target_commit": null,
     "package_digest": null,
-    "expires_at": null
+    "expires_at": null,
+    "approval_source": "OWNER_LOCAL_CONSENT",
+    "artifact_identity": {
+      "kind": "LOCAL_DOCKER_IMAGE_ID",
+      "value": "sha256:<FULL_64_HEX_IMAGE_ID>"
+    }
   },
   "artifacts": [
     {
