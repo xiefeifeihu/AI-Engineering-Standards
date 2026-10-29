@@ -126,6 +126,7 @@ class ApprovalContractTests(unittest.TestCase):
         policy['release_profile'] = 'PERSONAL_LOCAL'
         policy['approval_mode'] = 'OWNER_LOCAL_CONSENT'
         self.assertNotIn('local_authorized_key', policy)
+        policy['owner_consent'] = {'operator_identity': 'local-owner', 'confirmation_channel': 'terminal_prompt', 'require_explicit_consent': True}
         self.policy_validator.validate(policy)
 
     def test_high_assurance_cannot_use_owner_consent(self):
