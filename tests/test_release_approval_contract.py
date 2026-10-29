@@ -396,5 +396,44 @@ class ApprovalContractTests(unittest.TestCase):
         self.assertTrue(list(self.policy_validator.iter_errors(bad)))
 
 
+    def test_120_policy_no_pr_main_commit_gate(self):
+        policy=copy.deepcopy(self.policy)
+        policy['schema_version']='1.2.0'
+        policy['release_profile']='PERSONAL_LOCAL'
+        policy['approval_mode']='AUTO_AFTER_GREEN'
+        gates=['MAIN_COMMIT_VERIFIED','REMOTE_CI_PASS','AUTOMATED_TESTS_PASS',
+               'PLAYWRIGHT_PASS','SECRETS_SCAN_PASS','SOURCE_BUILD_COMMIT_UNAMBIGUOUS',
+               'BACKUP_AND_RESTORE_VERIFIED','ROLLBACK_READY',
+               'CONTROLLED_WSL_EXECUTOR','HEALTH_AND_SMOKE_RUNNABLE']
+        policy['auto_after_green']={'enabled':True,'target_environment':'local_wsl','required_gates':gates}
+        self.policy_validator.validate(policy)
+        bad=copy.deepcopy(policy)
+        bad['auto_after_green']['required_gates'][0]='PR_MERGED'
+        self.assertTrue(list(self.policy_validator.iter_errors(bad)), 'v1.2 policy MUST reject legacy PR requirement')
+        bad=copy.deepcopy(policy)
+        bad['auto_after_green']['required_gates'][0]='REMOTE_CI_PASS'
+        self.assertTrue(list(self.policy_validator.iter_errors(bad)), 'new gate cannot be omitted')
+
+    def test_110_auto_evidence_no_pr_gate(self):
+        v=validator('release-authorization-evidence.schema.json')
+        gates=['MAIN_COMMIT_VERIFIED','REMOTE_CI_PASS','AUTOMATED_TESTS_PASS',
+               'PLAYWRIGHT_PASS','SECRETS_SCAN_PASS','SOURCE_BUILD_COMMIT_UNAMBIGUOUS',
+               'BACKUP_AND_RESTORE_VERIFIED','ROLLBACK_READY',
+               'CONTROLLED_WSL_EXECUTOR','HEALTH_AND_SMOKE_RUNNABLE']
+        item=dict(schema_version='1.1.0', release_profile='PERSONAL_LOCAL',
+            approval_source='AUTO_AFTER_GREEN', repository='example/service',
+            target_commit='a'*40, target_branch='main', target_version='2.10.0',
+            one_time_release_task_id='std-032-no-pr-001',
+            artifact_identity={'kind':'LOCAL_DOCKER_IMAGE_ID','value':'sha256:'+'b'*64},
+            approved_at='2026-10-29T00:00:00Z', expires_at='2026-10-29T01:00:00Z',
+            operator_identity='local-executor',status='AUTO_AFTER_GREEN_VERIFIED',
+            machine_gates=[{'gate_id':g,'status':'PASS','evidence_ref':'evidence/'+g} for g in gates])
+        v.validate(item)
+        bad=copy.deepcopy(item);bad['machine_gates'][0]['gate_id']='PR_MERGED'
+        self.assertTrue(list(v.iter_errors(bad)), 'new evidence cannot rely on PR_MERGED')
+        bad=copy.deepcopy(item);bad['machine_gates'].pop()
+        self.assertTrue(list(v.iter_errors(bad)), 'ten real gates remain mandatory')
+
+
 if __name__ == '__main__':
     unittest.main()

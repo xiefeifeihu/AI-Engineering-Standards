@@ -7,9 +7,6 @@ on:
       - "fix/**"
       - "main"
       - "codex/**"
-  pull_request:
-    branches:
-      - "main"
   workflow_dispatch:
 
 jobs:

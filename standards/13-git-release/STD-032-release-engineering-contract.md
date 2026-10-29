@@ -110,8 +110,6 @@ SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACK
    - **`G7 RELEASE_TAG_AND_VERIFY`**（标签固化与独立核验）：生产验收确认后推送正式 Tag（`v<VERSION>`），并通过独立的 `git rev-parse` 核实五态一致（`TAG_COMMIT == LIVE_COMMIT`）。
 3. **真实性与不可伪造性要求**：无论采用 12 阶段还是 7 组门禁，每个阶段/门禁必须记录真实 `started_at`、`finished_at`、`exit_code`、`input_commit`、`output_digest`、`evidence_ref` 与状态。必须区分部署前候选测试与部署后真实环境测试，严禁伪造耗时、以历史日志替代当次运行或填充未运行阶段为 `PASS`。
 
-## 3. 全局 Fail-Closed 门禁与时序契约 (Fail-Closed Gate & Ordering Contract)
-
 ### 2.2 两阶段自动化测试与最终判定（强制）
 
 1. **第一阶段：`PRE_RELEASE_QUALIFICATION`**。在任何生产写操作前执行候选版本的单元、契约、集成、安全、必要的浏览器 E2E、备份隔离恢复与构建一致性检查；**目标是判断是否允许部署**，而非证明实际生产业务已可用。完成后仅产生 `PRE_RELEASE_STATUS`，必须保留真实执行日志、Commit、制品身份与运行环境；失败一票否决。
@@ -123,6 +121,8 @@ SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACK
 7. **没有长期运行服务的 Standards/文档/静态制品**：可显式声明 `deployment_kind=NON_RUNTIME_ARTIFACT` 并采用正式发布目标的真实制品/Schema/消费端契约验证；不能伪装执行过容器生产 E2E。正式测试范围之外的跨项目运行效果另记为 `DEFERRED`，不作为纯规范制品自身的运行服务测试。
 
 
+
+## 3. 全局 Fail-Closed 门禁与时序契约 (Fail-Closed Gate & Ordering Contract)
 
 ### 3.1 全局 Fail-Closed 中止法则
 1. **前置门禁阻断法则**：若流水线前置任一强制阶段（`SOURCE`/`CODE`、`DEV_TEST`、`SECURITY_SCAN`、`BUILD`、`PACKAGE`、`PUBLISH`、`RELEASE_APPROVAL`）判定为 `FAIL` 或 `BLOCK`，流水线 **MUST** 立即执行全局 Fail-Closed 中止，**MUST NOT** 继续执行 `DEPLOY` 等具有破坏性或写操作的后续阶段。
