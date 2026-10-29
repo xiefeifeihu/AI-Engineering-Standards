@@ -332,5 +332,68 @@ class ApprovalContractTests(unittest.TestCase):
         rel_eng_validator.validate(sample)
 
 
+    def test_personal_local_evidence_is_distinct_from_signed_envelope(self):
+        v = validator('release-authorization-evidence.schema.json')
+        item = dict(schema_version='1.0.0', release_profile='PERSONAL_LOCAL',
+            approval_source='OWNER_LOCAL_CONSENT', repository='example/service',
+            target_commit='a'*40, target_branch='main', target_version='1.0.0',
+            one_time_release_task_id='task-001',
+            artifact_identity={'kind':'LOCAL_DOCKER_IMAGE_ID','value':'sha256:'+'b'*64},
+            approved_at='2026-10-29T00:00:00Z', expires_at='2026-10-29T01:00:00Z',
+            operator_identity='owner', status='OWNER_LOCAL_CONSENT_RECORDED',
+            owner_consent={'session_ref':'trusted-session-001','trusted_interaction_ref':'local-owner-001','decision':'APPROVED'})
+        v.validate(item)
+        for bad_field in ('owner_consent', 'one_time_release_task_id', 'artifact_identity'):
+            bad=copy.deepcopy(item);bad.pop(bad_field)
+            self.assertTrue(list(v.iter_errors(bad)))
+        bad=copy.deepcopy(item);bad['release_profile']='HIGH_ASSURANCE'
+        self.assertTrue(list(v.iter_errors(bad)))
+        bad=copy.deepcopy(item);bad['artifact_identity']={'kind':'REGISTRY_REPODIGEST','value':'sha256:'+'b'*64}
+        self.assertTrue(list(v.iter_errors(bad)))
+        self.assertTrue(list(self.envelope_validator.iter_errors(item)))
+
+    def test_auto_after_green_requires_all_ten_actual_gate_evidence(self):
+        v=validator('release-authorization-evidence.schema.json')
+        gates=['PR_MERGED','REMOTE_CI_PASS','AUTOMATED_TESTS_PASS','PLAYWRIGHT_PASS',
+               'SECRETS_SCAN_PASS','SOURCE_BUILD_COMMIT_UNAMBIGUOUS',
+               'BACKUP_AND_RESTORE_VERIFIED','ROLLBACK_READY',
+               'CONTROLLED_WSL_EXECUTOR','HEALTH_AND_SMOKE_RUNNABLE']
+        item=dict(schema_version='1.0.0', release_profile='PERSONAL_LOCAL',
+            approval_source='AUTO_AFTER_GREEN', repository='example/service',
+            target_commit='a'*40, target_branch='main', target_version='1.0.0',
+            one_time_release_task_id='task-001',
+            artifact_identity={'kind':'LOCAL_DOCKER_IMAGE_ID','value':'sha256:'+'b'*64},
+            approved_at='2026-10-29T00:00:00Z', expires_at='2026-10-29T01:00:00Z',
+            operator_identity='local-executor',status='AUTO_AFTER_GREEN_VERIFIED',
+            machine_gates=[{'gate_id':g,'status':'PASS','evidence_ref':'evidence/'+g} for g in gates])
+        v.validate(item)
+        for i in range(10):
+            bad=copy.deepcopy(item);bad['machine_gates'].pop(i)
+            self.assertTrue(list(v.iter_errors(bad)))
+        bad=copy.deepcopy(item);bad['machine_gates'][0]['status']='BLOCK'
+        self.assertTrue(list(v.iter_errors(bad)))
+        bad=copy.deepcopy(item);bad['machine_gates'][0]['gate_id']=gates[1]
+        self.assertTrue(list(v.iter_errors(bad)))
+        bad=copy.deepcopy(item);bad['machine_gates']=[]
+        self.assertTrue(list(v.iter_errors(bad)))
+        bad=copy.deepcopy(item);bad['approval_source']='OWNER_LOCAL_CONSENT'
+        self.assertTrue(list(v.iter_errors(bad)))
+
+    def test_policy_auto_after_green_requires_full_ten_gate_set(self):
+        policy=copy.deepcopy(self.policy)
+        policy.update(schema_version='1.1.0', release_profile='PERSONAL_LOCAL', approval_mode='AUTO_AFTER_GREEN')
+        gates=['PR_MERGED','REMOTE_CI_PASS','AUTOMATED_TESTS_PASS','PLAYWRIGHT_PASS',
+               'SECRETS_SCAN_PASS','SOURCE_BUILD_COMMIT_UNAMBIGUOUS','BACKUP_AND_RESTORE_VERIFIED',
+               'ROLLBACK_READY','CONTROLLED_WSL_EXECUTOR','HEALTH_AND_SMOKE_RUNNABLE']
+        policy['auto_after_green']={'enabled':True,'target_environment':'local_wsl','required_gates':gates}
+        self.policy_validator.validate(policy)
+        bad=copy.deepcopy(policy);bad['auto_after_green']['enabled']=False
+        self.assertTrue(list(self.policy_validator.iter_errors(bad)))
+        bad=copy.deepcopy(policy);bad['auto_after_green']['required_gates'].pop()
+        self.assertTrue(list(self.policy_validator.iter_errors(bad)))
+        bad=copy.deepcopy(policy);bad['auto_after_green']['required_gates'][-1]=gates[0]
+        self.assertTrue(list(self.policy_validator.iter_errors(bad)))
+
+
 if __name__ == '__main__':
     unittest.main()
