@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0.0",
+  "repository": "example/service",
+  "release_version": "v1.0.0",
+  "target_commit": "NOT_VERIFIABLE",
+  "deployment_kind": "SERVICE",
+  "pre_release": {
+    "status": "BLOCK",
+    "run_id": "NOT_RUN",
+    "tested_commit": "NOT_VERIFIABLE",
+    "evidence_ref": "PENDING_REAL_TEST",
+    "finished_at": "2026-10-29T00:00:00Z"
+  },
+  "deployment": {
+    "status": "BLOCK"
+  },
+  "post_deploy": {
+    "status": "BLOCK"
+  },
+  "overall_status": "BLOCK",
+  "release_task_id": "REPLACE_ON_EXECUTION"
+}
