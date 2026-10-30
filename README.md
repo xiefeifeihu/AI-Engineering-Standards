@@ -1,14 +1,14 @@
-# AI Engineering Standards (V2.10.0)
+# AI Engineering Standards (V2.11.0)
 
 Canonical engineering standards shared across local AI / Vibe Coding projects.
 
 本项目是开发机跨工程共享的架构标准规范库（Source of Truth），定义网络通信、推理资源共享、智能体接入、上下文管理与工程协作标准。
 
 ```text
-STANDARDS_VERSION=2.10.0
+STANDARDS_VERSION=2.11.0
 STATUS=RELEASED
 BASELINE=AI-ENGINEERING-PLATFORM-V1-001
-LAST_UPDATED=2026-10-29
+LAST_UPDATED=2026-10-30
 ```
 
 ---
@@ -30,8 +30,8 @@ LAST_UPDATED=2026-10-29
 | [`STD-011`](./standards/08-model-governance/STD-011-application-consumer-contract.md) | **Application Consumer Contract** | 候选方案消费、Hub 非单点故障与双重兜底 |
 | [`STD-012`](./standards/10-runtime-boundary/STD-012-windows-wsl-docker-boundary.md) | **Runtime Boundary Standard** | Windows / WSL / Docker 运行时互联边界 |
 | [`STD-013`](./standards/09-observability/STD-013-observability-logging.md) | **Logging & Observability** | 统一审计中心事件格式与 UTC 时间存储 |
-| [`STD-014`](./standards/11-testing/STD-014-testing-standard.md) | **Testing Standard** | 跨项目分层测试与非破坏性原则 |
-| [`STD-015`](./standards/12-acceptance/STD-015-playwright-acceptance.md) | **Playwright Acceptance Standard**| 自动化 UI 验收、多主题与视频截图证据 |
+| [`STD-014`](./standards/11-testing/STD-014-testing-standard.md) | **Testing Standard** | 跨项目分层测试、AI自主测试设计闭环与持续用例基线治理 |
+| [`STD-015`](./standards/12-acceptance/STD-015-playwright-acceptance.md) | **Playwright Acceptance Standard**| 自动化 UI 验收、业务闭环强断言、多主题与视频截图证据 |
 | [`STD-016`](./standards/12-acceptance/STD-016-acceptance-evidence-zip.md) | **Acceptance Evidence ZIP** | 独立工程阶段交付物压缩包标准 |
 | [`STD-017`](./standards/13-git-release/STD-017-git-release-versioning.md) | **Git Release & Versioning** | 独立 Git 仓库提交、干净工作区与 SemVer |
 | [`STD-018`](./standards/14-ui-diagnostics/STD-018-ui-diagnostics-enum-presentation.md) | **UI Diagnostics & Presentation** | 内部大写英文枚举向纯简体中文界面的映射规范 |
@@ -43,35 +43,43 @@ LAST_UPDATED=2026-10-29
 | [`STD-024`](./standards/08-model-governance/STD-024-model-ops-autopilot-governance-contract.md) | **Model Ops Autopilot Governance** | 模型自发现、能力分级验证、生命周期状态机与影子治理契约 |
 | [`STD-025`](./standards/08-model-governance/STD-025-owner-action-execution-contract.md) | **Owner Action Execution Contract** | 控制平面决策、Resource Owner 校验执行、独占租约、幂等恢复、零敏感凭据、事实结果与 Hub 独立验证 |
 | [`STD-026`](./standards/08-model-governance/STD-026-model-scout-and-challenger-contract.md) | **Model Scout and Challenger Contract** | 候选模型侦察源注册、可用性分级、公正挑战战役、冻结公平性规范、微基准测试、记忆衰减与晋升建议 |
-
 | [`STD-031`](./standards/12-acceptance/STD-031-runtime-acceptance-contract.md) | **Runtime Acceptance Contract** | 跨项目运行时验收契约、技术中立探针与统一验收报文 |
 | [`STD-032`](./standards/13-git-release/STD-032-release-engineering-contract.md) | **AI Platform Release Engineering Contract** | 12阶段发布生命周期、五态Commit一致性、强制门禁、Artifact与Git Tag及回滚规范 |
 | [`STD-033`](./standards/12-acceptance/STD-033-platform-verification-governance.md) | **Platform Verification Governance** | 跨项目平台验证中心、五维运行时验收矩阵、统一工程生命周期契约 (14阶段)、证据Schema与验证大盘治理 |
 | [`STD-034`](./standards/00-governance/STD-034-coding-agent-execution-governance.md) | **Coding Agent Execution Governance** | 跨工程编程智能体规则契约 (`AGENTS.md`/`CLAUDE.md`)、Thin Reference、Preflight、任务追踪、唯一打包器与 CI 强制机器门禁 |
-| [`STD-035`](./standards/17-documentation/STD-035-documentation-lifecycle.md) | **Documentation Lifecycle & Baseline** | 全生命周期工程文档规范、11类文档契约、最新全量与历史归档双重治理 |
+| [`STD-035`](./standards/17-documentation/STD-035-documentation-lifecycle.md) | **Documentation Lifecycle & Baseline** | 全生命周期工程文档规范、12类文档契约、最新全量与历史归档双重治理 |
 
 ---
 
 ## 2. 机器可读 JSON Schemas (`schemas/`)
 
-规范库提供 20 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
-- `schemas/engineering-manifest.schema.json`
-- `schemas/resource.schema.json`
-- `schemas/endpoint.schema.json`
+规范库提供 26 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
+- `schemas/audit-event.schema.json`
 - `schemas/canonical-action.schema.json`
+- `schemas/coding-agent-outcome.schema.json`
+- `schemas/coding-gateway.schema.json`
+- `schemas/documentation-metadata.schema.json`
+- `schemas/endpoint.schema.json`
+- `schemas/engineering-manifest.schema.json`
+- `schemas/model-feedback.schema.json`
+- `schemas/model-ops-autopilot.schema.json`
 - `schemas/model-registry.schema.json`
 - `schemas/model-routing-request.schema.json`
 - `schemas/model-routing-response.schema.json`
-- `schemas/model-feedback.schema.json`
-- `schemas/audit-event.schema.json`
-- `schemas/coding-gateway.schema.json`
-- `schemas/coding-agent-outcome.schema.json`
-- `schemas/model-ops-autopilot.schema.json`
-- `schemas/owner-action-execution.schema.json`
 - `schemas/model-scout-challenger.schema.json`
-- `schemas/runtime-acceptance.schema.json`
-- `schemas/release-engineering.schema.json`
+- `schemas/model-supply-autopilot.schema.json`
+- `schemas/owner-action-execution.schema.json`
 - `schemas/platform-verification.schema.json`
+- `schemas/release-approval-policy.schema.json`
+- `schemas/release-approval.schema.json`
+- `schemas/release-authorization-evidence.schema.json`
+- `schemas/release-engineering.schema.json`
+- `schemas/resource.schema.json`
+- `schemas/runtime-acceptance.schema.json`
+- `schemas/safe-autonomous-promotion.schema.json`
+- `schemas/test-coverage-verification.schema.json`
+- `schemas/two-stage-release-acceptance.schema.json`
+- `schemas/unified-ai-capability-platform.schema.json`
 
 ---
 
@@ -88,6 +96,16 @@ LAST_UPDATED=2026-10-29
 
 - [`Cloud CPA 隧道旧管理脚本废弃说明`](./deprecated/CLOUD-CPA-TUNNEL-DEPRECATED.md)（替代脚本：`scripts/cpa/cloud-cpa-tunnel.cmd`）
 
+---
+
+## v2.11.0 治理更新（2026-10-30）
+
+- **AI 智能体自主测试设计契约 (STD-014 / STD-034)**：智能体在编码前自动读取 8 项核心事实源，自主执行 13 阶段闭环测试流程，不再依赖用户逐条提出测试用例。
+- **持续测试用例基线规范 (STD-035)**：统一在 `docs/TEST-ACCEPTANCE.md` 中维护测试策略、需求映射、稳定 Case ID、断言严格度与历史缺陷复现回归矩阵。
+- **业务终态强断言准则**：正向业务强制验证真实业务成功终态，严禁将 `BLOCK`、`CONFIGURED`、`MOCK_ONLY` 或单纯 `HTTP 200` 判定为 PASS；负向用例强制验证预期阻断与降级。
+- **十项反造假机器门禁**：提供 `schemas/test-coverage-verification.schema.json` 与 `tools/validate_test_coverage.py`，自动识别并拦截正向伪造、测试未运行、生产 Mock 冒充、候选端口伪装、弱化断言、报错截图及静默移除历史用例。
+
+---
 
 ## v2.10.0 治理更新（2026-10-29）
 

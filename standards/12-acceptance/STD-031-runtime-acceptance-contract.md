@@ -2,12 +2,12 @@
 
 ```text
 STANDARD_ID=STD-031
-VERSION=2.2.0
+VERSION=2.11.0
 STATUS=ACTIVE
 SCOPE=跨项目生产级运行时验收契约 (AI-Hub, AI-KB, Sidecar, VTIP)、统一生命周期阶段 (SOURCE, BUILD, PACKAGE, DEPLOY, RUNTIME_VERIFY, SMOKE_TEST, PRODUCTION_READY)、技术中立性探针 (严禁绑定Docker)、统一验收报文与组件故障隔离
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-10-12
-RELATED_STANDARDS=STD-001, STD-005, STD-012, STD-014, STD-015, STD-017, STD-030
+LAST_UPDATED=2026-10-30
+RELATED_STANDARDS=STD-001, STD-005, STD-012, STD-014, STD-015, STD-017, STD-030, STD-032, STD-033, STD-034, STD-035
 ```
 
 ### 规范性关键词说明 (Normative Keywords)
@@ -75,10 +75,12 @@ SOURCE ──► BUILD ──► PACKAGE ──► DEPLOY ──► RUNTIME_VERI
 
 ---
 
-## 2.1 生产部署后真实业务验收优先级（STD-014 双阶段对齐）
+## 2.1 生产部署后真实业务验收优先级与持续用例门禁（STD-014 / STD-034 对齐）
 
 - `SOURCE/BUILD/PACKAGE` 及部署前候选测试属于 `PRE_RELEASE_QUALIFICATION`，结论仅为允许部署，不等于生产就绪。
 - 运行态 `RUNTIME_VERIFY` 成功后必须执行 `POST_DEPLOY_REAL_ACCEPTANCE`。它使用当前真实生产入口运行非破坏性自动化用户旅程，包括必要的浏览器交互、模型推理、真实业务输出断言以及关键依赖与异常路径核验；真实成本、授权和副作用必须受控。
+- **P0 关键用例与覆盖契约对齐**：`PRODUCTION_READY` 终态要求所有在 `docs/TEST-ACCEPTANCE.md` 中标记为必测的 P0 Case ID，必须具备与当前 `LIVE_COMMIT` 绑定的真实执行记录与原始证据（`schemas/test-coverage-verification.schema.json`）。
+- **严禁 Mock 与候选端口冒充**：严禁使用 Mock 数据或候选开发端口（如 8000、8080、3000）的执行记录冒充生产运行时验收。若存在正向业务返回 BLOCK/CONFIGURED 或关键 P0 缺失，`runtime_acceptance` 必须判定为 `false`，禁止发布。
 - `PRODUCTION_READY` 必须同时满足发布前全部硬门禁 PASS、部署后真实功能验收 PASS、Live 身份一致。HTTP 200/健康检查/存在截图均不充分。若 POST_DEPLOY FAIL 或关键路径 NOT_VERIFIABLE，不得将 `runtime_acceptance=true` 用于生产交付裁决。
 - 自动化能替代已覆盖操作的重复人工验证，但未覆盖、主观业务质量、人工采纳与高风险写入必须记录 `DEFERRED`，不能虚构 PASS。无服务的规范库等允许显式 `NON_RUNTIME_ARTIFACT` 路径。
 

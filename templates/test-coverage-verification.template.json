@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "TASK-2026-CORE-001",
+  "target_commit": "ba25353ec0f2ba28f187a356ebaeda0cb13e2edd",
+  "standards_version": "v2.11.0",
+  "run_id": "run-20261030-001",
+  "stage": "PRE_RELEASE",
+  "tested_commit": "ba25353ec0f2ba28f187a356ebaeda0cb13e2edd",
+  "impact_analysis": {
+    "impacted_requirements": [
+      "REQ-ROUTING-MODEL-SELECTION",
+      "REQ-GATEWAY-AUTH-TOKEN"
+    ],
+    "change_summary": "新增模型路由权重校验及网关认证容灾逻辑",
+    "impacted_components": [
+      "app/router.py",
+      "app/coding_gateway.py"
+    ],
+    "risk_level": "HIGH"
+  },
+  "required_case_ids": [
+    "TC-CORE-ROUTING-001",
+    "TC-GATEWAY-AUTH-001"
+  ],
+  "cases": [
+    {
+      "case_id": "TC-CORE-ROUTING-001",
+      "requirement_ref": "REQ-ROUTING-MODEL-SELECTION",
+      "priority": "P0",
+      "test_kind": "POSITIVE",
+      "execution_mode": "AUTOMATED_UNIT",
+      "stage": "PRE_RELEASE",
+      "test_path": "tests/test_router.py",
+      "test_name": "test_routing_model_selection_high_quality",
+      "status": "PASS",
+      "business_outcome": "SUCCESS",
+      "is_mocked": false,
+      "tested_commit": "ba25353ec0f2ba28f187a356ebaeda0cb13e2edd",
+      "outcome_assertion": "assert selected_model == 'champion' and decision_id is not None",
+      "assertion_strength": "STRONG_BUSINESS_OUTCOME",
+      "evidence_ref": ".artifacts/acceptance/TASK-2026-CORE-001/v1.0.0/test_results.txt",
+      "has_ui_error": false,
+      "notes": "Positive routing test verifying exact model assignment"
+    },
+    {
+      "case_id": "TC-GATEWAY-AUTH-001",
+      "requirement_ref": "REQ-GATEWAY-AUTH-TOKEN",
+      "priority": "P0",
+      "test_kind": "NEGATIVE",
+      "execution_mode": "AUTOMATED_CONTRACT",
+      "stage": "PRE_RELEASE",
+      "test_path": "tests/test_gateway_contract.py",
+      "test_name": "test_gateway_auth_negative_invalid_token",
+      "status": "PASS",
+      "business_outcome": "BLOCK",
+      "is_mocked": false,
+      "tested_commit": "ba25353ec0f2ba28f187a356ebaeda0cb13e2edd",
+      "outcome_assertion": "assert response.status_code == 401 and response.json()['detail'] == 'INVALID_TOKEN'",
+      "assertion_strength": "STRONG_BUSINESS_OUTCOME",
+      "evidence_ref": ".artifacts/acceptance/TASK-2026-CORE-001/v1.0.0/test_results.txt",
+      "has_ui_error": false,
+      "notes": "Negative authentication test asserting strict 401 block on invalid credential"
+    }
+  ],
+  "retired_cases": [],
+  "uncovered_p0_gaps": [],
+  "regression_cases": [
+    {
+      "case_id": "TC-CORE-ROUTING-001",
+      "defect_id": "BUG-2026-089",
+      "status": "PASS",
+      "evidence_ref": ".artifacts/acceptance/TASK-2026-CORE-001/v1.0.0/test_results.txt"
+    }
+  ],
+  "overall_status": "PASS"
+}

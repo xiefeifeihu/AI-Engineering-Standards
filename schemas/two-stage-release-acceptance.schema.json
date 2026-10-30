@@ -74,6 +74,11 @@
         "finished_at": {
           "type": "string",
           "format": "date-time"
+        },
+        "coverage_verification_ref": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 1024
         }
       }
     },
@@ -242,6 +247,11 @@
         "evidence_ref": {
           "type": "string",
           "minLength": 8,
+          "maxLength": 1024
+        },
+        "coverage_verification_ref": {
+          "type": "string",
+          "minLength": 5,
           "maxLength": 1024
         }
       }

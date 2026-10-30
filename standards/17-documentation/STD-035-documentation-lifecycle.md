@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-035
-VERSION=2.9.1
+VERSION=2.11.0
 STATUS=ACTIVE
 SCOPE=全平台受管工程仓库 (AI-Engineering-Hub, AI-Engineering-Standards, AI-KB, vtip-ai-sidecar, vtip-platform-catalog 及未来所有受管项目)
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-10-27
+LAST_UPDATED=2026-10-30
 ```
 
 ### 规范性关键词说明 (Normative Keywords)
@@ -112,6 +112,12 @@ primary_entrypoint: true
 1. **归档目录规范**：历史快照应按发布版本存放于 `docs/archive/<VERSION>/`。
 2. **只读保护**：归档目录中的历史文档其 `status` **MUST** 为 `ARCHIVED` 或 `SUPERSEDED`，且 `primary_entrypoint` **MUST** 为 `false`。
 3. **禁止静默删除**：在整理清理过时文档时，**MUST NOT** 直接删除承载历史产品决策的文档，必须先登记在 `DOCUMENT-INDEX.md` 并移动至 `docs/archive/` 留存。
+
+### 4.5 测试验收基线演进机制 (TEST_ACCEPTANCE)
+1. **最新全量事实源**：工程测试基线 **MUST** 始终在 docs/TEST-ACCEPTANCE.md 中保持最新全量，汇总四层测试策略、产品需求与用例映射、稳定 Case ID 清单、业务强断言规则与历史缺陷回归矩阵。
+2. **持续闭环更新**：每次功能迭代、接口变更或 Bug 修复，智能体 **MUST** 同步新增或更新对应 Case ID 与执行结果，递增文档版本，严禁仅修改代码而不维护测试基线。
+3. **历史归档回溯**：重大里程碑版本的测试基线快照归档至 docs/archive/<VERSION>/，支持历史版本回归追溯与比对。
+
 
 ---
 

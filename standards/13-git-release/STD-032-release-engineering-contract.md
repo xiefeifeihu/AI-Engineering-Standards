@@ -2,12 +2,12 @@
 
 ```text
 STANDARD_ID=STD-032
-VERSION=2.10.0
+VERSION=2.11.0
 STATUS=ACTIVE
 SCOPE=跨项目生产级 CI/CD 与发布工程契约、统一 ReleaseProfile 分级发布架构 (PERSONAL_LOCAL, MAINTAINER_RELEASE, HIGH_ASSURANCE) (AI-Engineering-Hub, AI-KB, vtip-ai-sidecar, vtip-platform-catalog)、12阶段标准发布流水线、审批交接契约、多部署模式适配、五态Commit一致性证明、强制自动化门禁、制品不可变性与技术中立回滚契约
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-10-29
-RELATED_STANDARDS=STD-001, STD-007, STD-014, STD-016, STD-017, STD-019, STD-030, STD-031, STD-033, STD-034
+LAST_UPDATED=2026-10-30
+RELATED_STANDARDS=STD-001, STD-007, STD-014, STD-015, STD-016, STD-017, STD-019, STD-030, STD-031, STD-033, STD-034, STD-035
 ```
 
 ### 规范性关键词说明 (Normative Keywords)
@@ -32,8 +32,8 @@ RELATED_STANDARDS=STD-001, STD-007, STD-014, STD-016, STD-017, STD-019, STD-030,
      2) `AUTO_AFTER_GREEN`（全绿自动化发布模式）：个人本机明确声明的自动部署策略。不强制每次人工交互弹窗，但必须在以下 **10 项全绿门禁 (10 Mandatory Green Gates)** 全部无条件满足并完成机器取证后，才允许受控执行器自动推进生产部署与冒烟验收：
         - **门禁 1 (MAIN_COMMIT_VERIFIED)**：真实 GitHub 远端 `main` HEAD 与拟发布精确 40 位 Commit 严格一致；本地 `main` 已同步并通过源码与工作区状态审计。**不检查 PR、也不把 PR 当作强制阶段**。
         - **门禁 2 (REMOTE_CI_PASS)**：**发布目标 `main` Commit** 对应的 GitHub Actions 远端 CI 必须实际完成且 `conclusion=success`；功能分支 CI 不能替代。
-        - **门禁 3 (AUTOMATED_TESTS_PASS)**：发布前独立候选环境中，单元、契约、集成与适用的端到端测试真实执行且通过，保留原始日志。
-        - **门禁 4 (PLAYWRIGHT_PASS)**：涉及 UI 变更时在候选环境完成真实 Chromium/Playwright 自动化测试；无 UI 变更须提供可复核的范围判定并标明 `NOT_APPLICABLE`。此项仅说明发布前验证通过，不替代真实生产浏览器验收。
+        - **门禁 3 (AUTOMATED_TESTS_PASS)**：发布前独立候选环境中，单元、契约、集成与适用的端到端测试真实执行且通过，保留原始日志；必须同时满足持续测试覆盖验证（STD-014 / schemas/test-coverage-verification.schema.json），所有变更受影响需求与 P0 必测 Case ID 均有真实执行证据，正向业务无伪造通过，断言严格无弱化。
+        - **门禁 4 (PLAYWRIGHT_PASS)**：涉及 UI 变更时在候选环境完成真实 Chromium/Playwright 自动化测试（STD-015），断言操作闭环、无控制台未捕获报错并记录截图；无 UI 变更须提供可复核的范围判定并标明 NOT_APPLICABLE。此项仅说明发布前验证通过，不替代真实生产浏览器验收。
         - **门禁 5 (SECRETS_SCAN_PASS)**：严格执行 `STD-007` 零密钥门禁，无明文 API Key、Token、私钥泄露。
         - **门禁 6 (SOURCE_BUILD_COMMIT_UNAMBIGUOUS)**：`SOURCE_COMMIT`、`BUILD_COMMIT`、`TARGET_COMMIT` 标识明确且严格一致。
         - **门禁 7 (BACKUP_AND_RESTORE_VERIFIED)**：真实生产数据库完成快照备份，且在隔离环境中校验恢复可用。
@@ -88,7 +88,7 @@ SOURCE ──► DEV_TEST ──► SECURITY_SCAN ──► BUILD ──► PACK
 | 7 | `RELEASE_APPROVAL` | 生产发布审批门禁 | 校验结构化审批证据包（绑定仓库、分支、精确 Commit、制品 Digest、审批身份、一次性发布任务 ID）。无有效审批证据时 **MUST** 标记 `BLOCK` 并阻断后续发布。 |
 | 8 | `DEPLOY` | 受控部署与运行态就绪 | 在经批准的目标环境下，使用受控部署执行器将目标版本部署就绪，通过运行时技术中立探针验证存活。 |
 | 9 | `RUNTIME_VERIFY` | 运行态身份与一致性核验 | 严格校验运行态真实返回的身份：`LOCAL_HEAD == REMOTE_HEAD == BUILD_COMMIT == LIVE_COMMIT`（前置 Tag 未创建时允许 Tag 待创建状态）。 |
-| 10 | `SMOKE_TEST` | **第二阶段：部署后真实环境自动化验收** | 对已部署目标版本使用真实生产入口、真实网络/数据库/网关与必要的安全测试账号，执行非破坏性业务任务与浏览器交互并核查真实结果；不是仅 HTTP 200 或容器健康检查。 |
+| 10 | SMOKE_TEST | **第二阶段：部署后真实环境自动化验收** | 对已部署目标版本使用真实生产入口、真实网络/数据库/网关与必要的安全测试账号，执行非破坏性业务任务与浏览器交互并核查真实结果；必须完整执行 docs/TEST-ACCEPTANCE.md 中标记为 POST_DEPLOY 的 P0 关键用例，严禁使用 Mock 或候选开发端口冒充生产测试，断言实际业务响应。 |
 | 11 | `PRODUCTION_RELEASE` | 生产验收裁决与封版 | 发布前门禁必须全部通过；**最终真实可用性结论以第二阶段在当前 LIVE_COMMIT 下的自动化业务验收为准**，生成双阶段独立原始证据和统一裁决。任一失败不得给出总体 PASS。 |
 | 12 | `TAG` | 正式 Git Tag 固化与推送 | 生产验收确认后，创建正式语义化版本标签 `v<VERSION>` 锁定指向实际发布的精确 Commit，并推送至远端仓库。 |
 

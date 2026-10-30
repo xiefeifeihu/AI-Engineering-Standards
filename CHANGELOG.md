@@ -2,6 +2,38 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [2.11.0] - 2026-10-30
+
+### Added
+- **AI 智能体自主测试设计契约与闭环流程 (STD-014 / STD-034)**:
+  - 编码前自动读取 8 项核心事实源（蓝图、产品基线、架构、接口契约、测试基线、Diff、缺陷历史、上次验收报告）。
+  - 自主执行 13 阶段测试闭环，从需求影响分析到自动化测试、缺陷修复、回归与测试基线同步演进。
+  - 建立强断言严格度准则：正向业务强制验证真实业务成功终态，严禁将 BLOCK/CONFIGURED/MOCK_ONLY/HTTP 200 视为 PASS；负向用例强制验证预期阻断与降级。
+- **持续测试用例基线规范 (STD-035 / docs/TEST-ACCEPTANCE.md)**:
+  - 统一测试基线模板 (	emplates/documentation/TEST-ACCEPTANCE.template.md)，覆盖分层策略、产品需求映射、稳定 Case ID、断言严格度与历史缺陷复现回归矩阵。
+- **十项反造假机器门禁与覆盖验证契约**:
+  - 提供 schemas/test-coverage-verification.schema.json 覆盖报告机器契约。
+  - 提供校验器 	ools/validate_test_coverage.py，并在 	ests/test_ai_driven_test_governance.py 中完整覆盖 10 项反向欺诈场景校验。
+  - 模板与迁移指南：	emplates/test-coverage-verification.template.json 与 docs/migration/MIGRATION-GUIDE-AI-DRIVEN-TEST-GOVERNANCE-v2.11.0.md。
+
+### Changed
+- **STD-014**: 修正历史 9 个 Schema 旧文案为动态扫描所有在册 Schema；补充自主测试设计方法论与持续用例门禁。
+- **STD-015**: 消除 L2 CORE 混用冲突，锁定 Playwright 归属于 L3 DEEP 及两阶段验收；将 PR 触发变更为 UI/端到端变更或候选验证；增加前端操作五步闭环强断言。
+- **STD-031**: 运行时验收 PRODUCTION_READY 终态对齐 P0 关键用例与覆盖契约，严禁 Mock 或开发端口冒充生产。
+- **STD-032**: 完善 10 项全绿门禁中 Gate 3 (AUTOMATED_TESTS_PASS) 与 Gate 4 (PLAYWRIGHT_PASS) 的持续覆盖要求；SMOKE_TEST 阶段对齐 POST_DEPLOY P0 用例执行。
+- **STD-033**: 平台统一验证大盘纳管持续测试用例覆盖与业务强断言验证。
+- **STD-034**: 更新 Rule G、H、K、O 治理铁律，纳入 AI 自主测试职责与 10 项反向测试门禁。
+- **STD-035**: 完善 TEST_ACCEPTANCE 文档生命周期演进机制。
+
+## [2.10.0] - 2026-10-29
+
+### Added
+- **无强制 PR 与两阶段真实发布工程架构 (STD-014 / STD-032 / STD-034)**:
+  - 在 PERSONAL_LOCAL 声明下遵循 STD-034 Rule C，免除强制 PR 要求，以目标 main Commit 的 GitHub Actions 真实远端 CI 为准。
+  - 确立 Stage 1 (PRE_RELEASE_QUALIFICATION) 与 Stage 2 (POST_DEPLOY_REAL_ACCEPTANCE) 严格发布前后因果律。
+  - 提供 schemas/two-stage-release-acceptance.schema.json 与 	ools/validate_two_stage_release.py。
+  - AUTO_AFTER_GREEN 第 1 门禁更名为 MAIN_COMMIT_VERIFIED。
+
 ## [2.9.0] - 2026-10-27
 
 ### Added

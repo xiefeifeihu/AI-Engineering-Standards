@@ -1407,6 +1407,12 @@ def test_samples():
         "context_origin": "EXPLICIT"
     }
     jsonschema.validate(instance=sample_gw_auto_context, schema=gw_schema)
+    # Test Coverage Verification Sample (STD-014 / STD-034)
+    with open(SCHEMAS_DIR / 'test-coverage-verification.schema.json', 'r', encoding='utf-8') as f:
+        cov_schema = json.load(f)
+    with open(ROOT / 'templates' / 'test-coverage-verification.template.json', 'r', encoding='utf-8') as f:
+        sample_cov = json.load(f)
+    jsonschema.validate(instance=sample_cov, schema=cov_schema)
 
     print(f"Sample validation PASS: Standards {(ROOT / 'VERSION').read_text().strip()}.")
     return True

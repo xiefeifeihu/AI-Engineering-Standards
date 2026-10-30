@@ -2,11 +2,11 @@
 
 ```text
 STANDARD_ID=STD-034
-VERSION=2.10.0
+VERSION=2.11.0
 STATUS=ACTIVE
 SCOPE=全平台受管工程仓库 (AI-Engineering-Hub, AI-Engineering-Standards, AI-KB, vtip-ai-sidecar, vtip-platform-catalog)
 OWNER=AI Platform Governance Committee
-LAST_UPDATED=2026-10-29
+LAST_UPDATED=2026-10-30
 ```
 
 ### 规范性关键词说明 (Normative Keywords)
@@ -30,10 +30,10 @@ LAST_UPDATED=2026-10-29
    - **Rule E（严格遵守跨仓修改边界）**：严格遵循 `STD-002` / `STD-017` 及任务授权范围，严禁越权修改未授权仓库。
    - **Rule F（零密钥与隐私保护）**：严格执行 `STD-007`，严禁向 Git、日志或交付包提交任何 Token、API Key、Cookie、Authorization 头、私钥、真实生产完整正文或私人本地配置（如 `.env`、`settings.local.json`）。
    - **Rule G（实际运行测试后才能报告 `PASS`）**：所有测试状态必须基于真实执行的测试命令、`exit_code=0` 及原始测试日志输出（`STD-014`），严禁未运行或失败时报告 `PASS`。
-   - **Rule H（发布前与部署后两次自动化）**：单元、契约、集成和候选 Playwright 是发布前质量门禁；正式部署后必须再对真实 LIVE 服务执行实际用户任务与端到端业务自动化验证（`STD-014`、`STD-015`、`STD-031`）。仅有发布前绿灯不得宣称生产功能已验收。
+   - **Rule H（发布前与部署后两次自动化）**：单元、契约、集成和候选 Playwright 是发布前质量门禁；正式部署后必须再对真实 LIVE 服务执行实际用户任务与端到端业务自动化验证（STD-014、STD-015、STD-031）。严禁使用临时开发端口或 Mock 冒充生产测试，仅有发布前绿灯不得宣称生产功能已验收。
    - **Rule I（不得伪造模型执行、构建和运行 Commit）**：严禁伪造模型调用记录、耗时、Token 用量，严禁伪造 `SOURCE_COMMIT`、`BUILD_COMMIT`、`LIVE_COMMIT` 或容器/进程运行身份证据（`STD-031` / `STD-032`）。
    - **Rule J（不得用静态 JSON 制造高质量验收结果）**：严禁编写静态生成脚本或手写 JSON 汇总文件来冒充真实测试结果、Playwright 验收结果或运行时探针证据。
-   - **Rule K（不得将 HTTP 200 自动认定为业务采纳或编码交付完成）**：技术请求返回 `HTTP 200`（或仅完成 Stage A 执行事件上报 / `MODEL_EXECUTION_SUCCESS`）不等于业务采纳或编码交付完成；必须完成 Stage B 业务质量评估或 `STD-023` 编码交付阶段验证后才能认定对应阶段通过。
+   - **Rule K（不得将 HTTP 200 自动认定为业务采纳或编码交付完成）**：技术请求返回 HTTP 200（或仅完成 Stage A 执行事件上报 / MODEL_EXECUTION_SUCCESS）不等于业务采纳或编码交付完成；正向用例必须断言真实业务终态（实际有效输出、数据持久化等），负向用例必须断言预期阻断。必须完成 Stage B 业务质量评估或 STD-023 编码交付阶段验证后才能认定对应阶段通过。
    - **Rule L（不得自动提交人工审核 `PASS`）**：未经真实人工审阅确认，编程智能体不得自动提交或伪造 `human_review` / `HUMAN_ACCEPTED` 为 `PASS`；在 PERSONAL_LOCAL 模式下，智能体不得伪造 `OWNER_LOCAL_CONSENT_RECORDED` 或代替所有者确认部署授权。当工程显式声明并配置为 `AUTO_AFTER_GREEN` 模式时，自动部署授权严格受控于全绿机器证据链（main Commit 核验、main CI、发布前测试、Playwright、零密钥扫描、Commit 一致、数据库备份与隔离恢复校验、旧镜像与回滚可用、受控本地执行器、冒烟可执行等 10 项门禁全部 PASS），智能体严禁伪造任一门禁证据或越过未通过门禁自动触发部署。
    - **Rule M（正式发布必须执行有效 Standards 的 CI/CD）**：正式发布与里程碑验收必须执行符合当前有效 Standards（`STD-031`、`STD-032`、`STD-033`、`STD-034`）的真实 CI/CD 与交付契约校验门禁，并依据声明的 ReleaseProfile（PERSONAL_LOCAL / MAINTAINER_RELEASE / HIGH_ASSURANCE）严格执行对应门禁。在 PERSONAL_LOCAL 启用 AUTO_AFTER_GREEN 时，必须完整核验 10 门禁全部 PASS 后由受控执行器自动完成部署与冒烟验收。
    - **Rule N（验收目录与 ZIP 目录必须区分）**：过程验收证据目录（`.artifacts/acceptance/`）与正式交付 ZIP 目录（`.artifacts/packages/`）必须严格隔离，严禁将正式交付 ZIP 存放在 `acceptance` 目录或仓库根目录下。
@@ -99,11 +99,23 @@ LAST_UPDATED=2026-10-29
 
 ---
 
-## 8. 测试与证据真实性 (Test & Evidence Authenticity)
+## 8. 测试与证据真实性与持续覆盖治理 (Test & Evidence Authenticity & Continuous Coverage)
 
-1. **真实执行强制要求 (`STD-014` / `STD-015`)**：单元测试、契约测试、集成测试与 Playwright 浏览器端到端测试 **MUST** 真实运行并采集原始标准输出日志（`test_results.txt`）与退出码（`exit_code=0`）。
-2. **UI 变更强制真机浏览器验证**：凡涉及前端脚本（如 `app/static/app.js`）、模板或样式变更，**MUST** 运行真实 Chromium/Playwright 测试并生成与当前代码版本一致的真实截图与报告，严禁仅跑后端 pytest 即宣称 UI 修复完成。
-3. **反造假校验**：门禁脚本 **MUST** 校验测试日志非空、包含真实用例统计、无失败用例，且截图文件大小、PNG 头部及哈希真实有效。
+1. **真实执行强制要求 (STD-014 / STD-015)**：单元测试、契约测试、集成测试与 Playwright 浏览器端到端测试 **MUST** 真实运行并采集原始标准输出日志（	est_results.txt）与退出码（exit_code=0）。
+2. **UI 变更强制真机浏览器验证**：凡涉及前端脚本（如 pp/static/app.js）、模板或样式变更，**MUST** 运行真实 Chromium/Playwright 测试并生成与当前代码版本一致的真实截图与报告，严禁仅跑后端 pytest 即宣称 UI 修复完成。
+3. **AI 智能体自主测试设计契约**：智能体在编码前必须读取 8 项核心事实源（蓝图、产品基线、架构、接口契约、测试基线、Diff、缺陷历史、上次验收报告），自主完成 13 阶段测试闭环，维护 docs/TEST-ACCEPTANCE.md，输出结构化覆盖报告（schemas/test-coverage-verification.schema.json）。
+4. **十项反向欺诈行为机器阻断 (Ten Antiforgery Gate Invariants)**：自动化门禁（	ools/validate_test_coverage.py）**MUST** 严格检测并阻断以下 10 种行为：
+   - 1) 正向业务得到 BLOCK / CONFIGURED / MOCK_ONLY 却被标为 PASS；
+   - 2) 关键 P0 Case ID 缺少实际执行记录；
+   - 3) 仅存在测试函数而无真实运行证据（UNEXECUTED / NOT_RUN）；
+   - 4) 在部署后生产验收中使用 Mock 代替真实调用；
+   - 5) 使用临时候选端口（如 8000、8080、3000）冒充生产服务测试；
+   - 6) 删除、跳过或弱化断言（如 ssert True、ssert 1==1）；
+   - 7) 截图存在但页面处于报错状态（UI Error / Toast / 5xx）；
+   - 8) 测试运行 Commit 与发布目标 Commit 不一致；
+   - 9) 修改了产品功能却缺失变更影响分析；
+   - 10) 历史用例或既有失败用例被静默移除而无废弃说明。
+5. **反造假校验**：门禁脚本 **MUST** 校验测试日志非空、包含真实用例统计、无失败用例，且截图文件大小、PNG 头部及哈希真实有效。
 
 ---
 
