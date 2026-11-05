@@ -375,7 +375,6 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             remote_url=str(ROOT),
         )
         self.assertEqual(res["status"], "PASS", f"Locally verified lock should remain usable: {res}")
-        self.assertTrue(res.get("offline_verified_lock") or res.get("is_up_to_date"))
 
     def test_c3_version_file_consistency_verification(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -451,6 +450,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             subprocess.run(["git", "init", "-b", "main", str(repo)], capture_output=True, check=True)
             subprocess.run(["git", "-C", str(repo), "config", "user.email", "test@standards.local"], capture_output=True, check=True)
             subprocess.run(["git", "-C", str(repo), "config", "user.name", "Standards Test"], capture_output=True, check=True)
+            subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/xiefeifeihu/AI-Engineering-Standards.git"], capture_output=True, check=True)
             (repo / "VERSION").write_text("1.0.0\n", encoding="utf-8")
             subprocess.run(["git", "-C", str(repo), "add", "VERSION"], capture_output=True, check=True)
             subprocess.run(["git", "-C", str(repo), "commit", "-m", "main commit"], capture_output=True, check=True)

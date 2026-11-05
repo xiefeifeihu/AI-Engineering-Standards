@@ -219,17 +219,30 @@ def discover_latest_official_tag(
         }
 
     official_remote = f"https://github.com/{DEFAULT_OFFICIAL_REPO}.git"
+    effective_remote = official_remote
     if remote_url:
         supplied_remote = str(remote_url).rstrip("/")
         accepted_remotes = {official_remote, official_remote[:-4]}
-        if supplied_remote not in accepted_remotes:
+        if supplied_remote in accepted_remotes:
+            effective_remote = official_remote
+        elif Path(supplied_remote).is_dir():
+            rc_origin, origin_url, _ = run_git(Path(supplied_remote), ["remote", "get-url", "origin"])
+            normalized_origin = origin_url.rstrip("/") if rc_origin == 0 else ""
+            if normalized_origin not in accepted_remotes:
+                return {
+                    "status": "BLOCK",
+                    "repository": repository,
+                    "reason": "UNOFFICIAL_REMOTE_FORBIDDEN: A local clone is accepted only when its origin is the canonical official repository",
+                }
+            effective_remote = supplied_remote
+        else:
             return {
                 "status": "BLOCK",
                 "repository": repository,
-                "reason": "UNOFFICIAL_REMOTE_FORBIDDEN: Discovery is restricted to the canonical official GitHub repository URL",
+                "reason": "UNOFFICIAL_REMOTE_FORBIDDEN: Discovery is restricted to the canonical official repository or its verified local clone",
             }
     ls_status, refs, err_msg = query_remote_ls_remote(
-        remote_url=official_remote,
+        remote_url=effective_remote,
         cwd=std_root if std_root.exists() else None,
         timeout=timeout,
     )
