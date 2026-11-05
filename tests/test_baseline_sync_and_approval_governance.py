@@ -57,7 +57,7 @@ from tools.validate_documentation_collection_bridge import (
 SCHEMAS_DIR = ROOT / "schemas"
 TEMPLATES_DOC_DIR = ROOT / "templates" / "documentation"
 BASELINE_COMMIT = "5e17c0ef560ab8abafe880b988d70f85f380a104"
-PROJECT_SOURCE_COMMIT = "cdc3a7babe50fff69c52da406a0a2745b442ac14"
+PROJECT_SOURCE_COMMIT = "9687f961b22df612c4311961e06fc1c1fd508c37"
 BASELINE_TAG_OBJ = "2f4b4b54348a5ac8891e5a0b33c04635a27213a0"
 
 
