@@ -7,7 +7,7 @@ status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "AI_APPROVABLE"
 approval_evidence_ref: null
-source_commit: "5e17c0ef560ab8abafe880b988d70f85f380a104"
+source_commit: "cdc3a7babe50fff69c52da406a0a2745b442ac14"
 applies_to_release: "v3.0.0"
 last_updated: "2026-11-05"
 supersedes: null

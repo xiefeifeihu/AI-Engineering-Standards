@@ -7,14 +7,14 @@ status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "AI_APPROVABLE"
 approval_evidence_ref: null
-source_commit: "5e17c0ef560ab8abafe880b988d70f85f380a104"
+source_commit: "cdc3a7babe50fff69c52da406a0a2745b442ac14"
 applies_to_release: "v3.0.0"
 last_updated: "2026-11-05"
 supersedes: null
 change_summary: "CLI UX and STD-018 Chinese Diagnostics Presentation Contract for AI-Engineering-Standards."
 history_reference: "standards/14-ui-diagnostics/STD-018-ui-diagnostics-enum-presentation.md"
 primary_entrypoint: true
-content_sha256: "sha256:d6d9b2d39bd7deb494ec94648b76f26746b841432234a1176419763296186455"
+content_sha256: null
 ---
 
 

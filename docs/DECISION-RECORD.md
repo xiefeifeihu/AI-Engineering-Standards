@@ -7,14 +7,14 @@ status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
-source_commit: "5e17c0ef560ab8abafe880b988d70f85f380a104"
+source_commit: "cdc3a7babe50fff69c52da406a0a2745b442ac14"
 applies_to_release: "v3.0.0"
 last_updated: "2026-11-05"
 supersedes: null
 change_summary: "Authoritative Architecture Decision Records (ADRs) for AI-Engineering-Standards including Owner-approved decisions D1 through D5."
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
-content_sha256: "sha256:56541945c5307d3afcdece4141a2dfc395773673e8b3c69c84e9ee8e6c5269fd"
+content_sha256: null
 ---
 
 
