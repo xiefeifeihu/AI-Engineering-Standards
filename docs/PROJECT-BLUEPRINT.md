@@ -7,14 +7,14 @@ status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
-source_commit: "5e17c0ef560ab8abafe880b988d70f85f380a104"
+source_commit: "cdc3a7babe50fff69c52da406a0a2745b442ac14"
 applies_to_release: "v3.0.0"
 last_updated: "2026-11-05"
 supersedes: null
 change_summary: "Project Blueprint for AI-Engineering-Standards independent governance repository."
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
-content_sha256: "sha256:1faf53bb5e0114cb5cc5287c98ea02756b7e1402031b4eac38c3d37e9c915a19"
+content_sha256: null
 ---
 
 

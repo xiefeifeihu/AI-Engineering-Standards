@@ -7,14 +7,14 @@ status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
-source_commit: "5e17c0ef560ab8abafe880b988d70f85f380a104"
+source_commit: "cdc3a7babe50fff69c52da406a0a2745b442ac14"
 applies_to_release: "v3.0.0"
 last_updated: "2026-11-05"
 supersedes: null
 change_summary: "Product Baseline for AI-Engineering-Standards v3.0.0 covering STD-001..STD-035, 30 JSON Schemas, 12 Doc Templates, and official CLI tools."
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
-content_sha256: "sha256:b2dacfee1ee97772c665be26f00c54208d09e2234a11389b8339f8fd1137d9d4"
+content_sha256: null
 ---
 
 
