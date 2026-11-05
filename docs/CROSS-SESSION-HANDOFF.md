@@ -10,7 +10,7 @@ supersedes: null
 change_summary: "自动采集生成任务 STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001 跨会话交接文档 (STD-020 v2.0.0)"
 history_reference: null
 primary_entrypoint: true
-source_commit: "cdc3a7babe50fff69c52da406a0a2745b442ac14"
+source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 content_sha256: "sha256:59fd0ee7d655634fe8626143a9a2ba5f46695be780c4925078423021b51cb00d"
