@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import yaml
 from pathlib import Path
 
 from tools.standards_sync.cli import resolve_locked_standards_ref
@@ -45,6 +46,21 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
         self.assertIn('"tag": "v0.0.0"', lock_template)
         self.assertIn("0000000000000000000000000000000000000000", lock_template)
         self.assertIn('version: "0.0.0"', manifest_template)
+
+
+    def test_document_templates_never_preapprove_or_forge_provenance(self) -> None:
+        templates = ROOT / "templates" / "documentation"
+        for path in sorted(templates.glob("*.template.md")):
+            content = path.read_text(encoding="utf-8")
+            parts = content.split("---", 2)
+            self.assertEqual(len(parts), 3, f"{path.name}: frontmatter missing")
+            metadata = yaml.safe_load(parts[1])
+            self.assertEqual(metadata.get("status"), "CANDIDATE", path.name)
+            self.assertEqual(metadata.get("approval_status"), "NOT_SUBMITTED", path.name)
+            self.assertIn(metadata.get("approval_scope"), ("AI_APPROVABLE", "OWNER_MANDATORY", "OWNER_APPROVAL_REQUIRED"), path.name)
+            self.assertIsNone(metadata.get("source_commit"), path.name)
+            self.assertIsNone(metadata.get("content_sha256"), path.name)
+            self.assertIsNone(metadata.get("approval_evidence_ref"), path.name)
 
     def test_only_ai_hub_is_the_first_consumer_pilot(self) -> None:
         guide = (

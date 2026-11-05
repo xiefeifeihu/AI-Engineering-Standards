@@ -240,6 +240,25 @@ def validate_templates_directory(templates_dir: Path, schema: Dict[str, Any]) ->
             dtype = fm.get("document_type")
             if dtype:
                 seen_types.add(dtype)
+
+            # Templates are unapproved starting points, never pre-approved documents.
+            if fm.get("status") != "CANDIDATE":
+                errors.append(
+                    f"TEMPLATE_LIFECYCLE_MUST_BE_CANDIDATE [{tmpl.name}]: templates must start with status='CANDIDATE'"
+                )
+            if fm.get("approval_status") != "NOT_SUBMITTED":
+                errors.append(
+                    f"TEMPLATE_MUST_NOT_CLAIM_APPROVAL [{tmpl.name}]: approval_status must be 'NOT_SUBMITTED'"
+                )
+            for field in ("source_commit", "content_sha256", "approval_evidence_ref"):
+                if fm.get(field) is not None:
+                    errors.append(
+                        f"TEMPLATE_MUST_NOT_CLAIM_PROVENANCE [{tmpl.name}]: {field} must be null until real project evidence exists"
+                    )
+            if fm.get("approval_scope") not in ("AI_APPROVABLE", "OWNER_MANDATORY", "OWNER_APPROVAL_REQUIRED"):
+                errors.append(
+                    f"TEMPLATE_MISSING_APPROVAL_SCOPE [{tmpl.name}]: approval_scope must declare the review policy"
+                )
         except jsonschema.ValidationError as ve:
             errors.append(f"TEMPLATE_SCHEMA_VIOLATION [{tmpl.name}]: {ve.message}")
     missing_tmpl_types = set(FORMAL_DOCUMENT_TYPES) - seen_types
