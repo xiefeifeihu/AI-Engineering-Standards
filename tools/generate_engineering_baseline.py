@@ -570,7 +570,7 @@ def build_engineering_baseline(
             {
                 "issue_id": "AIHUB-FIRST-CONSUMER-PILOT-001",
                 "summary": "AI-Hub 是首个消费端试点，待 Standards 正式发布后由 AI-Hub Owner 独立批准并执行；AI-KB、VTIP、SideCar 不在本轮范围",
-                "status": "PROPOSED",
+                "status": "DEFERRED",
             }
         ],
         "pending_approvals": [
