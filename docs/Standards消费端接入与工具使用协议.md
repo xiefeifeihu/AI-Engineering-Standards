@@ -97,6 +97,8 @@ python -m pip install -r .standards/requirements-standards.txt
 
 ## 4. 消费工程初始化模板
 
+所有正式文档模板均为未审批的起始材料：必须保持 `status: CANDIDATE`、`approval_status: NOT_SUBMITTED`，且 `source_commit`、`content_sha256`、`approval_evidence_ref` 为 `null`。模板不代表工程事实、独立审核或 Owner 批准；实际项目文档须由消费工程根据真实证据生成并重新审核。
+
 | 消费工程目标文件 | Standards 权威模板或生成器 | 使用规则 |
 |---|---|---|
 | `engineering-manifest.yaml` | `governance/templates/engineering-manifest.template.yaml` | 复制后填写真实工程身份、资源属主和适用性 |

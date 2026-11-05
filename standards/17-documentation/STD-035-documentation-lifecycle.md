@@ -75,17 +75,18 @@ document_id: "DOC-STD-ENGINEERING-BASELINE-001"
 document_version: "3.0.0"
 project_id: "ai-engineering-standards"
 document_type: "ENGINEERING_BASELINE"
-status: "ACTIVE"
+status: "CANDIDATE"
 applies_to_release: "v3.0.0"
 last_updated: "2026-11-05"
 supersedes: null
 change_summary: "自动生成当前权威基线综合视图，汇聚11类正式文档与10类实时工程事实"
 history_reference: null
 primary_entrypoint: true
-source_commit: "5e17c0ef560ab8abafe880b988d70f85f380a104"
+source_commit: null
 approval_scope: "AI_APPROVABLE"
-approval_status: "AI_APPROVED"
-approval_evidence_ref: "docs/approvals/DOC-STD-ENGINEERING-BASELINE-001.approval.json"
+approval_status: "NOT_SUBMITTED"
+approval_evidence_ref: null
+content_sha256: null
 ---
 ```
 
@@ -287,7 +288,7 @@ approval_evidence_ref: "docs/approvals/DOC-STD-ENGINEERING-BASELINE-001.approval
 10. **所有索引引用必须真实存在**：`DOCUMENT-INDEX` 中引用的所有文件路径必须真实存在且文件大小 `> 0`。
 11. **所有内部 Markdown 链接及锚点必须有效**：正式文档中的相对路径链接及 `#heading-anchor` 锚点若指向不存在的文件或标题锚点，立即判定 `FAIL`。
 12. **历史文档不得成为活跃主入口**：归档目录（`archive/`、`99-历史归档/`、`历史档案/`）下的文档或状态为 `ARCHIVED`/`SUPERSEDED` 的文档若标记为 `status: ACTIVE` 或 `primary_entrypoint: true`，立即判定 `FAIL`。
-13. **所有标准模板必须通过 Schema**：`templates/documentation/*.template.md` 必须 100% 通过 `documentation-metadata.schema.json` 校验。
+13. **所有标准模板必须通过 Schema 且不得预授审批**：`templates/documentation/*.template.md` 必须 100% 通过 `documentation-metadata.schema.json` 校验；模板初始状态 **MUST** 为 `status: CANDIDATE`、`approval_status: NOT_SUBMITTED`，`source_commit`、`content_sha256` 与 `approval_evidence_ref` **MUST** 为 `null`。模板 **MUST NOT** 预置 `ACTIVE`、`AI_APPROVED`、`OWNER_APPROVED` 或任何真实审批证据。模板校验器 **MUST** 对上述约束执行负向门禁。
 14. **审批状态必须与实际审批证据一致**：声明 `AI_APPROVED` 或 `OWNER_APPROVED` 时，必须具备匹配的审批证据、正确的 `content_sha256` 与 `candidate_commit`，严禁智能体自填审批通过。
 15. **来源 Commit 必须能够核验**：`source_commit` 必须是合法的 Git Commit SHA 且在当前仓库（或引用的目标仓库）Git 对象库中可核验。
 16. **冲突文档不得自动选择胜出者**：发现同类型多个 `primary_entrypoint: true` 或重复 `document_id` 时，必须直接报错阻断，严禁按文件名排序或时间静默挑选。

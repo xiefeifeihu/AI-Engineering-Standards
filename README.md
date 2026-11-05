@@ -99,7 +99,9 @@
 
 ---
 
-## 4. 跨工程交接资料（Handoff）
+## 4. 其他工程专题交接资料（非本轮试点）
+
+> 以下为此前各工程的专题交接材料，仅供追溯，不构成本轮消费端试点或升级授权。本轮唯一消费端试点为 AI-Engineering-Hub；AI-KB、VTIP、SideCar 暂不纳入。
 
 - [`当前会话交接入口 (docs/CROSS-SESSION-HANDOFF.md)`](./docs/CROSS-SESSION-HANDOFF.md)
 - [`AI-KB 模型治理接入交接指南`](./handoff/AI-KB-Model-Governance-Integration-Handoff.md)
