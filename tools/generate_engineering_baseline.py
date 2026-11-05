@@ -708,7 +708,7 @@ def build_engineering_baseline(
         f"- **当前分支 (`branch`)**：`{branch_name}`",
         f"- **本地 HEAD (`local_head`)**：`{local_head}`",
         f"- **远端 main (`remote_main_head`)**：`{remote_main_head}`",
-        f"- **工作区干净状态 (`worktree_clean`)**：`{str(worktree_clean).lower() if worktree_clean is not None else "NOT_VERIFIABLE"}`",
+        f"- **工作区干净状态 (`worktree_clean`)**：`{str(worktree_clean).lower() if worktree_clean is not None else 'NOT_VERIFIABLE'}`",
         f"- **核验状态 (`verification_status`)**：`{baseline_payload['git_identity']['verification_status']}`",
         "",
         "## 9. 最近 CI 事实 (`recent_ci_facts`)",
