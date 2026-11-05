@@ -768,7 +768,7 @@ def build_engineering_baseline(
         f"- `{now_iso}`",
         "",
         "## 18. 内容摘要 (`content_sha256`)",
-        f"- `{content_sha}`",
+        "- 机器可读结构化摘要见 `.artifacts/baseline/engineering_baseline.json`；本 Markdown 文档的规范摘要记录在 Frontmatter `content_sha256`。",
         "",
     ]
     md_lines.extend([
