@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0.0",
+  "repository": "xiefeifeihu/AI-Engineering-Standards",
+  "version": "2.11.0",
+  "tag": "v2.11.0",
+  "tag_object_sha": "2f4b4b54348a5ac8891e5a0b33c04635a27213a0",
+  "peeled_commit": "5e17c0ef560ab8abafe880b988d70f85f380a104",
+  "locked_at": "2026-11-05T00:00:00Z",
+  "lock_reason": "Initial exact lock to verified official Standards release tag v2.11.0",
+  "approval_evidence_ref": "docs/approvals/standards-lock-initial.approval.json",
+  "ci_run_id": null,
+  "ci_verification_status": "PASS",
+  "previous_locks": []
+}

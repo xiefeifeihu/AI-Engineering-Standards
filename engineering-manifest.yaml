@@ -1,0 +1,37 @@
+schema_version: "3.0.0"
+
+standards:
+  repository: "xiefeifeihu/AI-Engineering-Standards"
+  version: "2.11.0"
+  tag: "v2.11.0"
+  tag_object_sha: "2f4b4b54348a5ac8891e5a0b33c04635a27213a0"
+  peeled_commit: "5e17c0ef560ab8abafe880b988d70f85f380a104"
+  lock_file: "standards.lock.json"
+
+project:
+  id: "ai-engineering-standards"
+  name: "AI Engineering Standards"
+  purpose: "Single source of truth for cross-project architecture, development, testing, documentation, release, evidence, and runtime contracts (STD-001 to STD-035)."
+  repository: "xiefeifeihu/AI-Engineering-Standards"
+  deployment_kind: "NON_RUNTIME_ARTIFACT"
+  release_profile: "PERSONAL_LOCAL"
+  documentation:
+    applicable_types:
+      - "PROJECT_BLUEPRINT"
+      - "PRODUCT_BASELINE"
+      - "SYSTEM_ARCHITECTURE"
+      - "TECHNICAL_DESIGN"
+      - "API_CONTRACT"
+      - "PROTOTYPE_UX"
+      - "TEST_ACCEPTANCE"
+      - "RELEASE_OPERATIONS"
+      - "DECISION_RECORD"
+      - "CROSS_SESSION_HANDOFF"
+      - "DOCUMENT_INDEX"
+      - "ENGINEERING_BASELINE"
+    non_applicable_types: {}
+
+services: []
+endpoints: {}
+credentials: []
+health_contract: {}

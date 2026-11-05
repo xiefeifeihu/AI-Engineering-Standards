@@ -2,6 +2,33 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
+## [3.0.0] - 2026-11-05
+
+### Added
+- **12 类正式文档分类与 ENGINEERING_BASELINE 规范 (STD-035 v3.0.0 / D1=APPROVED)**:
+  - 正式 document_type 调整为 12 类：PROJECT_BLUEPRINT、PRODUCT_BASELINE、SYSTEM_ARCHITECTURE、TECHNICAL_DESIGN、API_CONTRACT、PROTOTYPE_UX、TEST_ACCEPTANCE、RELEASE_OPERATIONS、DECISION_RECORD、CROSS_SESSION_HANDOFF、DOCUMENT_INDEX、ENGINEERING_BASELINE。
+  - 新增 docs/当前权威基线.md (ENGINEERING_BASELINE) 确定性综合视图，汇聚 10 类正式文档与 9 类实时工程事实，强制记录 18 项核心内容与 6 项动态溯源字段 (repository, source_path, source_commit, evidence_ref, observed_at, verification_status)。
+  - 新增 schemas/engineering-baseline.schema.json、templates/documentation/ENGINEERING-BASELINE.template.md 与 tools/generate_engineering_baseline.py。
+- **文档审核与晋升双层审批契约 (STD-035 §4 / STD-034 §16 / D2=APPROVED)**:
+  - 解耦文档生命周期状态 (CANDIDATE, IN_REVIEW, ACTIVE, SUPERSEDED, ARCHIVED) 与审批状态 (NOT_SUBMITTED, IN_REVIEW, AI_APPROVED, OWNER_APPROVAL_REQUIRED, OWNER_APPROVED, REJECTED, BLOCKED)。
+  - 新增 schemas/documentation-approval.schema.json 与 tools/validate_approval_contract.py，严格分离 ChatGPT 独立审核记录与 Owner 批准记录，严禁编程智能体伪造 AI_APPROVED、OWNER_APPROVED、HUMAN_ACCEPTED。
+- **跨会话交接自动化 (STD-020 v2.0.0)**:
+  - 确立唯一当前入口 docs/CROSS-SESSION-HANDOFF.md、任务级不可变快照 handoff/<TASK-ID>-<VERSION>-handoff.md 与临时交接 .artifacts/handoff/temporary/。
+  - 新增 schemas/cross-session-handoff.schema.json 与 tools/generate_handoff.py，自动采集 11 项实时工程事实并强制新会话启动重验。
+- **Standards 官方同步工具与四元组锁定契约 (STD-034 §4 / D3-D5=APPROVED)**:
+  - 新增 schemas/standards-lock.schema.json 与 templates/standards.lock.template.json，强制锁定 version、tag、tag_object_sha、peeled_commit 并保留 previous_locks 历史栈。
+  - 新增 tools/standards_sync/ 官方共享工具 (discover, verify-lock, compare, impact, prepare-upgrade, validate-upgrade, promote, rollback)。
+- **跨工程迁移指南 (docs/migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)**:
+  - 提供面向 AI-Engineering-Hub、AI-KB、vtip-platform-catalog、vtip-ai-sidecar 四大工程的 10 维度兼容性影响矩阵、历史文档重分类方案与回滚方案。
+
+### Changed (BREAKING)
+- **移除 HISTORICAL_ARCHIVE 正式文档类型枚举 (D1=APPROVED)**:
+  - HISTORICAL_ARCHIVE 不再作为 schemas/documentation-metadata.schema.json 的 document_type 枚举值；历史归档回归文档生命周期 (status=ARCHIVED 或 SUPERSEDED, primary_entrypoint=false) 及目录存储分类，保留文档原始语义类型。
+- **统一 Engineering Manifest Schema (STD-001)**:
+  - 确立 schemas/engineering-manifest.schema.json 为唯一权威 Schema，同步 governance/engineering-manifest-schema.json 为精确兼容镜像。
+- **升级 tools/validate-documentation-collection.py 至 v3.0.0**:
+  - 移除硬编码本地绝对路径，完整实现 17 项跨平台文档集合校验（含 Markdown 相对链接与标题锚点校验、source_commit 真实性与跨文档一致性校验）。
+
 ## [2.11.0] - 2026-10-30
 
 ### Added

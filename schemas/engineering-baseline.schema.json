@@ -1,0 +1,476 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/engineering-baseline.schema.json",
+  "title": "Engineering Baseline Synthesized View Schema (STD-035 ENGINEERING_BASELINE)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_identity",
+    "product_version",
+    "product_capabilities",
+    "architecture_boundaries",
+    "api_contract_entrypoints",
+    "approved_adrs",
+    "standards_lock",
+    "git_identity",
+    "recent_ci_facts",
+    "recent_build_facts",
+    "runtime_verification_facts",
+    "test_and_acceptance_facts",
+    "open_issues",
+    "pending_approvals",
+    "evidence_sources",
+    "source_commit",
+    "verified_at",
+    "content_sha256"
+  ],
+  "$defs": {
+    "verification_status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCK",
+        "NOT_RUN",
+        "NOT_VERIFIABLE",
+        "STALE"
+      ]
+    },
+    "dynamic_fact": {
+      "type": "object",
+      "required": [
+        "repository",
+        "source_path",
+        "source_commit",
+        "evidence_ref",
+        "observed_at",
+        "verification_status"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 3
+        },
+        "source_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        "evidence_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observed_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "verification_status": {
+          "$ref": "#/$defs/verification_status"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "project_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "name",
+        "repository",
+        "purpose",
+        "deployment_kind",
+        "release_profile",
+        "source_doc_ref"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 3
+        },
+        "deployment_kind": {
+          "type": "string",
+          "enum": [
+            "SERVICE",
+            "NON_RUNTIME_ARTIFACT"
+          ]
+        },
+        "release_profile": {
+          "type": "string",
+          "enum": [
+            "PERSONAL_LOCAL",
+            "MAINTAINER_RELEASE",
+            "HIGH_ASSURANCE"
+          ]
+        },
+        "source_doc_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "product_version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "release_tag",
+        "source_path",
+        "source_commit"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "release_tag": {
+          "type": "string",
+          "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+        },
+        "source_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        }
+      }
+    },
+    "product_capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_doc_ref",
+        "document_id",
+        "document_version",
+        "capabilities"
+      ],
+      "properties": {
+        "source_doc_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "document_id": {
+          "type": "string",
+          "pattern": "^DOC-[A-Za-z0-9_-]+$"
+        },
+        "document_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 2
+          }
+        }
+      }
+    },
+    "architecture_boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "architecture_doc_ref",
+        "technical_design_doc_ref",
+        "owned_resources",
+        "read_only_boundaries"
+      ],
+      "properties": {
+        "architecture_doc_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "technical_design_doc_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owned_resources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "read_only_boundaries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "api_contract_entrypoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_doc_ref",
+        "document_id",
+        "contracts"
+      ],
+      "properties": {
+        "source_doc_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "document_id": {
+          "type": "string",
+          "pattern": "^DOC-[A-Za-z0-9_-]+$"
+        },
+        "contracts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 2
+          }
+        }
+      }
+    },
+    "approved_adrs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_doc_ref",
+        "document_id",
+        "decisions"
+      ],
+      "properties": {
+        "source_doc_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "document_id": {
+          "type": "string",
+          "pattern": "^DOC-[A-Za-z0-9_-]+$"
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "decision_id",
+              "title",
+              "approval_status",
+              "source_ref"
+            ],
+            "properties": {
+              "decision_id": {
+                "type": "string",
+                "minLength": 2
+              },
+              "title": {
+                "type": "string",
+                "minLength": 2
+              },
+              "approval_status": {
+                "type": "string",
+                "enum": [
+                  "AI_APPROVED",
+                  "OWNER_APPROVED"
+                ]
+              },
+              "source_ref": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "standards_lock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "version",
+        "tag",
+        "tag_object_sha",
+        "peeled_commit",
+        "source_path",
+        "verification_status"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "tag": {
+          "type": "string",
+          "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+        },
+        "tag_object_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "peeled_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "verification_status": {
+          "$ref": "#/$defs/verification_status"
+        }
+      }
+    },
+    "git_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "branch",
+        "local_head",
+        "remote_main_head",
+        "worktree_clean",
+        "verification_status"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "local_head": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "remote_main_head": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{40}|NOT_VERIFIABLE)$"
+        },
+        "worktree_clean": {
+          "type": "boolean"
+        },
+        "verification_status": {
+          "$ref": "#/$defs/verification_status"
+        }
+      }
+    },
+    "recent_ci_facts": {
+      "$ref": "#/$defs/dynamic_fact"
+    },
+    "recent_build_facts": {
+      "$ref": "#/$defs/dynamic_fact"
+    },
+    "runtime_verification_facts": {
+      "$ref": "#/$defs/dynamic_fact"
+    },
+    "test_and_acceptance_facts": {
+      "$ref": "#/$defs/dynamic_fact"
+    },
+    "open_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "issue_id",
+          "summary",
+          "status"
+        ],
+        "properties": {
+          "issue_id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "OPEN",
+              "BLOCK",
+              "DEFERRED"
+            ]
+          }
+        }
+      }
+    },
+    "pending_approvals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item_id",
+          "summary",
+          "required_approver",
+          "status"
+        ],
+        "properties": {
+          "item_id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "required_approver": {
+            "type": "string",
+            "enum": [
+              "CHATGPT",
+              "OWNER"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING_CHATGPT_REVIEW",
+              "OWNER_APPROVAL_REQUIRED"
+            ]
+          }
+        }
+      }
+    },
+    "evidence_sources": {
+      "type": "array",
+      "minItems": 4,
+      "items": {
+        "$ref": "#/$defs/dynamic_fact"
+      }
+    },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "verified_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^(sha256:)?[0-9a-f]{64}$"
+    }
+  }
+}
