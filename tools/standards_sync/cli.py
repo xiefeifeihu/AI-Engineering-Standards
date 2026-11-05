@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     p_prom.add_argument("--target-tag-object-sha", required=True, help="40-hex annotated tag object SHA")
     p_prom.add_argument("--target-peeled-commit", required=True, help="40-hex peeled commit SHA")
     p_prom.add_argument("--approval-file", required=True, help="Path to approval evidence JSON file")
-    p_prom.add_argument("--ci-status", default=None, help="Verified main CI status (PASS/FAIL/NOT_VERIFIABLE)")
+    # CI status is queried from GitHub Actions; no caller-supplied PASS override is accepted.
 
     # 8. rollback
     p_rb = sub.add_parser("rollback", help="Rollback standards.lock.json to previous verified lock")
@@ -191,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
             target_tag_object_sha=args.target_tag_object_sha,
             target_peeled_commit=args.target_peeled_commit,
             approval_file=Path(args.approval_file),
-            ci_status=args.ci_status,
+            ci_status=None,
             standards_root=std_root,
         )
         print(json.dumps(res, indent=2))

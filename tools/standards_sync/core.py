@@ -105,63 +105,85 @@ def check_remote_main_ci(
     ci_status_override: Optional[str] = None,
     timeout: int = 8,
 ) -> Tuple[str, Optional[int], str]:
-    """Verify real GitHub Actions main CI result for commit_sha.
-    Returns (verification_status, run_id, detail).
-    Never fabricates PASS or fake Run IDs; returns NOT_VERIFIABLE when offline or API unreachable.
+    """Verify required GitHub Actions workflow evidence for an exact commit.
+
+    Caller-supplied PASS is never accepted as evidence. Negative overrides exist
+    only for deterministic failure-path tests.
     """
+    if repository != DEFAULT_OFFICIAL_REPO:
+        return "FAIL", None, f"UNOFFICIAL_REPOSITORY_FORBIDDEN: {repository}"
+    if not re.fullmatch(r"[0-9a-f]{40}", str(commit_sha or "")):
+        return "NOT_VERIFIABLE", None, "Invalid or incomplete commit SHA"
+
     if ci_status_override:
         override = ci_status_override.upper()
         if override in ("FAIL", "BLOCK"):
-            return "FAIL", None, "Remote main CI reported failure via override"
+            return "FAIL", None, "Negative test override requested"
         if override == "NOT_VERIFIABLE":
-            return "NOT_VERIFIABLE", None, "Remote main CI status not verifiable"
+            return "NOT_VERIFIABLE", None, "Negative test override requested"
+        if override == "PASS":
+            return (
+                "NOT_VERIFIABLE",
+                None,
+                "UNTRUSTED_CI_OVERRIDE: Caller-supplied PASS cannot replace GitHub Actions evidence",
+            )
 
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    url = f"https://api.github.com/repos/{repository}/actions/runs?head_sha={commit_sha}&branch=main"
+    url = (
+        f"https://api.github.com/repos/{repository}/actions/runs"
+        f"?head_sha={commit_sha}&branch=main&per_page=100"
+    )
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "AI-Engineering-Standards-Sync/3.0.0",
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
+
+    required_workflows = {".github/workflows/standards-ci.yml"}
     try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            runs = data.get("workflow_runs") or []
-            if not runs:
-                if ci_status_override and ci_status_override.upper() == "PASS":
-                    return "PASS", None, "Verified via explicit test CI provider (no remote runs)"
-                return "NOT_VERIFIABLE", None, f"No main workflow runs found for {commit_sha}"
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        runs = data.get("workflow_runs") or []
+        if not runs:
+            return "NOT_VERIFIABLE", None, f"No main workflow runs found for {commit_sha}"
 
-            has_failed = False
-            has_in_progress = False
-            successful_runs: List[int] = []
-            for run in runs:
-                st = run.get("status")
-                conc = run.get("conclusion")
-                r_id = run.get("id")
-                if st == "completed":
-                    if conc == "success":
-                        successful_runs.append(r_id)
-                    elif conc in ("failure", "cancelled", "timed_out", "action_required"):
-                        has_failed = True
-                        return "FAIL", r_id, f"GitHub Actions workflow '{run.get('name')}' run {r_id} failed ({conc})"
-                else:
-                    has_in_progress = True
+        successful_ids: List[int] = []
+        for workflow_path in sorted(required_workflows):
+            matching = [run for run in runs if run.get("path") == workflow_path]
+            if not matching:
+                return (
+                    "NOT_VERIFIABLE",
+                    None,
+                    f"Required workflow '{workflow_path}' has no run for {commit_sha}",
+                )
+            latest = max(
+                matching,
+                key=lambda run: (
+                    int(run.get("run_attempt") or 1),
+                    str(run.get("created_at") or ""),
+                ),
+            )
+            run_id = latest.get("id")
+            if latest.get("status") != "completed":
+                return "NOT_VERIFIABLE", run_id, f"Required workflow '{workflow_path}' is not completed"
+            if latest.get("conclusion") != "success":
+                return (
+                    "FAIL",
+                    run_id,
+                    f"Required workflow '{workflow_path}' concluded '{latest.get('conclusion')}'",
+                )
+            if isinstance(run_id, int):
+                successful_ids.append(run_id)
 
-            if has_failed:
-                return "FAIL", runs[0].get("id"), "One or more main workflow runs failed"
-            if has_in_progress:
-                return "NOT_VERIFIABLE", runs[0].get("id"), "Workflow run still in progress"
-            if successful_runs:
-                return "PASS", successful_runs[0], f"Verified {len(successful_runs)} GitHub Actions main run(s) succeeded"
-            return "NOT_VERIFIABLE", None, "No completed workflow runs"
-    except Exception as e:
-        if ci_status_override and ci_status_override.upper() == "PASS":
-            return "PASS", None, f"Verified via explicit test CI provider (offline: {e})"
-        return "NOT_VERIFIABLE", None, f"GitHub Actions API unreachable: {e}"
-
+        return (
+            "PASS",
+            successful_ids[0] if successful_ids else None,
+            f"All required main workflows succeeded for {commit_sha}",
+        )
+    except Exception as exc:
+        return "NOT_VERIFIABLE", None, f"GitHub Actions API unreachable: {exc}"
 
 def discover_latest_official_tag(
     standards_root: Optional[Path] = None,
@@ -963,7 +985,7 @@ def analyze_consumer_impact(
             "executed_at": now_iso,
             "raw_evidence": f"has_engineering_baseline={has_engineering_baseline}",
             "exit_code": 0 if has_engineering_baseline else 1,
-            "status": "COMPATIBLE" if has_engineering_baseline else "UPGRADE_BLOCKED",
+            "status": "NOT_VERIFIABLE" if has_engineering_baseline else "UPGRADE_BLOCKED",
         },
         "Tests": {
             "check_method": "UNIT_AND_CONTRACT_TEST_EXECUTION",
@@ -971,9 +993,9 @@ def analyze_consumer_impact(
             "target_commit": target_commit,
             "command": "python -m unittest discover -s tests -v",
             "executed_at": now_iso,
-            "raw_evidence": "Local test execution requires independent test run verification",
-            "exit_code": 0,
-            "status": "COMPATIBLE",
+            "raw_evidence": "NOT_RUN: This impact analyzer does not execute consumer test suites",
+            "exit_code": None,
+            "status": "NOT_RUN",
         },
         "Release Gates": {
             "check_method": "RELEASE_STAGE_POLICY_CHECK",
@@ -981,9 +1003,9 @@ def analyze_consumer_impact(
             "target_commit": target_commit,
             "command": "python -m unittest tests/test_release_approval_contract.py",
             "executed_at": now_iso,
-            "raw_evidence": "Release profile gate integrity preserved",
-            "exit_code": 0,
-            "status": "COMPATIBLE",
+            "raw_evidence": "NOT_RUN: Release gate tests were not executed by this analyzer",
+            "exit_code": None,
+            "status": "NOT_RUN",
         },
         "Security": {
             "check_method": "STD_007_ZERO_SECRET_SCAN",
@@ -991,9 +1013,9 @@ def analyze_consumer_impact(
             "target_commit": target_commit,
             "command": "git grep -E '(api[_-]?key|secret|password|private_key)'",
             "executed_at": now_iso,
-            "raw_evidence": "Zero private credential detected",
-            "exit_code": 0,
-            "status": "COMPATIBLE",
+            "raw_evidence": "NOT_RUN: No secret scan was executed by this analyzer",
+            "exit_code": None,
+            "status": "NOT_RUN",
         },
         "Business API & Runtime Contract": {
             "check_method": "STD_017_NON_RUNTIME_API_INSPECTION",
@@ -1001,19 +1023,36 @@ def analyze_consumer_impact(
             "target_commit": target_commit,
             "command": "python -m unittest tests/test_two_stage_release_contract.py",
             "executed_at": now_iso,
-            "raw_evidence": "Runtime contract and non-runtime artifact separation verified",
-            "exit_code": 0,
-            "status": "COMPATIBLE",
+            "raw_evidence": "NOT_RUN: Business API and runtime tests were not executed by this analyzer",
+            "exit_code": None,
+            "status": "NOT_RUN",
         },
     }
 
     has_blocked_dim = any(dim["status"] == "UPGRADE_BLOCKED" for dim in dimensions_checked.values())
-    compatibility_status = "UPGRADE_BLOCKED" if has_blocked_dim else "COMPATIBLE"
+    has_unverified_dim = any(
+        dim["status"] in ("NOT_RUN", "NOT_VERIFIABLE") for dim in dimensions_checked.values()
+    )
+    compatibility_status = (
+        "UPGRADE_BLOCKED"
+        if has_blocked_dim or breaking_items
+        else "NOT_VERIFIABLE"
+        if has_unverified_dim
+        else "COMPATIBLE"
+    )
+    analysis_status = "PARTIAL" if has_unverified_dim else "COMPLETED"
+    overall_status = (
+        "BLOCK"
+        if compatibility_status == "UPGRADE_BLOCKED"
+        else "NOT_VERIFIABLE"
+        if compatibility_status == "NOT_VERIFIABLE"
+        else "PASS"
+    )
     requires_owner_approval = len(breaking_items) > 0 or len(diff_report.get("modified_standards") or {}) > 0
 
     return {
-        "status": "PASS",
-        "analysis_status": "COMPLETED",
+        "status": overall_status,
+        "analysis_status": analysis_status,
         "compatibility_status": compatibility_status,
         "PROJECT": project_name,
         "INPUT_COMMIT": input_commit,
@@ -1048,15 +1087,22 @@ def prepare_upgrade_candidate(
     project_root = project_root.resolve()
     std_root = resolve_standards_root(standards_root)
 
-    # Determine consumer baseline ref from standards.lock.json
+    # Determine consumer baseline exclusively from its authoritative lock.
     lock_path = project_root / "standards.lock.json"
-    from_ref = "v2.11.0"
-    if lock_path.exists():
-        try:
-            lk = json.loads(lock_path.read_text(encoding="utf-8"))
-            from_ref = str(lk.get("tag") or lk.get("version") or "v2.11.0")
-        except Exception:
-            pass
+    if not lock_path.exists():
+        return {"status": "BLOCK", "reason": "MISSING_STANDARDS_LOCK: Cannot infer a consumer baseline"}
+    try:
+        lk = json.loads(lock_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"status": "BLOCK", "reason": f"CORRUPT_STANDARDS_LOCK: {exc}"}
+    required_lock_fields = ("repository", "version", "tag", "tag_object_sha", "peeled_commit")
+    missing_lock_fields = [field for field in required_lock_fields if not lk.get(field)]
+    if missing_lock_fields:
+        return {
+            "status": "BLOCK",
+            "reason": f"INCOMPLETE_STANDARDS_LOCK: Missing {missing_lock_fields}",
+        }
+    from_ref = str(lk["tag"])
 
     # Analyze consumer impact against explicit target_tag (not default WORKTREE)
     impact = analyze_consumer_impact(
@@ -1065,10 +1111,11 @@ def prepare_upgrade_candidate(
         to_ref=target_tag,
         standards_root=std_root,
     )
-    if impact.get("status") == "BLOCK" or impact.get("compatibility_status") == "UPGRADE_BLOCKED":
+    if impact.get("status") != "PASS" or impact.get("compatibility_status") != "COMPATIBLE":
+        blocked = impact.get("compatibility_status") == "UPGRADE_BLOCKED"
         return {
-            "status": "BLOCK",
-            "reason": "UPGRADE_BLOCKED",
+            "status": "BLOCK" if blocked else "NOT_VERIFIABLE",
+            "reason": "UPGRADE_BLOCKED" if blocked else "IMPACT_ANALYSIS_INCOMPLETE",
             "impact": impact,
         }
 
@@ -1089,12 +1136,12 @@ def prepare_upgrade_candidate(
                 "repository": existing_lock.get("repository", DEFAULT_OFFICIAL_REPO),
                 "version": existing_lock.get("version", existing_lock.get("tag", "").lstrip("v")),
                 "tag": existing_lock["tag"],
-                "tag_object_sha": existing_lock.get("tag_object_sha", "0" * 40),
+                "tag_object_sha": existing_lock.get("tag_object_sha"),
                 "peeled_commit": existing_lock["peeled_commit"],
                 "locked_at": existing_lock.get("locked_at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")),
                 "lock_reason": existing_lock.get("lock_reason", "Prior lock preserved before upgrade"),
                 "approval_evidence_ref": existing_lock.get("approval_evidence_ref"),
-                "ci_verification_status": existing_lock.get("ci_verification_status", "PASS"),
+                "ci_verification_status": existing_lock.get("ci_verification_status", "NOT_VERIFIABLE"),
             }
         )
 
@@ -1131,12 +1178,11 @@ def validate_upgrade_candidate(
     project_root: Path,
     standards_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """Run compatibility validation tests against the project."""
+    """Run available checks and fail closed for consumer gates not actually executed."""
     project_root = project_root.resolve()
     std_root = resolve_standards_root(standards_root)
     errors: List[str] = []
 
-    # 1. Validate engineering-manifest.yaml against unified schema
     manifest_path = project_root / "engineering-manifest.yaml"
     manifest_schema_path = std_root / "schemas" / "engineering-manifest.schema.json"
     if manifest_path.exists() and manifest_schema_path.exists():
@@ -1144,12 +1190,11 @@ def validate_upgrade_candidate(
             manifest_data = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
             m_schema = json.loads(manifest_schema_path.read_text(encoding="utf-8"))
             jsonschema.validate(instance=manifest_data, schema=m_schema)
-        except Exception as e:
-            errors.append(f"MANIFEST_INCOMPATIBLE: {e}")
+        except Exception as exc:
+            errors.append(f"MANIFEST_INCOMPATIBLE: {exc}")
     else:
         errors.append("MISSING_MANIFEST: engineering-manifest.yaml not found")
 
-    # 2. Validate documentation collection against STD-035
     doc_schema_path = std_root / "schemas" / "documentation-metadata.schema.json"
     doc_ok, doc_errors = run_collection_validation(
         project_root=project_root,
@@ -1163,14 +1208,18 @@ def validate_upgrade_candidate(
         return {
             "status": "UPGRADE_BLOCKED",
             "compatible": False,
+            "analysis_status": "FAILED",
             "errors": errors,
         }
-    return {
-        "status": "PASS",
-        "compatible": True,
-        "errors": [],
-    }
 
+    return {
+        "status": "NOT_VERIFIABLE",
+        "compatible": None,
+        "analysis_status": "PARTIAL",
+        "errors": [
+            "REQUIRED_CONSUMER_VALIDATION_NOT_EXECUTED: Manifest and documentation checks passed, but consumer tests, release gates, security, and business/runtime validation have not been executed with commit-bound evidence"
+        ],
+    }
 
 def promote_upgrade(
     project_root: Path,
@@ -1195,17 +1244,51 @@ def promote_upgrade(
     project_root = project_root.resolve()
     std_root = resolve_standards_root(standards_root)
 
-    # 1. Verify CI status
-    effective_ci = ci_status
-    if not effective_ci:
-        ci_st, _, ci_det = check_remote_main_ci(DEFAULT_OFFICIAL_REPO, target_peeled_commit)
-        effective_ci = ci_st
-
-    if effective_ci != "PASS":
+    # 1. Verify CI status from GitHub Actions; caller-supplied PASS is never trusted.
+    if ci_status:
+        supplied_status = ci_status.upper()
+        if supplied_status == "PASS":
+            return {
+                "status": "UPGRADE_BLOCKED",
+                "reason": "UNTRUSTED_CI_OVERRIDE: Caller-supplied PASS cannot authorize promotion",
+            }
         return {
             "status": "UPGRADE_BLOCKED",
-            "reason": f"CI_NOT_PASSED: Target release main CI status is '{effective_ci}', cannot promote",
+            "reason": f"CI_NOT_PASSED: Caller-supplied status '{supplied_status}' cannot authorize promotion",
         }
+
+    ci_st, ci_run_id, ci_detail = check_remote_main_ci(DEFAULT_OFFICIAL_REPO, target_peeled_commit)
+    if ci_st != "PASS":
+        return {
+            "status": "UPGRADE_BLOCKED",
+            "reason": f"CI_NOT_PASSED: Target release main CI status is '{ci_st}': {ci_detail}",
+        }
+
+    if target_tag != f"v{target_version.lstrip('v')}":
+        return {"status": "UPGRADE_BLOCKED", "reason": "TARGET_TAG_VERSION_MISMATCH"}
+    remote_status, remote_refs, remote_error = query_remote_ls_remote(
+        f"https://github.com/{DEFAULT_OFFICIAL_REPO}.git",
+        cwd=std_root if std_root.exists() else None,
+    )
+    if remote_status != "PASS":
+        return {"status": "UPGRADE_BLOCKED", "reason": f"TARGET_TAG_NOT_VERIFIABLE: {remote_error}"}
+    if (
+        remote_refs.get(f"refs/tags/{target_tag}") != target_tag_object_sha
+        or remote_refs.get(f"refs/tags/{target_tag}^{{}}") != target_peeled_commit
+    ):
+        return {"status": "UPGRADE_BLOCKED", "reason": "TARGET_TAG_OBJECT_OR_PEELED_COMMIT_MISMATCH"}
+    remote_main = remote_refs.get("refs/heads/main")
+    if not remote_main:
+        return {"status": "UPGRADE_BLOCKED", "reason": "REMOTE_MAIN_NOT_VERIFIABLE"}
+    rc_target, _, _ = run_git(std_root, ["cat-file", "-e", f"{target_peeled_commit}^{{commit}}"])
+    if rc_target != 0:
+        return {"status": "UPGRADE_BLOCKED", "reason": "TARGET_COMMIT_NOT_AVAILABLE_FOR_ANCESTRY_CHECK"}
+    rc_ancestor, _, _ = run_git(std_root, ["merge-base", "--is-ancestor", target_peeled_commit, remote_main])
+    if rc_ancestor != 0:
+        return {"status": "UPGRADE_BLOCKED", "reason": "TARGET_COMMIT_NOT_ON_OFFICIAL_MAIN_ANCESTRY"}
+    rc_version, version_at_target, _ = run_git(std_root, ["show", f"{target_peeled_commit}:VERSION"])
+    if rc_version != 0 or version_at_target.strip().lstrip("v") != target_version.lstrip("v"):
+        return {"status": "UPGRADE_BLOCKED", "reason": "TARGET_VERSION_FILE_MISMATCH"}
 
     # 2. Check downgrade against existing lock
     lock_path = project_root / "standards.lock.json"
@@ -1237,7 +1320,7 @@ def promote_upgrade(
             "reason": f"APPROVAL_COMMIT_MISMATCH: Approval binds {app_cand_commit}, but target is {target_peeled_commit}",
         }
 
-    app_ok, app_errors = validate_approval_record(record=approval_record)
+    app_ok, app_errors = validate_approval_record(record=approval_record, verify_provenance=True)
     if not app_ok:
         return {
             "status": "UPGRADE_BLOCKED",
@@ -1362,7 +1445,7 @@ def rollback_lock(project_root: Path) -> Dict[str, Any]:
     if not hist_approval:
         return {"status": "FAIL", "reason": "RESTORED_LOCK_MISSING_APPROVAL_EVIDENCE: Cannot restore historical lock lacking approval evidence"}
 
-    hist_ci = restored.get("ci_verification_status", "PASS")
+    hist_ci = restored.get("ci_verification_status", "NOT_VERIFIABLE")
 
     rolled_back_lock = {
         "schema_version": "1.0.0",

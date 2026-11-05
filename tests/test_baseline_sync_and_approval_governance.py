@@ -361,7 +361,8 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             remote_url=str(ROOT),
             ci_status_override="PASS",
         )
-        self.assertEqual(res["status"], "PASS")
+        self.assertEqual(res["status"], "NOT_VERIFIABLE")
+        self.assertEqual(res["remote_latest_status"], "NOT_VERIFIABLE")
         self.assertEqual(res["tag"], "v2.11.0")
         self.assertEqual(res["version"], "2.11.0")
         self.assertEqual(res["tag_object_sha"], BASELINE_TAG_OBJ)
@@ -373,8 +374,8 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             standards_root=ROOT,
             remote_url=str(ROOT),
         )
-        self.assertEqual(res["status"], "PASS", f"Lock verification failed: {res}")
-        self.assertTrue(res["is_up_to_date"])
+        self.assertEqual(res["status"], "PASS", f"Locally verified lock should remain usable: {res}")
+        self.assertTrue(res.get("offline_verified_lock") or res.get("is_up_to_date"))
 
     def test_c3_version_file_consistency_verification(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -469,7 +470,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             self.assertEqual(disc["status"], "BLOCK")
             self.assertIn("NOT_ON_MAIN_BRANCH", disc["reason"])
 
-    def test_c10_promote_and_rollback_lock_lifecycle(self) -> None:
+    def test_c10_promotion_fails_closed_without_official_tag_and_verified_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             dst = Path(tmp)
             head = _copy_minimal_valid_project(dst)
@@ -481,59 +482,20 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
                 target_peeled_commit=head,
                 standards_root=ROOT,
             )
-            self.assertEqual(prep["status"], "CANDIDATE_GENERATED")
+            self.assertIn(prep["status"], ("BLOCK", "NOT_VERIFIABLE"))
 
-            valid_approval = {
-                "schema_version": "1.0.0",
-                "task_id": "STANDARDS-UPGRADE-TEST-001",
-                "repository": "xiefeifeihu/AI-Engineering-Standards",
-                "candidate_commit": head,
-                "content_sha256": "sha256:" + "c" * 64,
-                "decision_scope": "OWNER_MANDATORY",
-                "approval_scope": "OWNER_MANDATORY",
-                "reviewer_type": "OWNER",
-                "review_result": "OWNER_APPROVED",
-                "approval_status": "OWNER_APPROVED",
-                "approved_at": "2026-11-05T11:00:00Z",
-                "approval_reference": "chatgpt://owner-approval/msg-001",
-                "chatgpt_review": {
-                    "reviewer": "ChatGPT",
-                    "reviewed_at": "2026-11-05T10:55:00Z",
-                    "review_result": "OWNER_APPROVAL_REQUIRED",
-                    "review_reference": "chatgpt://review/msg-000",
-                    "candidate_commit": head,
-                    "content_sha256": "sha256:" + "c" * 64,
-                    "summary": "Independent review completed; submitted D1-D5 for Owner approval",
-                },
-                "owner_approval": {
-                    "approver": "xiefeifeihu",
-                    "approved_at": "2026-11-05T11:00:00Z",
-                    "approval_channel": "CHATGPT_CHAT_APPROVAL",
-                    "approval_reference": "chatgpt://owner-approval/msg-001",
-                    "approved_decision_ids": ["D1", "D2", "D3", "D4", "D5"],
-                    "candidate_commit": head,
-                    "content_sha256": "sha256:" + "c" * 64,
-                    "decision": "OWNER_APPROVED",
-                },
-            }
             prom = promote_upgrade(
                 project_root=dst,
                 target_tag="v3.0.0",
                 target_version="3.0.0",
                 target_tag_object_sha="b" * 40,
                 target_peeled_commit=head,
-                approval_record=valid_approval,
+                approval_record={"approval_status": "OWNER_APPROVED"},
                 ci_status="PASS",
                 standards_root=ROOT,
             )
-            self.assertEqual(prom["status"], "PROMOTED", f"Promote failed: {prom}")
-            self.assertEqual(prom["lock"]["version"], "3.0.0")
-            self.assertGreaterEqual(len(prom["lock"]["previous_locks"]), 2)
-
-            rb = rollback_lock(project_root=dst)
-            self.assertEqual(rb["status"], "ROLLED_BACK")
-            self.assertEqual(rb["lock"]["version"], "2.11.0")
-            self.assertEqual(rb["lock"]["tag"], "v2.11.0")
+            self.assertEqual(prom["status"], "UPGRADE_BLOCKED")
+            self.assertIn("UNTRUSTED_CI_OVERRIDE", prom.get("reason", ""))
 
     # =========================================================================
     # D. Approval Authenticity Tests
@@ -627,7 +589,8 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             expected_commit=BASELINE_COMMIT,
             repo_root=ROOT,
         )
-        self.assertTrue(ok, f"Expected valid ChatGPT review record, got: {errs}")
+        self.assertFalse(ok)
+        self.assertTrue(any("UNVERIFIABLE_APPROVAL_PROVENANCE" in e for e in errs), f"Got: {errs}")
 
     def test_d4_owner_chat_approval_bound_to_decisions_and_sha256(self) -> None:
         doc_text = "---\ndocument_id: DOC-2\n---\n# Architecture Change\n"
@@ -671,7 +634,8 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             expected_commit=BASELINE_COMMIT,
             repo_root=ROOT,
         )
-        self.assertTrue(ok, f"Expected valid Owner approval record, got: {errs}")
+        self.assertFalse(ok)
+        self.assertTrue(any("UNVERIFIABLE_APPROVAL_PROVENANCE" in e for e in errs), f"Got: {errs}")
 
     def test_d5_content_or_commit_change_invalidates_prior_approval(self) -> None:
         doc_text = "---\ndocument_id: DOC-3\n---\n# Original Content\n"
@@ -752,7 +716,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             bad_app = {"schema_version": "1.0.0", "task_id": "T", "repository": "xiefeifeihu/AI-Engineering-Standards", "candidate_commit": "1"*40, "content_sha256": "sha256:" + "0"*64, "approval_scope": "AI_APPROVABLE", "reviewer_type": "CHATGPT", "review_result": "AI_APPROVED", "approval_status": "AI_APPROVED", "approved_at": "2026-11-05T00:00:00Z", "approval_reference": "ref"}
             res = promote_upgrade(project_root=dst, target_tag="v3.0.0", target_version="3.0.0", target_tag_object_sha="a"*40, target_peeled_commit=head, approval_record=bad_app, ci_status="PASS", standards_root=ROOT)
             self.assertEqual(res["status"], "UPGRADE_BLOCKED")
-            self.assertIn("APPROVAL_COMMIT_MISMATCH", res.get("reason", ""))
+            self.assertIn("UNTRUSTED_CI_OVERRIDE", res.get("reason", ""))
 
     def test_f_c_arbitrary_github_fork_cannot_be_official_standards_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -842,7 +806,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             app = {"schema_version": "1.0.0", "task_id": "T", "repository": "xiefeifeihu/AI-Engineering-Standards", "candidate_commit": "0"*40, "content_sha256": "sha256:" + "0"*64, "approval_scope": "AI_APPROVABLE", "reviewer_type": "CHATGPT", "review_result": "AI_APPROVED", "approval_status": "AI_APPROVED", "approved_at": "2026-11-05T00:00:00Z", "approval_reference": "ref"}
             res = promote_upgrade(project_root=dst, target_tag="v3.0.0", target_version="3.0.0", target_tag_object_sha="a"*40, target_peeled_commit=head, approval_record=app, ci_status="PASS", standards_root=ROOT)
             self.assertEqual(res["status"], "UPGRADE_BLOCKED")
-            self.assertIn("APPROVAL_COMMIT_MISMATCH", res.get("reason", ""))
+            self.assertIn("UNTRUSTED_CI_OVERRIDE", res.get("reason", ""))
 
     def test_f_h_target_tag_not_in_official_main_ancestry_must_block(self) -> None:
         res = discover_latest_official_tag(repository="fake-user/repo")
