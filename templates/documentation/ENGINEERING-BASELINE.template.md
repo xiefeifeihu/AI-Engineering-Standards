@@ -3,17 +3,18 @@ document_id: "DOC-ENGINEERING-BASELINE-001"
 document_version: "1.0.0"
 project_id: "example-project"
 document_type: "ENGINEERING_BASELINE"
-status: "ACTIVE"
+status: "CANDIDATE"
 applies_to_release: "v1.0.0"
 last_updated: "2026-11-05"
 supersedes: null
 change_summary: "当前权威基线自动生成综合视图初始模板"
 history_reference: null
 primary_entrypoint: true
-source_commit: "0000000000000000000000000000000000000000"
+source_commit: null
 approval_scope: "AI_APPROVABLE"
-approval_status: "AI_APPROVED"
-approval_evidence_ref: "docs/approvals/DOC-ENGINEERING-BASELINE-001.approval.json"
+approval_status: "NOT_SUBMITTED"
+approval_evidence_ref: null
+content_sha256: null
 ---
 
 # 当前权威基线 (Engineering Baseline)

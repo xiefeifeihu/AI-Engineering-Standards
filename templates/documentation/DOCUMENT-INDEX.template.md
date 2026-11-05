@@ -3,16 +3,18 @@ document_id: "DOC-INDEX-001"
 document_version: "2.0.0"
 project_id: "example-project"
 document_type: "DOCUMENT_INDEX"
-status: "ACTIVE"
+status: "CANDIDATE"
 applies_to_release: "v1.0.0"
 last_updated: "2026-11-05"
 supersedes: null
 change_summary: "工程文档总索引（统一12类正式文档与历史归档分类）"
 history_reference: null
 primary_entrypoint: true
-source_commit: "0000000000000000000000000000000000000000"
+source_commit: null
 approval_scope: "AI_APPROVABLE"
-approval_status: "AI_APPROVED"
+approval_status: "NOT_SUBMITTED"
+content_sha256: null
+approval_evidence_ref: null
 ---
 
 # 项目文档总索引 (Document Index)

@@ -3,16 +3,18 @@ document_id: "DOC-CROSS-SESSION-HANDOFF-001"
 document_version: "2.0.0"
 project_id: "example-project"
 document_type: "CROSS_SESSION_HANDOFF"
-status: "ACTIVE"
+status: "CANDIDATE"
 applies_to_release: "v1.0.0"
 last_updated: "2026-11-05"
 supersedes: null
 change_summary: "跨会话工作交接自动化契约模板 (STD-020 v2.0.0)"
 history_reference: null
 primary_entrypoint: true
-source_commit: "0000000000000000000000000000000000000000"
+source_commit: null
 approval_scope: "AI_APPROVABLE"
-approval_status: "AI_APPROVED"
+approval_status: "NOT_SUBMITTED"
+content_sha256: null
+approval_evidence_ref: null
 ---
 
 # 跨会话工作交接 (Cross-Session Handoff)
