@@ -88,13 +88,26 @@ def _copy_minimal_valid_project(dst: Path) -> str:
     # Rebind document provenance to a commit that exists in this isolated fixture.
     for md in (dst / "docs").rglob("*.md"):
         txt = md.read_text(encoding="utf-8")
-        if not txt.startswith("---\\n"):
+        if not txt.startswith("---\n"):
             continue
-        parts = txt.split("---\\n", 2)
+        parts = txt.split("---\n", 2)
         if len(parts) != 3:
             continue
         updated_frontmatter = re.sub(
-            r'(?m)^source_commit:\\s*"[0-9a-f]{40}"\\s*
+            r'(?m)^source_commit:\s*"[0-9a-f]{40}"\s*$',
+            f'source_commit: "{head}"',
+            parts[1],
+        )
+        if updated_frontmatter != parts[1]:
+            replaced = "---\n" + updated_frontmatter + "---\n" + parts[2]
+            c_sha = compute_canonical_document_sha256(replaced)
+            replaced = re.sub(
+                r'(?m)^content_sha256:\s*(?:null|"[^"]+")\s*$',
+                f'content_sha256: "{c_sha}"',
+                replaced,
+                count=1,
+            )
+            md.write_text(replaced, encoding="utf-8")
     # Commit the updated docs so that docs in repo match working tree
     subprocess.run(["git", "-C", str(dst), "add", "docs"], capture_output=True, check=True)
     subprocess.run(["git", "-C", str(dst), "commit", "-m", "update docs source commit"], capture_output=True, check=True)
