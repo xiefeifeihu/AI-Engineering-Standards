@@ -3,7 +3,7 @@ document_id: "DOC-STANDARDS-RELEASE-OPERATIONS"
 document_version: "3.0.0"
 project_id: "ai-engineering-standards"
 document_type: "RELEASE_OPERATIONS"
-status: "ACTIVE"
+status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
@@ -14,7 +14,9 @@ supersedes: null
 change_summary: "Release & Operations Manual for AI-Engineering-Standards v3.0.0 covering Draft PR gate, independent review, main CI verification, and Annotated Tag governance."
 history_reference: "standards/13-git-release/STD-017-git-release-versioning.md"
 primary_entrypoint: true
+content_sha256: "sha256:7be94368a1ceb8f8bba773cd39f07a1490aa73618a3d1fe69752f163b9eed64e"
 ---
+
 
 # 发布、部署与运维手册 (Release & Operations Manual)
 

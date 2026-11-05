@@ -15,8 +15,12 @@ on:
 
 jobs:
   validate-standards:
-    name: Validate Schemas, Docs, Baseline, Handoff, Sync & Approval Contracts
-    runs-on: ubuntu-latest
+    name: Validate Schemas, Docs, Baseline, Handoff, Sync & Approval Contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Standards Repository
         uses: actions/checkout@v4
@@ -59,6 +63,7 @@ jobs:
           python -m unittest discover -s tests -v
 
       - name: Verify VERSION Consistency
+        shell: bash
         run: |
           test -f VERSION
           echo "Verified Standards VERSION: $(cat VERSION)"

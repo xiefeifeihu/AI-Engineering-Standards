@@ -3,7 +3,7 @@ document_id: "DOC-MIGRATION-GUIDE-AI-TEST-GOVERNANCE-v2110"
 document_version: "1.0.0"
 project_id: "ai-engineering-standards"
 document_type: "DECISION_RECORD"
-status: "ACTIVE"
+status: "SUPERSEDED"
 applies_to_release: "v2.11.0"
 last_updated: "2026-10-30"
 supersedes: null

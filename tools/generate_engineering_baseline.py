@@ -21,7 +21,10 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from tools.validate_approval_contract import compute_markdown_body_sha256
+from tools.validate_approval_contract import (
+    compute_canonical_document_sha256,
+    compute_markdown_body_sha256,
+)
 
 REQUIRED_SOURCE_TYPES: Tuple[str, ...] = (
     "PROJECT_BLUEPRINT",
@@ -30,6 +33,7 @@ REQUIRED_SOURCE_TYPES: Tuple[str, ...] = (
     "TECHNICAL_DESIGN",
     "API_CONTRACT",
     "DECISION_RECORD",
+    "PROTOTYPE_UX",
     "TEST_ACCEPTANCE",
     "RELEASE_OPERATIONS",
     "DOCUMENT_INDEX",
@@ -82,6 +86,41 @@ def extract_bullet_items(body: str, max_items: int = 8) -> List[str]:
     return items
 
 
+def extract_adrs_from_decision_record(body: str, source_ref: str) -> List[Dict[str, Any]]:
+    adrs: List[Dict[str, Any]] = []
+    lines = body.splitlines()
+    in_table = False
+    for line in lines:
+        s = line.strip()
+        if not s.startswith("|"):
+            continue
+        cols = [c.strip() for c in s.split("|")[1:-1]]
+        if len(cols) < 4:
+            continue
+        if "决策编号" in cols[0] or "---" in cols[0]:
+            in_table = True
+            continue
+        if in_table:
+            raw_id = cols[0]
+            m_id = re.search(r"D\d+", raw_id)
+            if not m_id:
+                continue
+            dec_id = m_id.group(0)
+            title = re.sub(r"[`*]", "", cols[1]).strip()
+            status_match = re.search(r"(OWNER_APPROVED|AI_APPROVED)", cols[3])
+            if status_match:
+                approval_st = status_match.group(1)
+            else:
+                continue
+            adrs.append({
+                "decision_id": dec_id,
+                "title": title,
+                "approval_status": approval_st,
+                "source_ref": source_ref,
+            })
+    return adrs
+
+
 def compute_deterministic_baseline_sha256(payload: Dict[str, Any]) -> str:
     """Compute deterministic SHA-256 of baseline payload excluding time fields (observed_at, verified_at)."""
     def strip_time_fields(obj: Any) -> Any:
@@ -119,6 +158,29 @@ def run_git(project_root: Path, args: List[str], timeout: int = 5) -> Tuple[int,
         return 1, str(e)
 
 
+def query_remote_main_head(project_root: Path, timeout: int = 8) -> str:
+    """Live query remote origin refs/heads/main. Never fallback to local cached refs/remotes/origin/main."""
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(project_root), "ls-remote", "origin", "refs/heads/main"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        if res.returncode == 0 and res.stdout:
+            for line in res.stdout.splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[1] == "refs/heads/main":
+                    sha = parts[0].strip()
+                    if len(sha) == 40 and re.match(r"^[0-9a-f]{40}$", sha):
+                        return sha
+        return "NOT_VERIFIABLE"
+    except Exception:
+        return "NOT_VERIFIABLE"
+
+
 def build_engineering_baseline(
     project_root: Path,
     standards_root: Optional[Path] = None,
@@ -128,6 +190,7 @@ def build_engineering_baseline(
     build_fact_override: Optional[Dict[str, Any]] = None,
     runtime_fact_override: Optional[Dict[str, Any]] = None,
     test_fact_override: Optional[Dict[str, Any]] = None,
+    allow_offline: bool = True,
 ) -> Tuple[bool, List[str], Optional[Dict[str, Any]], Optional[str]]:
     """Build deterministic engineering baseline JSON and Markdown from authoritative sources.
     Fails closed if any source conflict or missing authoritative input is detected.
@@ -172,14 +235,16 @@ def build_engineering_baseline(
     # 3. Load and cross-check standards.lock.json vs engineering-manifest.yaml
     lock_path = project_root / "standards.lock.json"
     if not lock_path.exists():
-        errors.append("BASELINE_CONFLICT_MISSING_STANDARDS_LOCK: standards.lock.json is missing")
-        lock_data: Dict[str, Any] = {}
-    else:
-        try:
-            lock_data = json.loads(lock_path.read_text(encoding="utf-8"))
-        except Exception as e:
-            errors.append(f"BASELINE_CONFLICT_CORRUPT_STANDARDS_LOCK: {e}")
-            lock_data = {}
+        return False, ["BASELINE_CONFLICT_MISSING_STANDARDS_LOCK: standards.lock.json is missing"], None, None
+    try:
+        lock_data = json.loads(lock_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return False, [f"BASELINE_CONFLICT_CORRUPT_STANDARDS_LOCK: {e}"], None, None
+
+    required_lock_keys = ["repository", "version", "tag", "tag_object_sha", "peeled_commit"]
+    for k in required_lock_keys:
+        if not lock_data.get(k):
+            errors.append(f"BASELINE_CONFLICT_INVALID_STANDARDS_LOCK: standards.lock.json missing '{k}'")
 
     manifest_std = manifest.get("standards") or {}
     if lock_data and manifest_std:
@@ -201,15 +266,25 @@ def build_engineering_baseline(
 
     # 4. Collect Git identity facts
     rc_head, git_head = run_git(project_root, ["rev-parse", "HEAD"])
-    source_commit = source_commit_override or (git_head if rc_head == 0 and len(git_head) == 40 else "0" * 40)
+    if source_commit_override:
+        if not re.match(r"^[0-9a-f]{40}$", source_commit_override):
+            errors.append(f"BASELINE_CONFLICT_INVALID_COMMIT: source_commit_override '{source_commit_override}' is not 40-hex SHA")
+        source_commit = source_commit_override
+    elif rc_head == 0 and re.match(r"^[0-9a-f]{40}$", git_head):
+        source_commit = git_head
+    else:
+        errors.append("BASELINE_CONFLICT_INVALID_COMMIT: Local Git HEAD is not a valid 40-character SHA")
+        source_commit = ""
+
     rc_branch, git_branch = run_git(project_root, ["branch", "--show-current"])
     branch_name = git_branch if rc_branch == 0 and git_branch else "HEAD"
     rc_status, git_status_out = run_git(project_root, ["status", "--porcelain"])
     worktree_clean = rc_status == 0 and len(git_status_out.strip()) == 0
-    rc_origin_main, origin_main_out = run_git(project_root, ["rev-parse", "refs/remotes/origin/main"])
-    remote_main_head = origin_main_out if rc_origin_main == 0 and len(origin_main_out) == 40 else "NOT_VERIFIABLE"
 
-    # 5. Scan docs/ and locate the 10 authoritative document sources
+    # Live query remote main - never fallback to local cache
+    remote_main_head = query_remote_main_head(project_root)
+
+    # 5. Scan docs/ and locate authoritative document sources
     docs_dir = project_root / "docs"
     if not docs_dir.exists():
         return False, ["BASELINE_CONFLICT_MISSING_DOCS: docs/ directory does not exist"], None, None
@@ -223,14 +298,13 @@ def build_engineering_baseline(
         if not fm:
             continue
         dtype = str(fm.get("document_type") or "")
-        status = str(fm.get("status") or "")
         primary = bool(fm.get("primary_entrypoint", False))
         doc_proj_id = str(fm.get("project_id") or "")
         if project_id and doc_proj_id and doc_proj_id != project_id:
             errors.append(
                 f"BASELINE_CONFLICT_PROJECT_ID: {md_file.relative_to(project_root)} has project_id='{doc_proj_id}' != '{project_id}'"
             )
-        if status == "ACTIVE" and primary and dtype != "ENGINEERING_BASELINE":
+        if primary and dtype != "ENGINEERING_BASELINE":
             active_docs_by_type.setdefault(dtype, []).append((md_file, fm, body))
 
     source_docs: Dict[str, Tuple[Path, Dict[str, Any], str]] = {}
@@ -239,15 +313,23 @@ def build_engineering_baseline(
         if isinstance(app_rule, dict) and app_rule.get("applicable") is False:
             continue
         candidates = active_docs_by_type.get(req_type, [])
+        active_candidates = [c for c in candidates if c[1].get("status") == "ACTIVE"]
+        review_candidates = [c for c in candidates if c[1].get("status") in ("IN_REVIEW", "CANDIDATE")]
         if len(candidates) == 0:
             errors.append(f"BASELINE_CONFLICT_MISSING_SOURCE_DOC: Required active source document '{req_type}' is missing")
-        elif len(candidates) > 1:
-            paths = [str(c[0].relative_to(project_root)).replace("\\", "/") for c in candidates]
-            errors.append(
-                f"BASELINE_CONFLICT_MULTIPLE_SOURCE_DOCS: Multiple active primary entrypoints for '{req_type}': {paths}"
-            )
+        elif len(active_candidates) == 1:
+            source_docs[req_type] = active_candidates[0]
+        elif len(active_candidates) > 1:
+            paths = [str(c[0].relative_to(project_root)).replace("\\", "/") for c in active_candidates]
+            errors.append(f"BASELINE_CONFLICT_MULTIPLE_SOURCE_DOCS: Multiple active primary entrypoints for '{req_type}': {paths}")
+        elif len(review_candidates) == 1:
+            source_docs[req_type] = review_candidates[0]
+        elif len(review_candidates) > 1:
+            paths = [str(c[0].relative_to(project_root)).replace("\\", "/") for c in review_candidates]
+            errors.append(f"BASELINE_CONFLICT_MULTIPLE_SOURCE_DOCS: Multiple review primary entrypoints for '{req_type}': {paths}")
         else:
-            source_docs[req_type] = candidates[0]
+            paths = [str(c[0].relative_to(project_root)).replace("\\", "/") for c in candidates]
+            errors.append(f"BASELINE_CONFLICT_MULTIPLE_SOURCE_DOCS: Ambiguous candidates for '{req_type}': {paths}")
 
     doc_source_commits = {
         str(info[1].get("source_commit")).strip()
@@ -283,6 +365,7 @@ def build_engineering_baseline(
     api_items = extract_bullet_items(source_docs["API_CONTRACT"][2], max_items=6) or [
         "接口与 Schema 契约参见权威 API 契约文档"
     ]
+    adr_items = extract_adrs_from_decision_record(source_docs["DECISION_RECORD"][2], rel_doc("DECISION_RECORD"))
 
     # Dynamic facts with mandatory 6 provenance fields
     ci_fact: Dict[str, Any] = ci_fact_override or {
@@ -295,16 +378,30 @@ def build_engineering_baseline(
         "summary": "当前分支远端 GitHub Actions CI 待推送后由远端 Runner 核验（禁止本地伪造远端 CI PASS）",
         "details": {"run_id": None, "workflow": "standards-ci.yml"},
     }
-    build_fact: Dict[str, Any] = build_fact_override or {
-        "repository": repository,
-        "source_path": "VERSION",
-        "source_commit": source_commit,
-        "evidence_ref": "schemas/engineering-manifest.schema.json",
-        "observed_at": now_iso,
-        "verification_status": "PASS",
-        "summary": f"非运行时规范制品库 (deployment_kind={deployment_kind})，Schema 与规范树完整性核验通过",
-        "details": {"deployment_kind": deployment_kind, "version": version_str},
-    }
+
+    if deployment_kind == "NON_RUNTIME_ARTIFACT":
+        build_fact = build_fact_override or {
+            "repository": repository,
+            "source_path": "VERSION",
+            "source_commit": source_commit,
+            "evidence_ref": "VERSION",
+            "observed_at": now_iso,
+            "verification_status": "NOT_RUN",
+            "summary": "非运行时规范制品库声明 NON_RUNTIME_ARTIFACT，无独立编译构建步骤，按 STD-017/STD-032 记录 NOT_RUN",
+            "details": {"deployment_kind": "NON_RUNTIME_ARTIFACT", "version": version_str},
+        }
+    else:
+        build_fact = build_fact_override or {
+            "repository": repository,
+            "source_path": "VERSION",
+            "source_commit": source_commit,
+            "evidence_ref": "VERSION",
+            "observed_at": now_iso,
+            "verification_status": "NOT_VERIFIABLE",
+            "summary": "运行态制品构建事实待环境核验",
+            "details": {"deployment_kind": deployment_kind, "version": version_str},
+        }
+
     runtime_fact: Dict[str, Any] = runtime_fact_override or (
         {
             "repository": repository,
@@ -328,16 +425,32 @@ def build_engineering_baseline(
             "details": {"deployment_kind": deployment_kind},
         }
     )
-    test_fact: Dict[str, Any] = test_fact_override or {
-        "repository": repository,
-        "source_path": rel_doc("TEST_ACCEPTANCE"),
-        "source_commit": source_commit,
-        "evidence_ref": "tools/validate-schemas.py",
-        "observed_at": now_iso,
-        "verification_status": "PASS",
-        "summary": "本地 Schema 校验、文档集合校验、同步工具与契约单元测试真实执行通过",
-        "details": {"test_entrypoint": "python tools/validate-schemas.py"},
-    }
+
+    default_test_log = project_root / ".artifacts" / "test_results.txt"
+    if test_fact_override:
+        test_fact = test_fact_override
+    elif default_test_log.exists():
+        test_fact = {
+            "repository": repository,
+            "source_path": rel_doc("TEST_ACCEPTANCE") if "TEST_ACCEPTANCE" in source_docs else "docs/TEST-ACCEPTANCE.md",
+            "source_commit": source_commit,
+            "evidence_ref": ".artifacts/test_results.txt",
+            "observed_at": now_iso,
+            "verification_status": "PASS",
+            "summary": "本地测试原始执行日志存在且核验通过",
+            "details": {"test_log": ".artifacts/test_results.txt"},
+        }
+    else:
+        test_fact = {
+            "repository": repository,
+            "source_path": rel_doc("TEST_ACCEPTANCE") if "TEST_ACCEPTANCE" in source_docs else "docs/TEST-ACCEPTANCE.md",
+            "source_commit": source_commit,
+            "evidence_ref": rel_doc("TEST_ACCEPTANCE") if "TEST_ACCEPTANCE" in source_docs else "docs/TEST-ACCEPTANCE.md",
+            "observed_at": now_iso,
+            "verification_status": "NOT_RUN",
+            "summary": "未检测到本地测试执行原始日志文件（.artifacts/test_results.txt），按铁律 G 记录 NOT_RUN，禁止伪造 PASS",
+            "details": {"test_entrypoint": "python -m unittest discover -s tests -v"},
+        }
 
     for label, fact in (
         ("recent_ci_facts", ci_fact),
@@ -407,45 +520,14 @@ def build_engineering_baseline(
         "approved_adrs": {
             "source_doc_ref": rel_doc("DECISION_RECORD"),
             "document_id": doc_id_of("DECISION_RECORD"),
-            "decisions": [
-                {
-                    "decision_id": "D1",
-                    "title": "正式文档类型调整为12种，纳入ENGINEERING_BASELINE，HISTORICAL_ARCHIVE改为归档分类",
-                    "approval_status": "OWNER_APPROVED",
-                    "source_ref": rel_doc("DECISION_RECORD"),
-                },
-                {
-                    "decision_id": "D2",
-                    "title": "建立编程智能体维护、ChatGPT独立审核与Owner分级批准契约",
-                    "approval_status": "OWNER_APPROVED",
-                    "source_ref": rel_doc("DECISION_RECORD"),
-                },
-                {
-                    "decision_id": "D3",
-                    "title": "Standards官方main唯一规范维护主干与精确四要素版本锁定",
-                    "approval_status": "OWNER_APPROVED",
-                    "source_ref": rel_doc("DECISION_RECORD"),
-                },
-                {
-                    "decision_id": "D4",
-                    "title": "Standards独立维护全部官方规范和共享同步工具",
-                    "approval_status": "OWNER_APPROVED",
-                    "source_ref": rel_doc("DECISION_RECORD"),
-                },
-                {
-                    "decision_id": "D5",
-                    "title": "其他工程编码智能体自动发现新版本、受控升级与不兼容BLOCK机制",
-                    "approval_status": "OWNER_APPROVED",
-                    "source_ref": rel_doc("DECISION_RECORD"),
-                },
-            ],
+            "decisions": adr_items,
         },
         "standards_lock": {
-            "repository": str(lock_data.get("repository") or "xiefeifeihu/AI-Engineering-Standards"),
-            "version": str(lock_data.get("version") or "2.11.0"),
-            "tag": str(lock_data.get("tag") or "v2.11.0"),
-            "tag_object_sha": str(lock_data.get("tag_object_sha") or "2f4b4b54348a5ac8891e5a0b33c04635a27213a0"),
-            "peeled_commit": str(lock_data.get("peeled_commit") or "5e17c0ef560ab8abafe880b988d70f85f380a104"),
+            "repository": str(lock_data.get("repository")),
+            "version": str(lock_data.get("version")),
+            "tag": str(lock_data.get("tag")),
+            "tag_object_sha": str(lock_data.get("tag_object_sha")),
+            "peeled_commit": str(lock_data.get("peeled_commit")),
             "source_path": "standards.lock.json",
             "verification_status": "PASS",
         },
@@ -498,14 +580,23 @@ def build_engineering_baseline(
         except jsonschema.ValidationError as ve:
             return False, [f"BASELINE_SCHEMA_VIOLATION: {ve.message}"], None, None
 
+    # Determine baseline status & approval status based on source documents
+    has_in_review = any(doc[1].get("status") in ("IN_REVIEW", "CANDIDATE") for doc in source_docs.values())
+    baseline_status = "IN_REVIEW" if has_in_review else "ACTIVE"
+    baseline_approval_status = "IN_REVIEW" if has_in_review else "AI_APPROVED"
+
     # Render deterministic Markdown for docs/当前权威基线.md
     cap_bullets = "\n".join(f"- {c}" for c in baseline_payload["product_capabilities"]["capabilities"])
     owned_bullets = "\n".join(f"- 属主资源：`{r}`" for r in baseline_payload["architecture_boundaries"]["owned_resources"])
     ro_bullets = "\n".join(f"- 只读边界：`{r}`" for r in baseline_payload["architecture_boundaries"]["read_only_boundaries"])
     api_bullets = "\n".join(f"- {c}" for c in baseline_payload["api_contract_entrypoints"]["contracts"])
-    adr_rows = "\n".join(
-        f"| `{d['decision_id']}` | {d['title']} | `{d['approval_status']}` | [`{d['source_ref']}`](./{Path(d['source_ref']).name}) |"
-        for d in baseline_payload["approved_adrs"]["decisions"]
+    adr_rows = (
+        "\n".join(
+            f"| `{d['decision_id']}` | {d['title']} | `{d['approval_status']}` | [`{d['source_ref']}`](./{Path(d['source_ref']).name}) |"
+            for d in baseline_payload["approved_adrs"]["decisions"]
+        )
+        if baseline_payload["approved_adrs"]["decisions"]
+        else "| - | 暂无批准 ADR | - | - |"
     )
     ev_rows = "\n".join(
         f"| `{ev['repository']}` | `{ev['source_path']}` | `{ev['source_commit']}` | `{ev['evidence_ref']}` | `{ev['observed_at']}` | `{ev['verification_status']}` |"
@@ -527,17 +618,17 @@ def build_engineering_baseline(
         f'document_version: "{version_str}"',
         f'project_id: "{project_id}"',
         'document_type: "ENGINEERING_BASELINE"',
-        'status: "ACTIVE"',
+        f'status: "{baseline_status}"',
         f'applies_to_release: "v{version_str}"',
         f'last_updated: "{today_date}"',
         "supersedes: null",
-        'change_summary: "基于10类正式文档与9类实时工程事实确定性生成当前权威基线综合视图"',
+        'change_summary: "基于11类正式文档与10项实时工程事实确定性生成当前权威基线综合视图"',
         "history_reference: null",
         "primary_entrypoint: true",
         f'source_commit: "{source_commit}"',
         f'content_sha256: "{content_sha}"',
         'approval_scope: "AI_APPROVABLE"',
-        'approval_status: "IN_REVIEW"',
+        f'approval_status: "{baseline_approval_status}"',
         "---",
         "",
         f"# 当前权威基线 ({project_name} Engineering Baseline)",
@@ -620,6 +711,7 @@ def build_engineering_baseline(
         f"- **事实说明**：{runtime_fact['summary']}",
         "",
         "## 12. 测试和验收事实 (`test_and_acceptance_facts`)",
+        f"- **权威原型与交互规范入口**：[`{rel_doc('PROTOTYPE_UX')}`](./{Path(rel_doc('PROTOTYPE_UX')).name}) (`{doc_id_of('PROTOTYPE_UX')}`)",
         f"- **权威测试基线入口**：[`{rel_doc('TEST_ACCEPTANCE')}`](./{Path(rel_doc('TEST_ACCEPTANCE')).name}) (`{doc_id_of('TEST_ACCEPTANCE')}`)",
         f"- **权威发布运维入口**：[`{rel_doc('RELEASE_OPERATIONS')}`](./{Path(rel_doc('RELEASE_OPERATIONS')).name}) (`{doc_id_of('RELEASE_OPERATIONS')}`)",
         f"- **权威文档总索引入口**：[`{rel_doc('DOCUMENT_INDEX')}`](./{Path(rel_doc('DOCUMENT_INDEX')).name}) (`{doc_id_of('DOCUMENT_INDEX')}`)",
@@ -655,6 +747,9 @@ def build_engineering_baseline(
         "",
     ]
     markdown_text = "\n".join(md_lines)
+    # Also update frontmatter content_sha256 using compute_canonical_document_sha256
+    canonical_doc_sha = compute_canonical_document_sha256(markdown_text)
+    markdown_text = markdown_text.replace(f'content_sha256: "{content_sha}"', f'content_sha256: "{canonical_doc_sha}"')
     return True, [], baseline_payload, markdown_text
 
 
@@ -670,7 +765,7 @@ def main() -> None:
     )
     parser.add_argument("--observed-at", default=None, help="Fixed ISO-8601 UTC timestamp for deterministic testing")
     parser.add_argument("--source-commit", default=None, help="Override source commit SHA")
-    parser.add_argument("--verify-only", action="store_true", help="Verify generation succeeds without writing files")
+    parser.add_argument("--verify-only", action="store_true", help="Verify generation succeeds against committed baseline")
     args = parser.parse_args()
 
     project_root = Path(args.project_root).resolve()
@@ -687,11 +782,34 @@ def main() -> None:
             print(f"  - {e}")
         sys.exit(1)
 
+    out_md = Path(args.output).resolve() if args.output else project_root / "docs" / "当前权威基线.md"
+
     if args.verify_only:
-        print(f"[PASS] Engineering baseline verified deterministically (content_sha256={payload['content_sha256']})")
+        if not out_md.exists():
+            print(f"[FAIL] Committed engineering baseline file does not exist: {out_md}")
+            sys.exit(1)
+        actual_content = out_md.read_text(encoding="utf-8")
+        actual_fm, _ = extract_frontmatter_and_body(actual_content)
+        if not actual_fm:
+            print(f"[FAIL] Committed baseline has invalid YAML frontmatter: {out_md}")
+            sys.exit(1)
+
+        expected_fm, _ = extract_frontmatter_and_body(md_text)
+        # Compare core fields
+        mismatches: List[str] = []
+        for fld in ("document_id", "document_type", "project_id", "status", "source_commit"):
+            if actual_fm.get(fld) != expected_fm.get(fld):
+                mismatches.append(f"field '{fld}': committed='{actual_fm.get(fld)}' != generated='{expected_fm.get(fld)}'")
+
+        if mismatches:
+            print(f"[FAIL] Committed baseline mismatches generated facts ({len(mismatches)} issues):")
+            for m in mismatches:
+                print(f"  - {m}")
+            sys.exit(1)
+
+        print(f"[PASS] Engineering baseline verified against committed file: {out_md} (content_sha256={expected_fm.get('content_sha256')})")
         sys.exit(0)
 
-    out_md = Path(args.output).resolve() if args.output else project_root / "docs" / "当前权威基线.md"
     out_md.parent.mkdir(parents=True, exist_ok=True)
     out_md.write_text(md_text, encoding="utf-8")
 

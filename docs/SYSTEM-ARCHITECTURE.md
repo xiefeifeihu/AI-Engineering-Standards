@@ -3,7 +3,7 @@ document_id: "DOC-STANDARDS-SYSTEM-ARCHITECTURE"
 document_version: "3.0.0"
 project_id: "ai-engineering-standards"
 document_type: "SYSTEM_ARCHITECTURE"
-status: "ACTIVE"
+status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
@@ -14,7 +14,9 @@ supersedes: null
 change_summary: "System Architecture for AI-Engineering-Standards v3.0.0 defining single source of truth topology, baseline synthesis, approval pipeline, and version sync boundaries."
 history_reference: "docs/architecture/STANDARDS-V1-ARCHITECTURE.md"
 primary_entrypoint: true
+content_sha256: "sha256:9953b3aa826fc4189f79bfdb211c00e4ea9958c588d88a8e403d8a246e6b2a27"
 ---
+
 
 # 系统架构设计 (System Architecture)
 

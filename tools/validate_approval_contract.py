@@ -14,6 +14,7 @@ import subprocess
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 import jsonschema
+import yaml
 
 OWNER_MANDATORY_CATEGORIES = {
     "PRODUCT_SCOPE_CHANGE",
@@ -37,6 +38,12 @@ FORBIDDEN_SELF_APPROVAL_ROLES = {
     "SELF",
 }
 
+TRUSTED_PROVENANCE_TYPES = {
+    "GITHUB_PR_REVIEW",
+    "TRUSTED_CHATGPT_EVENT",
+    "SIGNED_OWNER_EVENT",
+}
+
 
 def resolve_standards_root(explicit_root: Optional[str] = None) -> Path:
     if explicit_root:
@@ -47,17 +54,41 @@ def resolve_standards_root(explicit_root: Optional[str] = None) -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def compute_markdown_body_sha256(content: str) -> str:
-    """Compute deterministic SHA-256 of markdown document (normalized LF line endings).
-    Excludes approval_record/content_sha256 self-reference in frontmatter if present.
+def compute_canonical_document_sha256(content: str) -> str:
+    """Compute deterministic SHA-256 of markdown document including frontmatter metadata and body.
+    Excludes self-referencing fields: approval_record, approval_evidence_ref, content_sha256.
     """
     normalized = content.replace("\r\n", "\n")
     if normalized.startswith("---\n"):
         parts = normalized.split("---\n", 2)
         if len(parts) >= 3:
+            fm_text = parts[1]
             body = parts[2].strip()
+            try:
+                fm = yaml.safe_load(fm_text) or {}
+                if isinstance(fm, dict):
+                    # Filter out self-referencing and transient keys
+                    filtered_fm = {
+                        k: v
+                        for k, v in sorted(fm.items())
+                        if k not in ("approval_record", "approval_evidence_ref", "content_sha256")
+                    }
+                    canonical_fm_bytes = json.dumps(
+                        filtered_fm,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    combined = canonical_fm_bytes + b"\n" + body.encode("utf-8")
+                    return "sha256:" + hashlib.sha256(combined).hexdigest()
+            except Exception:
+                pass
             return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
     return "sha256:" + hashlib.sha256(normalized.strip().encode("utf-8")).hexdigest()
+
+
+# Keep backward-compatible alias for existing callers
+compute_markdown_body_sha256 = compute_canonical_document_sha256
 
 
 def normalize_sha256(digest: Optional[str]) -> str:
@@ -82,12 +113,59 @@ def git_commit_exists(repo_root: Path, commit_sha: str) -> bool:
         return False
 
 
+def verify_approval_event_provenance(record: Dict[str, Any]) -> Tuple[str, List[str]]:
+    """Verify approval authenticity and provenance.
+    Pure JSON strings (reviewer='ChatGPT', approver='xiefeifeihu', chatgpt://) without
+    a trusted external event adapter return NOT_VERIFIABLE.
+    """
+    errors: List[str] = []
+    approval_event = record.get("approval_event")
+    if not isinstance(approval_event, dict):
+        return "NOT_VERIFIABLE", [
+            "UNVERIFIABLE_APPROVAL_PROVENANCE: No trusted external approval event adapter attached; local JSON strings alone cannot prove reviewer authenticity (approval_provenance=NOT_VERIFIABLE)"
+        ]
+
+    prov_type = approval_event.get("provenance_type")
+    if prov_type not in TRUSTED_PROVENANCE_TYPES:
+        return "NOT_VERIFIABLE", [
+            f"UNVERIFIABLE_APPROVAL_PROVENANCE: Provenance '{prov_type}' is unverified or local mock; cannot prove authentic ChatGPT/Owner approval (approval_provenance=NOT_VERIFIABLE)"
+        ]
+
+    actor_id = approval_event.get("actor_identity") or {}
+    id_type = actor_id.get("identity_type")
+    if id_type in ("LOCAL_MOCK", None):
+        return "NOT_VERIFIABLE", [
+            f"UNVERIFIABLE_APPROVAL_PROVENANCE: Actor identity_type '{id_type}' is a local unverified placeholder (approval_provenance=NOT_VERIFIABLE)"
+        ]
+
+    cand_commit = record.get("candidate_commit", "")
+    ev_commit = approval_event.get("candidate_commit", "")
+    if ev_commit != cand_commit:
+        errors.append(f"EVENT_COMMIT_MISMATCH: approval_event candidate_commit ({ev_commit}) != record candidate_commit ({cand_commit})")
+
+    rec_sha = normalize_sha256(record.get("content_sha256"))
+    ev_sha = normalize_sha256(approval_event.get("content_sha256"))
+    if ev_sha != rec_sha:
+        errors.append(f"EVENT_CONTENT_HASH_MISMATCH: approval_event content_sha256 ({ev_sha}) != record content_sha256 ({rec_sha})")
+
+    ver_status = approval_event.get("verification_status")
+    if ver_status == "FAILED":
+        return "FAILED", errors + ["EVENT_VERIFICATION_FAILED: External approval event verification explicitly failed"]
+    if ver_status != "VERIFIED":
+        return "NOT_VERIFIABLE", errors + ["EVENT_NOT_VERIFIED: External approval event is not marked VERIFIED"]
+
+    if errors:
+        return "FAILED", errors
+    return "VERIFIED", []
+
+
 def validate_approval_record(
     record: Dict[str, Any],
     schema: Optional[Dict[str, Any]] = None,
     target_content: Optional[str] = None,
     expected_commit: Optional[str] = None,
     repo_root: Optional[Path] = None,
+    verify_provenance: bool = False,
 ) -> Tuple[bool, List[str]]:
     errors: List[str] = []
 
@@ -174,7 +252,7 @@ def validate_approval_record(
 
     # 6. Target content & commit staleness / invalidation checks
     if target_content is not None:
-        actual_sha = compute_markdown_body_sha256(target_content)
+        actual_sha = compute_canonical_document_sha256(target_content)
         if actual_sha != rec_sha:
             errors.append(
                 f"APPROVAL_INVALIDATED_BY_CONTENT_CHANGE: Document content_sha256 ({actual_sha}) differs from approved digest ({rec_sha})"
@@ -189,6 +267,12 @@ def validate_approval_record(
         if not git_commit_exists(repo_root, cand_commit):
             errors.append(f"UNVERIFIABLE_CANDIDATE_COMMIT: Commit '{cand_commit}' does not exist in {repo_root}")
 
+    # 7. Authenticity & Provenance Check
+    if verify_provenance and approval_status in ("AI_APPROVED", "OWNER_APPROVED"):
+        prov_status, prov_errors = verify_approval_event_provenance(record)
+        if prov_status != "VERIFIED":
+            errors.extend(prov_errors)
+
     return len(errors) == 0, errors
 
 
@@ -200,6 +284,7 @@ def main() -> None:
     parser.add_argument("--target-doc", default=None, help="Optional target markdown document to verify content_sha256")
     parser.add_argument("--expected-commit", default=None, help="Optional expected candidate commit SHA")
     parser.add_argument("--repo-root", default=None, help="Optional repository root to verify commit existence")
+    parser.add_argument("--verify-provenance", action="store_true", help="Enforce external trusted approval event verification")
     args = parser.parse_args()
 
     standards_root = resolve_standards_root(args.standards_root)
@@ -228,6 +313,7 @@ def main() -> None:
         target_content=target_content,
         expected_commit=args.expected_commit,
         repo_root=repo_root,
+        verify_provenance=args.verify_provenance,
     )
     if ok:
         print(f"[PASS] Approval evidence verified: {approval_path.name}")

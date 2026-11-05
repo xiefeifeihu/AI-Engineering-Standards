@@ -67,11 +67,11 @@
         },
         "local_head": {
           "type": "string",
-          "pattern": "^[0-9a-f]{7,40}$"
+          "pattern": "^[0-9a-f]{40}$"
         },
         "remote_head": {
           "type": "string",
-          "pattern": "^([0-9a-f]{7,40}|NOT_VERIFIABLE)$"
+          "pattern": "^([0-9a-f]{40}|NOT_VERIFIABLE)$"
         },
         "worktree_clean": {
           "type": "boolean"
@@ -181,7 +181,7 @@
         },
         "commit": {
           "type": "string",
-          "pattern": "^([0-9a-f]{7,40}|NOT_RUN|NOT_VERIFIABLE)$"
+          "pattern": "^([0-9a-f]{40}|NOT_RUN|NOT_VERIFIABLE)$"
         },
         "verification_status": {
           "type": "string",

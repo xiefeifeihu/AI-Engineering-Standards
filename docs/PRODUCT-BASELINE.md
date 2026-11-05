@@ -3,7 +3,7 @@ document_id: "DOC-STANDARDS-PRODUCT-BASELINE"
 document_version: "3.0.0"
 project_id: "ai-engineering-standards"
 document_type: "PRODUCT_BASELINE"
-status: "ACTIVE"
+status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
@@ -14,7 +14,9 @@ supersedes: null
 change_summary: "Product Baseline for AI-Engineering-Standards v3.0.0 covering STD-001..STD-035, 30 JSON Schemas, 12 Doc Templates, and official CLI tools."
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
+content_sha256: "sha256:b2dacfee1ee97772c665be26f00c54208d09e2234a11389b8339f8fd1137d9d4"
 ---
+
 
 # 产品功能与当前基线 (Product Baseline)
 

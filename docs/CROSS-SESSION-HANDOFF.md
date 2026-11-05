@@ -3,7 +3,7 @@ document_id: "DOC-AI-ENGINEERING-STANDARDS-CROSS-SESSION-HANDOFF-001"
 document_version: "3.0.0"
 project_id: "ai-engineering-standards"
 document_type: "CROSS_SESSION_HANDOFF"
-status: "ACTIVE"
+status: "IN_REVIEW"
 applies_to_release: "v3.0.0"
 last_updated: "2026-11-05"
 supersedes: null
@@ -11,10 +11,11 @@ change_summary: "自动采集生成任务 STANDARDS-BASELINE-SYNC-GOVERNANCE-IMP
 history_reference: null
 primary_entrypoint: true
 source_commit: "5e17c0ef560ab8abafe880b988d70f85f380a104"
-content_sha256: "sha256:241cae3754bc9786c836d9bf9e06297f1cd1bbdfaf6994ba3c96b7867685de1f"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
+content_sha256: "sha256:f73decf2ca4fafa02f672ae261a6fccb739ef4bd38a04b79fa118607175afde6"
 ---
+
 
 # 跨会话工作交接 (STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001)
 

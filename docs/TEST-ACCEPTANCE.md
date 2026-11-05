@@ -3,7 +3,7 @@ document_id: "DOC-STANDARDS-TEST-ACCEPTANCE"
 document_version: "3.0.0"
 project_id: "ai-engineering-standards"
 document_type: "TEST_ACCEPTANCE"
-status: "ACTIVE"
+status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
@@ -14,7 +14,9 @@ supersedes: null
 change_summary: "Continuous Test & Acceptance Baseline for AI-Engineering-Standards v3.0.0 covering Schema, Document Collection, Standards Sync, Approval Authenticity, and Cross-Platform gates."
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
+content_sha256: "sha256:e319ce1831f56f55a332bfdc8f6bb2bb3049bee7c5401bab004fbe360db89884"
 ---
+
 
 # 测试策略、用例基线与验收手册 (Test & Acceptance Baseline)
 

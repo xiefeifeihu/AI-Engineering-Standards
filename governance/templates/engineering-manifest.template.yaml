@@ -3,14 +3,14 @@
 # Canonical Schema: schemas/engineering-manifest.schema.json (STD-001)
 # ==============================================================================
 
-schema_version: "1.2.0"
+schema_version: "1.3.0"
 
 standards:
   repository: "xiefeifeihu/AI-Engineering-Standards"
-  version: "3.0.0"
-  tag: "v3.0.0"
-  tag_object_sha: "0000000000000000000000000000000000000000"
-  peeled_commit: "0000000000000000000000000000000000000000"
+  version: "2.11.0"
+  tag: "v2.11.0"
+  tag_object_sha: "2f4b4b54348a5ac8891e5a0b33c04635a27213a0"
+  peeled_commit: "5e17c0ef560ab8abafe880b988d70f85f380a104"
   lock_file: "standards.lock.json"
 
 project:
@@ -28,6 +28,31 @@ project:
   network_gate_snapshot_hint: "logs/network/network-gate-latest.json"
   tags:
     - "ai-engineering"
+  document_type_applicability:
+    PROJECT_BLUEPRINT:
+      applicable: true
+    PRODUCT_BASELINE:
+      applicable: true
+    SYSTEM_ARCHITECTURE:
+      applicable: true
+    TECHNICAL_DESIGN:
+      applicable: true
+    API_CONTRACT:
+      applicable: true
+    PROTOTYPE_UX:
+      applicable: true
+    TEST_ACCEPTANCE:
+      applicable: true
+    RELEASE_OPERATIONS:
+      applicable: true
+    DECISION_RECORD:
+      applicable: true
+    CROSS_SESSION_HANDOFF:
+      applicable: true
+    DOCUMENT_INDEX:
+      applicable: true
+    ENGINEERING_BASELINE:
+      applicable: true
 
 services:
   - id: "service-unique-id"                 # 服务唯一标识，如 ai-kb-control, vtip

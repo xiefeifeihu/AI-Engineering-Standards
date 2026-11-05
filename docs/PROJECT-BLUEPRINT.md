@@ -3,7 +3,7 @@ document_id: "DOC-STANDARDS-PROJECT-BLUEPRINT"
 document_version: "3.0.0"
 project_id: "ai-engineering-standards"
 document_type: "PROJECT_BLUEPRINT"
-status: "ACTIVE"
+status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
@@ -14,7 +14,9 @@ supersedes: null
 change_summary: "Project Blueprint for AI-Engineering-Standards independent governance repository."
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
+content_sha256: "sha256:1faf53bb5e0114cb5cc5287c98ea02756b7e1402031b4eac38c3d37e9c915a19"
 ---
+
 
 # 项目总体蓝图 (Project Blueprint)
 

@@ -19,7 +19,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from tools.validate_approval_contract import validate_approval_record
+from tools.validate_approval_contract import compute_canonical_document_sha256, normalize_sha256, validate_approval_record
 
 FORMAL_DOCUMENT_TYPES: Tuple[str, ...] = (
     "PROJECT_BLUEPRINT",
@@ -200,7 +200,7 @@ def extract_markdown_links(content: str) -> List[str]:
 
 
 def git_commit_verifiable(project_root: Path, commit_sha: str) -> bool:
-    if not commit_sha or not re.match(r"^[0-9a-f]{7,40}$", commit_sha):
+    if not commit_sha or not re.match(r"^[0-9a-f]{40}$", commit_sha):
         return False
     git_dir = project_root / ".git"
     if not git_dir.exists():
@@ -253,6 +253,7 @@ def validate_project_docs(
     schema_path: Path,
     standards_root: Optional[Path] = None,
     check_templates: bool = False,
+    verify_source_paths: bool = False,
 ) -> Tuple[bool, List[str]]:
     errors: List[str] = []
     project_root = project_root.resolve()
@@ -274,6 +275,13 @@ def validate_project_docs(
             if not expected_project_id:
                 errors.append("MANIFEST_MISSING_PROJECT_ID: engineering-manifest.yaml is missing project.id")
             raw_app = proj_block.get("document_type_applicability") or {}
+            if not raw_app and "documentation" in proj_block:
+                doc_block = proj_block.get("documentation") or {}
+                app_list = doc_block.get("applicable_types") or []
+                non_app_map = doc_block.get("non_applicable_types") or {}
+                raw_app = {t: {"applicable": True} for t in app_list}
+                for t, just in non_app_map.items():
+                    raw_app[t] = {"applicable": False, "justification": just}
             if isinstance(raw_app, dict):
                 applicability_map = raw_app
         except Exception as e:
@@ -437,60 +445,134 @@ def validate_project_docs(
                 f"PROJECT_ID_MISMATCH [{rel_path_str}]: got '{project_id}', expected '{expected_project_id}'"
             )
 
+        # Canonical Content SHA-256 digest check
+        doc_csha = fm.get("content_sha256")
+        if doc_csha:
+            computed_csha = compute_canonical_document_sha256(content)
+            if normalize_sha256(doc_csha) != normalize_sha256(computed_csha):
+                errors.append(
+                    f"CONTENT_SHA256_MISMATCH [{rel_path_str}]: Frontmatter content_sha256 ({doc_csha}) != computed canonical digest ({computed_csha})"
+                )
+
         # Source commit verification
         source_commit = fm.get("source_commit")
         if source_commit is not None:
-            if not git_commit_verifiable(project_root, str(source_commit)):
+            sc_str = str(source_commit).strip()
+            if not re.match(r"^[0-9a-f]{40}$", sc_str):
+                errors.append(
+                    f"UNVERIFIABLE_SOURCE_COMMIT [{rel_path_str}]: source_commit '{source_commit}' must be a 40-character hexadecimal SHA"
+                )
+            elif not git_commit_verifiable(project_root, sc_str):
                 errors.append(
                     f"UNVERIFIABLE_SOURCE_COMMIT [{rel_path_str}]: source_commit '{source_commit}' cannot be verified in Git repository"
                 )
-            elif status == "ACTIVE" and primary:
-                active_source_commits[rel_path_str] = str(source_commit)
+            else:
+                if verify_source_paths and has_git:
+                    res_path = subprocess.run(
+                        ["git", "-C", str(project_root), "cat-file", "-e", f"{sc_str}:{rel_path_str}"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if res_path.returncode != 0:
+                        hist_ref = fm.get("history_reference")
+                        hist_ok = False
+                        if hist_ref:
+                            res_h = subprocess.run(
+                                ["git", "-C", str(project_root), "cat-file", "-e", f"{sc_str}:{hist_ref}"],
+                                capture_output=True,
+                                text=True,
+                                timeout=5,
+                            )
+                            hist_ok = (res_h.returncode == 0)
+                        if not hist_ok:
+                            errors.append(
+                                f"SOURCE_PATH_MISSING_AT_COMMIT [{rel_path_str}]: Neither document path '{rel_path_str}' nor history_reference '{hist_ref}' exists at source_commit '{sc_str}'"
+                            )
+                if primary and status in ("ACTIVE", "IN_REVIEW"):
+                    active_source_commits[rel_path_str] = sc_str
 
         # Approval status and evidence verification
         approval_status = fm.get("approval_status")
         approval_ev_ref = fm.get("approval_evidence_ref")
         approval_rec = fm.get("approval_record")
 
-        if approval_status in ("AI_APPROVED", "OWNER_APPROVED"):
+        if status == "ACTIVE":
+            if approval_status == "IN_REVIEW":
+                errors.append(
+                    f"ACTIVE_DOC_WITH_IN_REVIEW_APPROVAL [{rel_path_str}]: Document with status='ACTIVE' cannot have approval_status='IN_REVIEW'"
+                )
+            elif approval_status not in ("AI_APPROVED", "OWNER_APPROVED"):
+                errors.append(
+                    f"ACTIVE_DOC_WITHOUT_APPROVAL [{rel_path_str}]: Document with status='ACTIVE' requires approval_status='AI_APPROVED' or 'OWNER_APPROVED'"
+                )
             if not approval_ev_ref and not approval_rec:
                 errors.append(
                     f"MISSING_APPROVAL_EVIDENCE [{rel_path_str}]: approval_status='{approval_status}' requires approval_evidence_ref or approval_record"
                 )
-            if approval_ev_ref:
-                ev_path = project_root / str(approval_ev_ref)
-                if not ev_path.exists() or not ev_path.is_file():
-                    errors.append(
-                        f"MISSING_APPROVAL_EVIDENCE_FILE [{rel_path_str}]: approval_evidence_ref '{approval_ev_ref}' does not exist"
-                    )
-                else:
-                    try:
-                        ev_data = json.loads(ev_path.read_text(encoding="utf-8"))
-                        ev_ok, ev_errs = validate_approval_record(
-                            record=ev_data,
-                            target_content=content,
-                            expected_commit=str(source_commit) if source_commit else None,
-                            repo_root=project_root if has_git else None,
-                        )
-                        if not ev_ok:
-                            for ee in ev_errs:
-                                errors.append(f"INVALID_APPROVAL_EVIDENCE [{rel_path_str}]: {ee}")
-                        if ev_data.get("approval_status") != approval_status:
-                            errors.append(
-                                f"APPROVAL_STATUS_MISMATCH [{rel_path_str}]: Frontmatter has '{approval_status}' but evidence has '{ev_data.get('approval_status')}'"
-                            )
-                    except Exception as e:
-                        errors.append(f"CORRUPT_APPROVAL_EVIDENCE [{rel_path_str}]: {e}")
 
-        # Track active primary entrypoints
-        if status == "ACTIVE" and primary:
+        if status in ("IN_REVIEW", "CANDIDATE") and approval_status in ("AI_APPROVED", "OWNER_APPROVED"):
+            errors.append(
+                f"IN_REVIEW_DOC_WITH_APPROVED_STATUS [{rel_path_str}]: Document with status='{status}' cannot declare approval_status='{approval_status}'"
+            )
+
+        if approval_ev_ref:
+            ev_path = project_root / str(approval_ev_ref)
+            if not ev_path.exists() or not ev_path.is_file():
+                errors.append(
+                    f"MISSING_APPROVAL_EVIDENCE_FILE [{rel_path_str}]: approval_evidence_ref '{approval_ev_ref}' does not exist"
+                )
+            else:
+                try:
+                    ev_data = json.loads(ev_path.read_text(encoding="utf-8"))
+                    ev_ok, ev_errs = validate_approval_record(
+                        record=ev_data,
+                        target_content=content,
+                        expected_commit=str(source_commit) if source_commit else None,
+                        repo_root=project_root if has_git else None,
+                    )
+                    if not ev_ok:
+                        for ee in ev_errs:
+                            errors.append(f"INVALID_APPROVAL_EVIDENCE [{rel_path_str}]: {ee}")
+                    if ev_data.get("approval_status") != approval_status:
+                        errors.append(
+                            f"APPROVAL_STATUS_MISMATCH [{rel_path_str}]: Frontmatter has '{approval_status}' but evidence has '{ev_data.get('approval_status')}'"
+                        )
+                except Exception as e:
+                    errors.append(f"CORRUPT_APPROVAL_EVIDENCE [{rel_path_str}]: {e}")
+
+        if approval_rec:
+            try:
+                rec_ok, rec_errs = validate_approval_record(
+                    record=approval_rec,
+                    target_content=content,
+                    expected_commit=str(source_commit) if source_commit else None,
+                    repo_root=project_root if has_git else None,
+                )
+                if not rec_ok:
+                    for ee in rec_errs:
+                        errors.append(f"INVALID_INLINE_APPROVAL_RECORD [{rel_path_str}]: {ee}")
+                if approval_rec.get("approval_status") != approval_status:
+                    errors.append(
+                        f"APPROVAL_STATUS_MISMATCH [{rel_path_str}]: Frontmatter has '{approval_status}' but inline record has '{approval_rec.get('approval_status')}'"
+                    )
+            except Exception as e:
+                errors.append(f"CORRUPT_INLINE_APPROVAL_RECORD [{rel_path_str}]: {e}")
+
+        # Track active and in-review primary entrypoints
+        if primary and status in ("ACTIVE", "IN_REVIEW", "CANDIDATE"):
             active_entrypoints.setdefault(doc_type, []).append(doc_file)
 
         # Document index table cross-checks
-        if doc_type == "DOCUMENT_INDEX" and status == "ACTIVE" and primary:
+        if doc_type == "DOCUMENT_INDEX" and primary:
             declared_paths = parse_markdown_table_paths(content)
             if not declared_paths:
                 errors.append(f"EMPTY_DOCUMENT_INDEX_TABLE [{rel_path_str}]: DOCUMENT-INDEX declares no document paths")
+            missing_types_in_index = [t for t in sorted(applicable_types) if t not in content]
+            if missing_types_in_index:
+                errors.append(
+                    f"DOCUMENT_INDEX_MISSING_APPLICABLE_TYPES [{rel_path_str}]: DOCUMENT-INDEX is missing applicable document types: {missing_types_in_index}"
+                )
             for dp in declared_paths:
                 # Resolve relative to project_root or doc_file.parent
                 target_path = project_root / dp
@@ -508,7 +590,7 @@ def validate_project_docs(
                     )
 
         # Check ENGINEERING_BASELINE dynamic facts & source_commit consistency
-        if doc_type == "ENGINEERING_BASELINE" and status == "ACTIVE" and primary:
+        if doc_type == "ENGINEERING_BASELINE" and primary:
             if not source_commit:
                 errors.append(
                     f"MISSING_BASELINE_SOURCE_COMMIT [{rel_path_str}]: ENGINEERING_BASELINE must declare verifiable source_commit"

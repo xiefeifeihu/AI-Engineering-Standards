@@ -3,7 +3,7 @@ document_id: "DOC-STANDARDS-TECHNICAL-DESIGN"
 document_version: "3.0.0"
 project_id: "ai-engineering-standards"
 document_type: "TECHNICAL_DESIGN"
-status: "ACTIVE"
+status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
@@ -14,7 +14,9 @@ supersedes: null
 change_summary: "Technical Design for deterministic baseline generation, dual-layer approval verification, STD-020 auto-handoff, and standards_sync state machine."
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
+content_sha256: "sha256:fbb4ea39d26d70d113359ca0c47a79b0faaad09ac03f5064c67b9369c107c419"
 ---
+
 
 # 技术方案与详细设计 (Technical Design)
 

@@ -3,7 +3,7 @@ document_id: "DOC-STANDARDS-PROTOTYPE-UX"
 document_version: "3.0.0"
 project_id: "ai-engineering-standards"
 document_type: "PROTOTYPE_UX"
-status: "ACTIVE"
+status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "AI_APPROVABLE"
 approval_evidence_ref: null
@@ -14,7 +14,9 @@ supersedes: null
 change_summary: "CLI UX and STD-018 Chinese Diagnostics Presentation Contract for AI-Engineering-Standards."
 history_reference: "standards/14-ui-diagnostics/STD-018-ui-diagnostics-enum-presentation.md"
 primary_entrypoint: true
+content_sha256: "sha256:d6d9b2d39bd7deb494ec94648b76f26746b841432234a1176419763296186455"
 ---
+
 
 # 原型与交互体验规范 (Prototype & UX Specification)
 

@@ -27,6 +27,7 @@ def run_collection_validation(
     schema_path: Optional[Path] = None,
     standards_root: Optional[Path] = None,
     check_templates: bool = False,
+    verify_source_paths: bool = False,
 ) -> Tuple[bool, List[str]]:
     std_root = resolve_standards_root(standards_root)
     s_path = schema_path or resolve_schema_path(
@@ -39,4 +40,5 @@ def run_collection_validation(
         schema_path=s_path,
         standards_root=std_root,
         check_templates=check_templates,
+        verify_source_paths=verify_source_paths,
     )

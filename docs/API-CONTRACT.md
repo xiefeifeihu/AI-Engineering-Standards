@@ -3,7 +3,7 @@ document_id: "DOC-STANDARDS-API-CONTRACT"
 document_version: "3.0.0"
 project_id: "ai-engineering-standards"
 document_type: "API_CONTRACT"
-status: "ACTIVE"
+status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
@@ -14,7 +14,9 @@ supersedes: null
 change_summary: "CLI, JSON Schema, and Cross-Project Governance Data Contracts for AI-Engineering-Standards v3.0.0."
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
+content_sha256: "sha256:e5538735b261bdce899bafc59baa84e0eee7b7e6cbdd7ae1eca5cce4927b775b"
 ---
+
 
 # 接口契约规范 (API & Schema Contract)
 

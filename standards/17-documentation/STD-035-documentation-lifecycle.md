@@ -27,7 +27,7 @@ SCHEMA_REF=schemas/documentation-metadata.schema.json, schemas/engineering-basel
 1. **最新全量与历史演进双重保证**：每个工程 **MUST** 始终维护一份最新的、完整的全量文档集合，任何人或智能体进入项目均可独立理解完整项目蓝图、产品职责、架构与当前权威基线；同时 **MUST** 完整保留历史演进过程与架构决策记录。
 2. **唯一权威入口原则 (Single Canonical Entrypoint)**：同一种正式文档类型在项目主干中 **MUST** 仅存在唯一权威活跃入口（`status: ACTIVE` 且 `primary_entrypoint: true`），严禁维护多份相互矛盾的“最新”副本，冲突文档 **MUST NOT** 自动选择胜出者。
 3. **结构化元数据、生命周期与审批分离**：所有正式文档 **MUST** 包含 YAML Frontmatter 元数据头，严格分离文档生命周期状态（`status`）与独立审核批准状态（`approval_status`），避免将 AI 审核通过直接等同于正式生效。
-4. **当前权威基线确定性生成**：通过 `ENGINEERING_BASELINE`（正式入口 `docs/当前权威基线.md`）自动汇聚 10 类正式文档与 9 类实时核验工程事实，严禁将历史记录、未核实内容或设计建议混入已核实工程事实。
+4. **当前权威基线确定性生成**：通过 `ENGINEERING_BASELINE`（正式入口 `docs/当前权威基线.md`）自动汇聚 11 类正式文档与 10 类实时核验工程事实，严禁将历史记录、未核实内容或设计建议混入已核实工程事实。
 
 ---
 
@@ -79,7 +79,7 @@ status: "ACTIVE"
 applies_to_release: "v3.0.0"
 last_updated: "2026-11-05"
 supersedes: null
-change_summary: "自动生成当前权威基线综合视图，汇聚10类正式文档与9类实时工程事实"
+change_summary: "自动生成当前权威基线综合视图，汇聚11类正式文档与10类实时工程事实"
 history_reference: null
 primary_entrypoint: true
 source_commit: "5e17c0ef560ab8abafe880b988d70f85f380a104"
@@ -100,8 +100,8 @@ approval_evidence_ref: "docs/approvals/DOC-STD-ENGINEERING-BASELINE-001.approval
 8. `supersedes` (`string|null`, 可选): 被当前版本替代的历史文档 ID。
 9. `change_summary` (`string`, 必填): 变更要点摘要（不少于 5 个字符）。
 10. `history_reference` (`string|null`, 可选): 关联的历史归档快照路径。
-11. `primary_entrypoint` (`boolean`, 必填): 是否为该类型的当前唯一活跃主入口。当 `primary_entrypoint: true` 时，`status` **MUST** 为 `ACTIVE`；当 `status` 为 `ARCHIVED` 或 `SUPERSEDED` 时，`primary_entrypoint` **MUST** 为 `false`。
-12. `source_commit` (`string|null`, 正式活跃文档必填): 文档事实所依据的 Git Commit SHA（7–40 位十六进制），**MUST** 能够在仓库 Git 历史中真实核验。
+11. `primary_entrypoint` (`boolean`, 必填): 是否为该类型的当前唯一主入口。在正式发布生效状态下主入口 `status` **MUST** 为 `ACTIVE`；在 PR 审核阶段候选主入口文档保持 `IN_REVIEW`；当 `status` 为 `ARCHIVED` 或 `SUPERSEDED` 时，`primary_entrypoint` **MUST** 为 `false`。
+12. `source_commit` (`string|null`, 正式活跃文档必填): 文档事实所依据的 Git Commit SHA（严格 40 位十六进制完整 SHA），**MUST** 能够在仓库 Git 历史中真实核验。
 13. `approval_scope` (`string`, 可选): `AI_APPROVABLE` | `OWNER_MANDATORY`。
 14. `approval_status` (`string`, 可选): `NOT_SUBMITTED` | `IN_REVIEW` | `AI_APPROVED` | `OWNER_APPROVAL_REQUIRED` | `OWNER_APPROVED` | `REJECTED` | `BLOCKED`。
 15. `approval_evidence_ref` / `approval_record` (`string|object`, 可选): 指向或内嵌符合 `schemas/documentation-approval.schema.json` 的真实审批证据。

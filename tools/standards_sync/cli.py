@@ -61,13 +61,14 @@ def main(argv: list[str] | None = None) -> int:
 
     # 3. compare
     p_cmp = sub.add_parser("compare", help="Compare Standards versions, clauses, and JSON schemas")
-    p_cmp.add_argument("--from-ref", default="v2.11.0", help="Source git ref or tag")
+    p_cmp.add_argument("--project-root", default=".", help="Target project root directory (reads lock if --from-ref omitted)")
+    p_cmp.add_argument("--from-ref", default=None, help="Source git ref or tag (default: locked tag from standards.lock.json)")
     p_cmp.add_argument("--to-ref", default="WORKTREE", help="Target git ref, tag, or WORKTREE")
 
     # 4. impact
     p_imp = sub.add_parser("impact", help="Analyze consumer upgrade impact across 10 governance dimensions")
     p_imp.add_argument("--project-root", default=".", help="Target consumer project root directory")
-    p_imp.add_argument("--from-ref", default="v2.11.0", help="Baseline Standards ref")
+    p_imp.add_argument("--from-ref", default=None, help="Baseline Standards ref (default: locked tag from standards.lock.json)")
     p_imp.add_argument("--to-ref", default="WORKTREE", help="Target Standards ref")
 
     # 5. prepare-upgrade
@@ -90,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     p_prom.add_argument("--target-tag-object-sha", required=True, help="40-hex annotated tag object SHA")
     p_prom.add_argument("--target-peeled-commit", required=True, help="40-hex peeled commit SHA")
     p_prom.add_argument("--approval-file", required=True, help="Path to approval evidence JSON file")
-    p_prom.add_argument("--ci-status", default="PASS", help="Verified main CI status (PASS/FAIL/NOT_VERIFIABLE)")
+    p_prom.add_argument("--ci-status", default=None, help="Verified main CI status (PASS/FAIL/NOT_VERIFIABLE)")
 
     # 8. rollback
     p_rb = sub.add_parser("rollback", help="Rollback standards.lock.json to previous verified lock")
@@ -107,7 +108,11 @@ def main(argv: list[str] | None = None) -> int:
             timeout=args.timeout,
         )
         print(json.dumps(res, indent=2, ensure_ascii=False))
-        return 0 if res.get("status") in ("PASS", "NOT_VERIFIABLE") else 1
+        if res.get("status") == "PASS":
+            return 0
+        if res.get("status") == "NOT_VERIFIABLE":
+            return 2
+        return 1
 
     if args.subcommand == "verify-lock":
         res = verify_project_lock(
@@ -117,9 +122,23 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(res, indent=2, ensure_ascii=False))
         return 0 if res.get("status") == "PASS" else 1
 
+    def resolve_from_ref(p_root: Path, explicit_from: str | None) -> str:
+        if explicit_from:
+            return explicit_from
+        lock_f = p_root / "standards.lock.json"
+        if lock_f.exists():
+            try:
+                lk = json.loads(lock_f.read_text(encoding="utf-8"))
+                return str(lk.get("tag") or lk.get("version") or "v2.11.0")
+            except Exception:
+                pass
+        return "v2.11.0"
+
     if args.subcommand == "compare":
+        p_root = Path(args.project_root)
+        eff_from = resolve_from_ref(p_root, args.from_ref)
         res = compare_versions_and_artifacts(
-            from_ref=args.from_ref,
+            from_ref=eff_from,
             to_ref=args.to_ref,
             standards_root=std_root,
         )
@@ -127,9 +146,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if res.get("status") == "PASS" else 1
 
     if args.subcommand == "impact":
+        p_root = Path(args.project_root)
+        eff_from = resolve_from_ref(p_root, args.from_ref)
         res = analyze_consumer_impact(
-            project_root=Path(args.project_root),
-            from_ref=args.from_ref,
+            project_root=p_root,
+            from_ref=eff_from,
             to_ref=args.to_ref,
             standards_root=std_root,
         )
@@ -146,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
             standards_root=std_root,
         )
         print(json.dumps(res, indent=2, ensure_ascii=False))
-        return 0
+        return 0 if res.get("status") in ("CANDIDATE_GENERATED", "READY") else 1
 
     if args.subcommand == "validate-upgrade":
         res = validate_upgrade_candidate(

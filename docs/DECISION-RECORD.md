@@ -3,7 +3,7 @@ document_id: "DOC-STANDARDS-DECISION-RECORD"
 document_version: "3.0.0"
 project_id: "ai-engineering-standards"
 document_type: "DECISION_RECORD"
-status: "ACTIVE"
+status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
@@ -14,7 +14,9 @@ supersedes: null
 change_summary: "Authoritative Architecture Decision Records (ADRs) for AI-Engineering-Standards including Owner-approved decisions D1 through D5."
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
+content_sha256: "sha256:56541945c5307d3afcdece4141a2dfc395773673e8b3c69c84e9ee8e6c5269fd"
 ---
+
 
 # 架构与治理决策记录 (Architecture Decision Record - ADR)
 

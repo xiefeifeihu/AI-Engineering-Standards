@@ -1,4 +1,4 @@
-schema_version: "3.0.0"
+schema_version: "1.3.0"
 
 standards:
   repository: "xiefeifeihu/AI-Engineering-Standards"
@@ -15,21 +15,31 @@ project:
   repository: "xiefeifeihu/AI-Engineering-Standards"
   deployment_kind: "NON_RUNTIME_ARTIFACT"
   release_profile: "PERSONAL_LOCAL"
-  documentation:
-    applicable_types:
-      - "PROJECT_BLUEPRINT"
-      - "PRODUCT_BASELINE"
-      - "SYSTEM_ARCHITECTURE"
-      - "TECHNICAL_DESIGN"
-      - "API_CONTRACT"
-      - "PROTOTYPE_UX"
-      - "TEST_ACCEPTANCE"
-      - "RELEASE_OPERATIONS"
-      - "DECISION_RECORD"
-      - "CROSS_SESSION_HANDOFF"
-      - "DOCUMENT_INDEX"
-      - "ENGINEERING_BASELINE"
-    non_applicable_types: {}
+  document_type_applicability:
+    PROJECT_BLUEPRINT:
+      applicable: true
+    PRODUCT_BASELINE:
+      applicable: true
+    SYSTEM_ARCHITECTURE:
+      applicable: true
+    TECHNICAL_DESIGN:
+      applicable: true
+    API_CONTRACT:
+      applicable: true
+    PROTOTYPE_UX:
+      applicable: true
+    TEST_ACCEPTANCE:
+      applicable: true
+    RELEASE_OPERATIONS:
+      applicable: true
+    DECISION_RECORD:
+      applicable: true
+    CROSS_SESSION_HANDOFF:
+      applicable: true
+    DOCUMENT_INDEX:
+      applicable: true
+    ENGINEERING_BASELINE:
+      applicable: true
 
 services: []
 endpoints: {}

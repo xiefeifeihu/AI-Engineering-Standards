@@ -3,7 +3,7 @@ document_id: "DOC-STANDARDS-DOCUMENT-INDEX"
 document_version: "3.0.0"
 project_id: "ai-engineering-standards"
 document_type: "DOCUMENT_INDEX"
-status: "ACTIVE"
+status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "AI_APPROVABLE"
 approval_evidence_ref: null
@@ -14,7 +14,9 @@ supersedes: null
 change_summary: "Canonical 12-type documentation index for AI-Engineering-Standards v3.0.0 (STD-035)."
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
+content_sha256: "sha256:c1d64c0567a352e93f1f35353adf00e40d16b06a7a655836486a43351e2e5151"
 ---
+
 
 # 文档总索引 (Document Index)
 

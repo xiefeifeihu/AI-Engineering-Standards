@@ -250,6 +250,109 @@
           "const": "OWNER_APPROVED"
         }
       }
+    },
+    "approval_provenance": {
+      "type": "string",
+      "enum": [
+        "VERIFIED",
+        "NOT_VERIFIABLE",
+        "FAILED"
+      ],
+      "description": "Indicates whether approval identity and provenance were cryptographically or API verified"
+    },
+    "approval_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "event_type",
+        "provenance_type",
+        "actor_identity",
+        "candidate_commit",
+        "content_sha256",
+        "approval_scope",
+        "event_timestamp"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "CHATGPT_INDEPENDENT_REVIEW_EVENT",
+            "OWNER_CHAT_APPROVAL_EVENT",
+            "GITHUB_PR_REVIEW_EVENT"
+          ]
+        },
+        "provenance_type": {
+          "type": "string",
+          "enum": [
+            "GITHUB_PR_REVIEW",
+            "TRUSTED_CHATGPT_EVENT",
+            "SIGNED_OWNER_EVENT",
+            "LOCAL_UNVERIFIED"
+          ]
+        },
+        "actor_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "identity_id",
+            "identity_type",
+            "service_provenance_ref"
+          ],
+          "properties": {
+            "identity_id": {
+              "type": "string",
+              "minLength": 2
+            },
+            "identity_type": {
+              "type": "string",
+              "enum": [
+                "GITHUB_USER",
+                "CHATGPT_SERVICE",
+                "OWNER_KEY",
+                "LOCAL_MOCK"
+              ]
+            },
+            "service_provenance_ref": {
+              "type": "string",
+              "minLength": 4
+            }
+          }
+        },
+        "candidate_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^(sha256:)?[0-9a-f]{64}$"
+        },
+        "approval_scope": {
+          "type": "string",
+          "enum": [
+            "AI_APPROVABLE",
+            "OWNER_MANDATORY",
+            "OWNER_APPROVAL_REQUIRED",
+            "UNCERTAIN"
+          ]
+        },
+        "event_timestamp": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "verification_status": {
+          "type": "string",
+          "enum": [
+            "VERIFIED",
+            "NOT_VERIFIABLE",
+            "FAILED"
+          ]
+        }
+      }
     }
   },
   "allOf": [

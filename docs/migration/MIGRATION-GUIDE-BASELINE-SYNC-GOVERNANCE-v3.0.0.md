@@ -3,7 +3,7 @@ document_id: "DOC-MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v300"
 document_version: "3.0.0"
 project_id: "ai-engineering-standards"
 document_type: "DECISION_RECORD"
-status: "ACTIVE"
+status: "IN_REVIEW"
 approval_status: "IN_REVIEW"
 approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
@@ -81,44 +81,78 @@ primary_entrypoint: false
 
 ---
 
-## 4. `HISTORICAL_ARCHIVE` 历史文档逐工程重分类清单（共 37 个文件）
+## 4. `HISTORICAL_ARCHIVE` 历史文档逐工程 37 份明细清单与语义映射表
 
-遵循 `D1=APPROVED`：**严禁删除历史文档或静默篡改历史文档正文含义**。仅将 YAML Frontmatter 中的 `document_type: "HISTORICAL_ARCHIVE"` 恢复为其真实业务语义类型，并确保 `status: "ARCHIVED"`（或 `"SUPERSEDED"`）且 `primary_entrypoint: false`：
+> **只读边界声明 (`STD-034` Rule E)**：本清单仅在 `AI-Engineering-Standards` 作为迁移指导事实规范沉淀，**严禁跨仓修改** 下游四大工程任何代码与文件。下游各工程在正式启动 `v3.0.0` 升级任务前保持独立只读。
 
-### 4.1 `AI-Engineering-Hub`（2 个 `HISTORICAL_ARCHIVE` 文件 + 7 个自定义类型文件）
-- `docs/99-历史归档/v0.17.0/R7测试与验收手册.md`：`document_type: "HISTORICAL_ARCHIVE"` -> `"TEST_ACCEPTANCE"`（保持 `status: "ARCHIVED"`, `primary_entrypoint: false`）。
-- `docs/99-历史归档/v0.21.1/历史文档清单与索引.md`：`document_type: "HISTORICAL_ARCHIVE"` -> `"DOCUMENT_INDEX"`（保持 `status: "ARCHIVED"`, `primary_entrypoint: false`）。
-- 另有 7 个自定义类型文件需映射为标准 12 类（`primary_entrypoint: false`）：
-  - `docs/00-治理基线/文档治理审计报告.md` (`GOVERNANCE_REPORT` -> `DECISION_RECORD`)
-  - `docs/00-治理基线/工程清理报告.md` (`GOVERNANCE_REPORT` -> `DECISION_RECORD`)
-  - `docs/04-测试与验收/测试用例目录.md` (`TEST_CASE_CATALOG` -> `TEST_ACCEPTANCE`)
-  - `docs/04-测试与验收/验收证据规范.md` (`TEST_EVIDENCE_GUIDE` -> `TEST_ACCEPTANCE`)
-  - `docs/04-测试与验收/测试执行手册.md` (`TEST_EXECUTION_GUIDE` -> `TEST_ACCEPTANCE`)
-  - `docs/99-历史归档/v0.21.1/R8.2前序任务台账与历史记录.md` (`GOVERNANCE_REPORT` -> `DECISION_RECORD`)
-  - `docs/99-历史归档/v0.21.1/历史版本演进与审计汇总.md` (`GOVERNANCE_REPORT` -> `DECISION_RECORD`)
+### 4.1 `AI-Engineering-Hub`（共 2 份 `HISTORICAL_ARCHIVE` 文档）
+- **审计分支 (`branch`)**：`feat/ai-hub-vault-owner-consumer-migration`
+- **事实 Commit (`source_commit`)**：`09c8bc0ae9b79f61e5d0cfb88e22c6fdd8ce1267`
+- **核验时间戳 (`timestamp`)**：`2026-11-05T12:52:15+08:00`
 
-### 4.2 `AI-KB`（14 个 `HISTORICAL_ARCHIVE` 文件）
-- `docs/archive/v0.9.0/API-CONTRACT-v0.9.0.md` -> `document_type: "API_CONTRACT"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
-- `docs/archive/v0.9.0/DECISION-RECORD-v0.9.0.md` -> `document_type: "DECISION_RECORD"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
-- `docs/archive/v0.9.0/PRODUCT-BASELINE-v0.9.0.md` -> `document_type: "PRODUCT_BASELINE"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
-- `docs/archive/v0.9.0/RELEASE-OPERATIONS-v0.9.0.md` -> `document_type: "RELEASE_OPERATIONS"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
-- `docs/archive/v0.9.0/TEST-ACCEPTANCE-v0.9.0.md` -> `document_type: "TEST_ACCEPTANCE"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
-- `docs/历史档案/HISTORICAL-ARCHIVE.md` -> `document_type: "DOCUMENT_INDEX"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
-- `docs/历史档案/AI-KB-V1-002-模型治理交接记录.md` -> `document_type: "CROSS_SESSION_HANDOFF"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
-- `docs/历史档案/AI-KB-V1-004-知识引擎核心方案.md` -> `document_type: "TECHNICAL_DESIGN"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
-- `docs/历史档案/AI-KB-V1-005-解析器增强设计.md` -> `document_type: "TECHNICAL_DESIGN"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
-- `docs/历史档案/AI-KB-V1-006-混合检索架构演进.md` -> `document_type: "SYSTEM_ARCHITECTURE"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
-- `docs/历史档案/AI-KB-V1-007-前端工作台重构记录.md` -> `document_type: "PROTOTYPE_UX"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
-- `docs/历史档案/AI-KB-V1-008-两阶段发布验收记录.md` -> `document_type: "TEST_ACCEPTANCE"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
-- `docs/历史档案/AI-KB-V1-009-安全治理审计记录.md` -> `document_type: "DECISION_RECORD"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
-- `docs/历史档案/AI-KB-V1-010-历史阶段总结归档.md` -> `document_type: "DECISION_RECORD"` (`status: "ARCHIVED"`, `primary_entrypoint: false`)
+| 序号 | 相对路径 | 原始类型 | 映射语义类型 | 适用性 | 测试状态 | 内容摘要 (SHA-256) |
+|:---|:---|:---|:---|:---|:---|:---|
+| 1 | `docs/99-历史归档/v0.17.0/R7测试与验收手册.md` | `HISTORICAL_ARCHIVE` | `TEST_ACCEPTANCE` | `applicable: true` | `NOT_VERIFIED` | `sha256:9dac48a91dafdae1258e189166740a62f2197a3013b437731fb849cb87889438` |
+| 2 | `docs/99-历史归档/v0.21.1/历史文档清单与索引.md` | `HISTORICAL_ARCHIVE` | `DOCUMENT_INDEX` | `applicable: true` | `NOT_VERIFIED` | `sha256:27c7b4edf276b9cea24187e9505efbdd326836e011fb0b402746a4929ea43d49` |
 
-### 4.3 `vtip-platform-catalog`（1 个 `HISTORICAL_ARCHIVE` 文件）
-- `docs/archive/BASELINE-HISTORY.md`：`document_type: "HISTORICAL_ARCHIVE"` -> `"DECISION_RECORD"`（保持 `status: "ARCHIVED"`, `primary_entrypoint: false`）。
+### 4.2 `AI-KB`（共 14 份 `HISTORICAL_ARCHIVE` 文档）
+- **审计分支 (`branch`)**：`## HEAD (no branch)`
+- **事实 Commit (`source_commit`)**：`9e5f166d8ef75568447569538a22ede0a5d54d4f`
+- **核验时间戳 (`timestamp`)**：`2026-11-04T20:43:47+08:00`
 
-### 4.4 `vtip-ai-sidecar`（20 个 `HISTORICAL_ARCHIVE` 文件）
-- `docs/HISTORICAL-ARCHIVE.md`：`document_type: "HISTORICAL_ARCHIVE"` -> `"DOCUMENT_INDEX"`，`status: "ACTIVE"` -> `"ARCHIVED"`，`primary_entrypoint: true` -> `false`（移入或作为归档索引保留，由 `docs/当前权威基线.md` 承担第 12 类正式主入口）。
-- `docs/archive/**` 下其余 19 个历史文档：按各自原始职责映射为 `DECISION_RECORD`、`TEST_ACCEPTANCE`、`TECHNICAL_DESIGN`、`RELEASE_OPERATIONS`、`CROSS_SESSION_HANDOFF`，保持 `status: "ARCHIVED"`, `primary_entrypoint: false`。
+| 序号 | 相对路径 | 原始类型 | 映射语义类型 | 适用性 | 测试状态 | 内容摘要 (SHA-256) |
+|:---|:---|:---|:---|:---|:---|:---|
+| 1 | `docs/archive/v0.9.0/01-AIKB-系统架构蓝图.md` | `HISTORICAL_ARCHIVE` | `SYSTEM_ARCHITECTURE` | `applicable: true` | `NOT_VERIFIED` | `sha256:2b492f2ba240a42eb8b9315f0b43f3854b81bc3b9dbf9e994e7e1084e18682e7` |
+| 2 | `docs/archive/v0.9.0/02-AIKB-产品需求与演进规划.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:9d94c89f60d471894452c7c91ebd0eecafbf3d0129fd8816f8d66862aeb2cffe` |
+| 3 | `docs/archive/v0.9.0/04-AIKB-外部系统与接口说明.md` | `HISTORICAL_ARCHIVE` | `API_CONTRACT` | `applicable: true` | `NOT_VERIFIED` | `sha256:7241ea3d8015fed85136c1743958ba8c75179975b8043c3d71d4867623ca2174` |
+| 4 | `docs/archive/v0.9.0/06-AIKB-部署与运维手册.md` | `HISTORICAL_ARCHIVE` | `RELEASE_OPERATIONS` | `applicable: true` | `NOT_VERIFIED` | `sha256:1c11cedae097f9ff73a7da1c31834c6d26e9e88699a8ebbac2e22cb080633d67` |
+| 5 | `docs/archive/v0.9.0/07-AIKB-关键架构决策.md` | `HISTORICAL_ARCHIVE` | `SYSTEM_ARCHITECTURE` | `applicable: true` | `NOT_VERIFIED` | `sha256:3ae3864b52dee48c975d9ab0cf7b8bc90a42b5fce49c35307c3aec1e03a12158` |
+| 6 | `docs/历史档案/2026-10-10-HISTORICAL-2、项目完整记忆.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:bb7169934b33b582bcba7d0edda18bd74af78cf91822c0a77df6926e4c9c8936` |
+| 7 | `docs/历史档案/2026-10-10-HISTORICAL-3、当前交接.md` | `HISTORICAL_ARCHIVE` | `CROSS_SESSION_HANDOFF` | `applicable: true` | `NOT_VERIFIED` | `sha256:45e47b2bc13cac9d713ff287bca1edb87651bee8b6a7a195ee8845843de87efb` |
+| 8 | `docs/历史档案/2026-10-10-HISTORICAL-4、版本记录.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:2fb0591f7d3412d0120284033540da0fada95937bf5a59ba54ed4414cd4136c1` |
+| 9 | `docs/历史档案/2026-10-10-HISTORICAL-5、会话索引.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:fd4999e08b53ea3983da32f9002cb7c7403de9e090fd25070f27cb6505d2faf3` |
+| 10 | `docs/历史档案/2026-10-10-HISTORICAL-6、最终运行状态.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:306539e861994888faa0cbfeabb1b4e13f8fd85d3f87bdaf6c534b96938f2586` |
+| 11 | `docs/历史档案/2026-10-10-HISTORICAL-7、恢复指南.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:77e57dc85e184a597cfdbb2f02fdd2e8196ed209c811f5f286493432412b2e94` |
+| 12 | `docs/历史档案/2026-10-10-HISTORICAL-9、开发现场交接.md` | `HISTORICAL_ARCHIVE` | `CROSS_SESSION_HANDOFF` | `applicable: true` | `NOT_VERIFIED` | `sha256:eb88ad690bfc95935bc81180add28fba1e81714d00457bf0a9fdf1b42e1de5d6` |
+| 13 | `docs/历史档案/2026-10-10-HISTORICAL-AI-KB-共享推理资源画像.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:f1e2a9794d0fc9873915cb07b8673903efb4e1543ab8610031bf816068c8b2ac` |
+| 14 | `docs/历史档案/2026-10-10-HISTORICAL-AI-KB-网络配置画像.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:40697a4aec823cc9b2254fd9b9f125c6cfa0b0773fc547986704ec3f75cb363d` |
+
+### 4.3 `vtip-platform-catalog`（共 1 份 `HISTORICAL_ARCHIVE` 文档）
+- **审计分支 (`branch`)**：`codex/Jira-AG-008-R4`
+- **事实 Commit (`source_commit`)**：`5ca15a013e083a6856c8f16b15eeceddf2e388bd`
+- **核验时间戳 (`timestamp`)**：`2026-10-29T15:34:57+08:00`
+
+| 序号 | 相对路径 | 原始类型 | 映射语义类型 | 适用性 | 测试状态 | 内容摘要 (SHA-256) |
+|:---|:---|:---|:---|:---|:---|:---|
+| 1 | `docs/archive/BASELINE-HISTORY.md` | `HISTORICAL_ARCHIVE` | `PRODUCT_BASELINE` | `applicable: true` | `NOT_VERIFIED` | `sha256:200e37209305ee4b6150fb9d3fbaade468b9aab0452817ce69877dab898121dd` |
+
+### 4.4 `vtip-ai-sidecar`（共 20 份 `HISTORICAL_ARCHIVE` 文档）
+- **审计分支 (`branch`)**：`codex/sidecar-standards-docs-repo-alignment`
+- **事实 Commit (`source_commit`)**：`19d3cf0ca9b116aa8506b1725d50e51a38508a3d`
+- **核验时间戳 (`timestamp`)**：`2026-10-28T21:58:16+08:00`
+
+| 序号 | 相对路径 | 原始类型 | 映射语义类型 | 适用性 | 测试状态 | 内容摘要 (SHA-256) |
+|:---|:---|:---|:---|:---|:---|:---|
+| 1 | `docs/archive/commit-080bd1fdc93ddefb64682ee959c4b19c530708e7/source-contract.md` | `HISTORICAL_ARCHIVE` | `API_CONTRACT` | `applicable: true` | `NOT_VERIFIED` | `sha256:6ea23c96d8873c543667955b9d9a703fc446db0eb35327ffd5f4837d10ff63b1` |
+| 2 | `docs/archive/commit-0eb7515447c367baf51419f85aafa235c5f1785d/AG-016-R5-R2-IMPLEMENTATION-SUMMARY.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:6f51b7fd4f4178dd20283ae9710c584d37f9d27232f098264389f5df35cf7b5e` |
+| 3 | `docs/archive/commit-0eb7515447c367baf51419f85aafa235c5f1785d/AG-016-R5-R3-ROUTING-PRIORITY-FIX.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:64a9af988cbb4bac0c44e6d30d97ad3f422562f61ce95bcf6db175f434c3900d` |
+| 4 | `docs/archive/commit-0eb7515447c367baf51419f85aafa235c5f1785d/AG-016-R6-IMPLEMENTATION-SUMMARY.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:7ef5229e455a25f2b0f52a36c2be7c71b87edbf9106d1e1c18824cddd8407eee` |
+| 5 | `docs/archive/commit-0f9e6d6a949ec757331b2d12ed7b13ff87f3136c/ROOT_DOCUMENT_INVENTORY.md` | `HISTORICAL_ARCHIVE` | `DOCUMENT_INDEX` | `applicable: true` | `NOT_VERIFIED` | `sha256:4421b24242cc8599642c264aaa4c34a46eb1419885dde51917f798532d6c9c5d` |
+| 6 | `docs/archive/commit-0f9e6d6a949ec757331b2d12ed7b13ff87f3136c/workspace_cleanup_plan.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:f9eb1a61fdfce4399b732b74e32c80241f6b6ef7dcf140e00ea937df25af61c8` |
+| 7 | `docs/archive/commit-1c1d8c662b2f38c114d0147bc61aee4d1f2f2e3d/README.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:acd761ca1193900181d0d2217be424f514debb43cf3a1b1e7d846dd60fdd3c16` |
+| 8 | `docs/archive/commit-26dfcac64f7cebd591ee72de42c2673132cb7a40/JiraAi-AG-016-R4-FINAL-REPORT.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:546a28998820d07c7e4b6cf9160d7e55561467801749c78f886b2311d198b68d` |
+| 9 | `docs/archive/commit-63558d27543c12607a2a68ea0f431c48fa96df50/VTIP-AI-SIDECAR-共享推理资源画像.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:195b35e901fc5f4a7e53d3ce63abdfefa420f137f7a7ffa33b5b275f47452b9c` |
+| 10 | `docs/archive/commit-e5973867a1cddc79d71a5736c30b89f79723df2e/AI-NETWORK-STANDARD.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:4a322590f44f9d15c4e6a0dcab984c3618f41ccc9afbffaf7860cd22310e5b8c` |
+| 11 | `docs/archive/commit-e5973867a1cddc79d71a5736c30b89f79723df2e/AI-SHARED-RESOURCE-STANDARD.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:f33fa2d43a383ac48f0cfc4b33aa19423bb673c8d509b958675cec4e8ea91a3b` |
+| 12 | `docs/archive/commit-e5973867a1cddc79d71a5736c30b89f79723df2e/VTIP-AI-SIDECAR-网络配置画像.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:17e76455172fc4f812d674ef3160f53d1433b1e728f1d39f09820bd9ccd22604` |
+| 13 | `docs/archive/v0.11.0/VTIP-AI-SIDECAR-HANDOFF-20260918.md` | `HISTORICAL_ARCHIVE` | `CROSS_SESSION_HANDOFF` | `applicable: true` | `NOT_VERIFIED` | `sha256:fa084d3d54dbe66d5f3ee0f59746cbb3b1a05123f419879c5ede9603aac77c5f` |
+| 14 | `docs/archive/v0.11.3/JiraAi-AG-016-R5-FINAL-HANDOFF.md` | `HISTORICAL_ARCHIVE` | `CROSS_SESSION_HANDOFF` | `applicable: true` | `NOT_VERIFIED` | `sha256:283065fc18c8a93b10053d6af17554e1e5233843fd61f6f5ed653ec08472c4cc` |
+| 15 | `docs/archive/v0.15.2/evidence-identity-consistency.md` | `HISTORICAL_ARCHIVE` | `DECISION_RECORD` | `applicable: true` | `NOT_VERIFIED` | `sha256:1d30804f8c9627d55470de5e76511a7d91d0dd662d910cc6dcd32d9fdf245726` |
+| 16 | `docs/archive/v0.3.1/VTIP-AI-SIDECAR-HANDOFF-20260911.md` | `HISTORICAL_ARCHIVE` | `CROSS_SESSION_HANDOFF` | `applicable: true` | `NOT_VERIFIED` | `sha256:d896872f5a7788599e0f567fdfc02be31378ef319afa3b3a35d2b9a5f6cfbe76` |
+| 17 | `docs/archive/v0.5.0/UPSTREAM-DAILY-SEMANTIC-CONTRACT-REF.md` | `HISTORICAL_ARCHIVE` | `API_CONTRACT` | `applicable: true` | `NOT_VERIFIED` | `sha256:e9ba44b8ded379e61986a03a100445112cbf1225e97d00570ed0ec8cf27ad0db` |
+| 18 | `docs/archive/v0.5.0/VTIP-AI-SIDECAR-HANDOFF-20260914.md` | `HISTORICAL_ARCHIVE` | `CROSS_SESSION_HANDOFF` | `applicable: true` | `NOT_VERIFIED` | `sha256:87083122543f3ea125cd2f10a94753dfe99960129f0bd1b5056ae20fa9250e8d` |
+| 19 | `docs/archive/v0.7.0/VTIP-AI-SIDECAR-HANDOFF-20260916.md` | `HISTORICAL_ARCHIVE` | `CROSS_SESSION_HANDOFF` | `applicable: true` | `NOT_VERIFIED` | `sha256:5aeefd02f5ca721f1ddb4438367465af18f675134fb4384e1d2f03188b4cc5ed` |
+| 20 | `docs/HISTORICAL-ARCHIVE.md` | `HISTORICAL_ARCHIVE` | `DOCUMENT_INDEX` | `applicable: true` | `NOT_VERIFIED` | `sha256:a9760a4c931342d46528825b8ceeab868b9317afec01384cf918e800e168dace` |
 
 ---
 
