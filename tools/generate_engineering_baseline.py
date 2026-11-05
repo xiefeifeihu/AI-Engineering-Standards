@@ -436,9 +436,9 @@ def build_engineering_baseline(
             "source_commit": source_commit,
             "evidence_ref": ".artifacts/test_results.txt",
             "observed_at": now_iso,
-            "verification_status": "PASS",
-            "summary": "本地测试原始执行日志存在且核验通过",
-            "details": {"test_log": ".artifacts/test_results.txt"},
+            "verification_status": "NOT_VERIFIABLE",
+            "summary": "检测到文本测试日志，但未验证结构化结果、退出码、目标 Commit 与证据摘要；不得据此判定 PASS",
+            "details": {"test_log": ".artifacts/test_results.txt", "reason": "UNVERIFIED_TEXT_LOG"},
         }
     else:
         test_fact = {
@@ -529,7 +529,7 @@ def build_engineering_baseline(
             "tag_object_sha": str(lock_data.get("tag_object_sha")),
             "peeled_commit": str(lock_data.get("peeled_commit")),
             "source_path": "standards.lock.json",
-            "verification_status": "PASS",
+            "verification_status": "NOT_VERIFIABLE",
         },
         "git_identity": {
             "branch": branch_name,
@@ -581,9 +581,9 @@ def build_engineering_baseline(
             return False, [f"BASELINE_SCHEMA_VIOLATION: {ve.message}"], None, None
 
     # Determine baseline status & approval status based on source documents
-    has_in_review = any(doc[1].get("status") in ("IN_REVIEW", "CANDIDATE") for doc in source_docs.values())
-    baseline_status = "IN_REVIEW" if has_in_review else "ACTIVE"
-    baseline_approval_status = "IN_REVIEW" if has_in_review else "AI_APPROVED"
+    # Generation never grants approval; a separate trusted review event is required.
+    baseline_status = "IN_REVIEW"
+    baseline_approval_status = "IN_REVIEW"
 
     # Render deterministic Markdown for docs/当前权威基线.md
     cap_bullets = "\n".join(f"- {c}" for c in baseline_payload["product_capabilities"]["capabilities"])

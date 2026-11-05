@@ -637,6 +637,15 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         self.assertFalse(ok)
         self.assertTrue(any("UNVERIFIABLE_APPROVAL_PROVENANCE" in e for e in errs), f"Got: {errs}")
 
+    def test_d6_frontmatter_metadata_change_invalidates_canonical_digest(self) -> None:
+        original = "---\ndocument_id: DOC-HASH-001\nstatus: IN_REVIEW\n---\n# Body\n"
+        changed = "---\ndocument_id: DOC-HASH-001\nstatus: ACTIVE\n---\n# Body\n"
+        self.assertNotEqual(
+            compute_markdown_body_sha256(original),
+            compute_markdown_body_sha256(changed),
+            "Decision-relevant Frontmatter changes must invalidate the canonical digest",
+        )
+
     def test_d5_content_or_commit_change_invalidates_prior_approval(self) -> None:
         doc_text = "---\ndocument_id: DOC-3\n---\n# Original Content\n"
         body_hash = compute_markdown_body_sha256(doc_text)

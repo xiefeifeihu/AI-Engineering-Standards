@@ -203,10 +203,10 @@ def build_handoff_payload(
         test_results = test_results_override
     elif default_test_log.exists():
         test_results = {
-            "verification_status": "PASS",
+            "verification_status": "NOT_VERIFIABLE",
             "command": "python -m unittest discover -s tests -v",
-            "exit_code": 0,
-            "passed_count": 86,
+            "exit_code": None,
+            "passed_count": 0,
             "failed_count": 0,
             "evidence_ref": ".artifacts/test_results.txt",
         }
@@ -214,7 +214,7 @@ def build_handoff_payload(
         test_results = {
             "verification_status": "NOT_RUN",
             "command": "python -m unittest discover -s tests -v",
-            "exit_code": 0,
+            "exit_code": None,
             "passed_count": 0,
             "failed_count": 0,
             "evidence_ref": "NONE",
@@ -237,33 +237,14 @@ def build_handoff_payload(
     }
 
     # 6, 7, 8, 9, 10. Items, blockers, approved decisions, proposed items
-    comp_list = completed_items if completed_items is not None else [
-        "完成工作区与 GitHub 远端历史过时分支安全清理与核验",
-        "完成 documentation-approval 与 documentation-metadata 审批真实性与可信事件适配器 Schema 升级",
-        "完成 STD-001 与工程清单 Manifest 独立版本分离及 document_type_applicability 统一",
-        "完成 STD-035 核心生命周期修复与 12 类正式文档 IN_REVIEW 主入口元数据规范化",
-    ]
-    pend_list = pending_items if pending_items is not None else [
-        "更新 PR #8 并等待 GitHub Actions CI 真实运行全绿",
-        "在 Draft PR 阶段暂停，等待 ChatGPT 独立审核 GitHub PR Diff",
-        "等待 Owner 对 v3.0.0 正式批准后合入 main 并打 Tag",
-    ]
+    comp_list = completed_items if completed_items is not None else []
+    pend_list = pending_items if pending_items is not None else []
     blocker_list = blockers if blockers is not None else []
 
-    # Dynamically extract approved decisions from DECISION-RECORD.md
-    if approved_decisions is not None:
-        approved_list = approved_decisions
-    else:
-        approved_list = extract_adrs_from_decision_record(project_root)
+    # Markdown status labels alone are not approval provenance.
+    approved_list = approved_decisions if approved_decisions is not None else []
 
-    proposed_list = proposed_items if proposed_items is not None else [
-        {
-            "proposal_id": "PROP-SEMVER-V3-001",
-            "summary": "鉴于移除正式 document_type 枚举中的 HISTORICAL_ARCHIVE 对下游 37 份历史归档文档构成破坏性变更，按 STD-017 将 Standards 版本升级为 3.0.0，请 ChatGPT 审核并呈请 Owner 批准具体 PR Diff",
-            "requires_owner_approval": True,
-            "status": "PROPOSED",
-        }
-    ]
+    proposed_list = proposed_items if proposed_items is not None else []
 
     # Verify no proposed item is mixed into approved_decisions
     for dec in approved_list:
@@ -364,8 +345,9 @@ def build_handoff_payload(
     cmd_md = "\n".join(f"   - `{c}`" for c in next_guide["verification_commands"])
     step_md = "\n".join(f"   - {s}" for s in next_guide["immediate_next_steps"])
 
-    doc_status = "IN_REVIEW" if status in ("IN_PROGRESS", "IN_REVIEW") else "ACTIVE"
-    doc_approval = "IN_REVIEW" if doc_status == "IN_REVIEW" else "AI_APPROVED"
+    # Generation never grants approval; a separate trusted review event is required.
+    doc_status = "IN_REVIEW"
+    doc_approval = "IN_REVIEW"
 
     md_lines = [
         "---",
