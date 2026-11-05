@@ -14,7 +14,7 @@ supersedes: null
 change_summary: "CLI, JSON Schema, and Cross-Project Governance Data Contracts for AI-Engineering-Standards v3.0.0."
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
-content_sha256: "sha256:e5538735b261bdce899bafc59baa84e0eee7b7e6cbdd7ae1eca5cce4927b775b"
+content_sha256: null
 ---
 
 
@@ -29,7 +29,7 @@ content_sha256: "sha256:e5538735b261bdce899bafc59baa84e0eee7b7e6cbdd7ae1eca5cce4
 - [`schemas/cross-session-handoff.schema.json`](../schemas/cross-session-handoff.schema.json)：`STD-020` 跨会话自动采集交接 11 项字段契约。
 - [`schemas/engineering-manifest.schema.json`](../schemas/engineering-manifest.schema.json)：`STD-001` 工程清单唯一权威 Schema（与 [`governance/engineering-manifest-schema.json`](../governance/engineering-manifest-schema.json) 保持兼容镜像一致）。
 
-## 2. 官方 CLI 工具调用契约 (`tools/`)
+## 2. 官方 CLI 工具调用契约（Tools）
 
 | 命令入口 | 子命令 / 参数 | 返回码与输出契约 |
 | :--- | :--- | :--- |
@@ -38,3 +38,8 @@ content_sha256: "sha256:e5538735b261bdce899bafc59baa84e0eee7b7e6cbdd7ae1eca5cce4
 | `python tools/generate_engineering_baseline.py` | `--project-root <DIR> [--verify-only] [--observed-at <ISO>]` | 确定性生成或校验 `docs/当前权威基线.md` 与 `.artifacts/baseline/engineering_baseline.json`；源冲突时返回 `1` |
 | `python tools/generate_handoff.py` | `--project-root <DIR> --task-id <ID> [--version <VER>]` | 自动采集 11 项工程事实并生成 `docs/CROSS-SESSION-HANDOFF.md` 与 `handoff/<TASK-ID>-<VERSION>-handoff.md` |
 | `python tools/validate_approval_contract.py` | `--approval-file <JSON> [--document-file <MD>] [--expected-commit <SHA>]` | 校验双层审批契约、反自批及 SHA-256/Commit 一致性；通过返回 `0`，违例返回 `1` |
+
+
+## 3. 消费端调用与权限边界
+
+完整接入步骤、共享工具引用方式、依赖安装、模板复制、Windows/Linux 命令、CI 示例及升级/回滚流程统一见 [`Standards消费端接入与工具使用协议`](./Standards消费端接入与工具使用协议.md)。消费工程 **MUST NOT** 复制并分叉 `tools/`、`schemas/` 或标准正文；应通过固定版本的官方仓库引用调用。

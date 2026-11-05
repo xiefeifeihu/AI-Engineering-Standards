@@ -2,12 +2,16 @@
 
 All notable changes to the AI Engineering Standards baseline are documented in this file.
 
-## [3.0.0] - 2026-11-05
+## [Unreleased]
+
+> RELEASE_STATUS=CANDIDATE | PROPOSED_VERSION=3.0.0 | MAIN_MERGED=false | RELEASE_TAG_NOT_CREATED=true
+>
+> 本节记录 PR #8 的候选变更。只有合入官方 main、main CI 通过并创建正式 Annotated Tag 后，才可迁移为带发布日期的 `## [3.0.0] - YYYY-MM-DD`。
 
 ### Added
 - **12 类正式文档分类与 ENGINEERING_BASELINE 规范 (STD-035 v3.0.0 / D1=APPROVED)**:
   - 正式 document_type 调整为 12 类：PROJECT_BLUEPRINT、PRODUCT_BASELINE、SYSTEM_ARCHITECTURE、TECHNICAL_DESIGN、API_CONTRACT、PROTOTYPE_UX、TEST_ACCEPTANCE、RELEASE_OPERATIONS、DECISION_RECORD、CROSS_SESSION_HANDOFF、DOCUMENT_INDEX、ENGINEERING_BASELINE。
-  - 新增 docs/当前权威基线.md (ENGINEERING_BASELINE) 确定性综合视图，汇聚 10 类正式文档与 9 类实时工程事实，强制记录 18 项核心内容与 6 项动态溯源字段 (repository, source_path, source_commit, evidence_ref, observed_at, verification_status)。
+  - 新增 docs/当前权威基线.md (ENGINEERING_BASELINE) 确定性综合视图，汇聚 11 类正式文档与 10 类实时工程事实，强制记录 18 项核心内容与 6 项动态溯源字段 (repository, source_path, source_commit, evidence_ref, observed_at, verification_status)。
   - 新增 schemas/engineering-baseline.schema.json、templates/documentation/ENGINEERING-BASELINE.template.md 与 tools/generate_engineering_baseline.py。
 - **文档审核与晋升双层审批契约 (STD-035 §4 / STD-034 §16 / D2=APPROVED)**:
   - 解耦文档生命周期状态 (CANDIDATE, IN_REVIEW, ACTIVE, SUPERSEDED, ARCHIVED) 与审批状态 (NOT_SUBMITTED, IN_REVIEW, AI_APPROVED, OWNER_APPROVAL_REQUIRED, OWNER_APPROVED, REJECTED, BLOCKED)。
@@ -19,7 +23,7 @@ All notable changes to the AI Engineering Standards baseline are documented in t
   - 新增 schemas/standards-lock.schema.json 与 templates/standards.lock.template.json，强制锁定 version、tag、tag_object_sha、peeled_commit 并保留 previous_locks 历史栈。
   - 新增 tools/standards_sync/ 官方共享工具 (discover, verify-lock, compare, impact, prepare-upgrade, validate-upgrade, promote, rollback)。
 - **跨工程迁移指南 (docs/migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)**:
-  - 提供面向 AI-Engineering-Hub、AI-KB、vtip-platform-catalog、vtip-ai-sidecar 四大工程的 10 维度兼容性影响矩阵、历史文档重分类方案与回滚方案。
+  - 提供以 AI-Engineering-Hub 为首个消费端试点的接入与验证方案；其他工程不在本次迁移范围内。
 
 ### Changed (BREAKING)
 - **移除 HISTORICAL_ARCHIVE 正式文档类型枚举 (D1=APPROVED)**:

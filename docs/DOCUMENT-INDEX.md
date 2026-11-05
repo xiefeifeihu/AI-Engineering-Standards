@@ -14,7 +14,7 @@ supersedes: null
 change_summary: "Canonical 12-type documentation index for AI-Engineering-Standards v3.0.0 (STD-035)."
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
-content_sha256: "sha256:c1d64c0567a352e93f1f35353adf00e40d16b06a7a655836486a43351e2e5151"
+content_sha256: null
 ---
 
 
@@ -22,7 +22,7 @@ content_sha256: "sha256:c1d64c0567a352e93f1f35353adf00e40d16b06a7a655836486a4335
 
 > **工程标识**：`ai-engineering-standards`  
 > **规范依据**：[`STD-035`](../standards/17-documentation/STD-035-documentation-lifecycle.md) v3.0.0  
-> **单一权威规则**：本索引是 `AI-Engineering-Standards` 仓库文档集合的唯一总入口。12 类正式工程文档中每类仅允许存在唯一一份 `status: ACTIVE` 且 `primary_entrypoint: true` 的主入口文档。
+> **单一权威规则**：本索引是 `AI-Engineering-Standards` 仓库文档集合的唯一总入口。12 类正式工程文档中每类仅允许存在唯一一份 `primary_entrypoint: true` 的主入口文档；候选 PR 阶段为 `IN_REVIEW`，正式发布后才可转为 `ACTIVE`。
 
 ---
 
@@ -30,8 +30,8 @@ content_sha256: "sha256:c1d64c0567a352e93f1f35353adf00e40d16b06a7a655836486a4335
 
 | 序号 | 文档类型 (`document_type`) | 权威文档路径 | 文档 ID (`document_id`) | 状态 | 职责说明 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | `DOCUMENT_INDEX` | [`docs/DOCUMENT-INDEX.md`](./DOCUMENT-INDEX.md) | `DOC-STANDARDS-DOCUMENT-INDEX` | `ACTIVE` | 全库文档集合总入口、适用性声明与归档导航 |
-| 2 | `ENGINEERING_BASELINE` | [`docs/当前权威基线.md`](./当前权威基线.md) | `DOC-AI-ENGINEERING-STANDARDS-ENGINEERING-BASELINE-001` | `ACTIVE` | 10 类正式文档与 9 类实时工程事实自动生成综合视图 |
+| 1 | `DOCUMENT_INDEX` | [`docs/DOCUMENT-INDEX.md`](./DOCUMENT-INDEX.md) | `DOC-STANDARDS-DOCUMENT-INDEX` | `IN_REVIEW` | 全库文档集合总入口、适用性声明与归档导航 |
+| 2 | `ENGINEERING_BASELINE` | [`docs/当前权威基线.md`](./当前权威基线.md) | `DOC-AI-ENGINEERING-STANDARDS-ENGINEERING-BASELINE-001` | `ACTIVE` | 11 类正式文档与 10 类实时工程事实自动生成综合视图 |
 | 3 | `PROJECT_BLUEPRINT` | [`docs/PROJECT-BLUEPRINT.md`](./PROJECT-BLUEPRINT.md) | `DOC-STANDARDS-PROJECT-BLUEPRINT` | `ACTIVE` | 跨工程规范权威源顶层愿景、仓库边界与阶段演进蓝图 |
 | 4 | `PRODUCT_BASELINE` | [`docs/PRODUCT-BASELINE.md`](./PRODUCT-BASELINE.md) | `DOC-STANDARDS-PRODUCT-BASELINE` | `ACTIVE` | `STD-001` 至 `STD-035` 规范族、30 个 Schema 与官方工具能力基线 |
 | 5 | `SYSTEM_ARCHITECTURE` | [`docs/SYSTEM-ARCHITECTURE.md`](./SYSTEM-ARCHITECTURE.md) | `DOC-STANDARDS-SYSTEM-ARCHITECTURE` | `ACTIVE` | 唯一规范权威源架构、四库单向依赖拓扑与变更同步边界 |
@@ -45,8 +45,10 @@ content_sha256: "sha256:c1d64c0567a352e93f1f35353adf00e40d16b06a7a655836486a4335
 
 ---
 
-## 2. 跨工程迁移指南与专项文档 (`primary_entrypoint: false`)
+## 2. 补充规范、接入协议与迁移资料（`primary_entrypoint: false`）
 
-- [`docs/migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md`](./migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)：`v3.0.0` 权威基线自动维护、双层审批与版本受控同步跨工程迁移指南。
+- [`docs/Standards消费端接入与工具使用协议.md`](./Standards消费端接入与工具使用协议.md)：共享工具、模板、版本锁定、CI 接入及升级回滚的消费端统一协议。
+- [`docs/migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md`](./migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)：以 AI-Hub 为首个消费端试点的候选迁移方案。
+- [`docs/目录导航.md`](./目录导航.md)：仓库目录和文件的中文（英文）职责导航。
 - [`docs/migration/MIGRATION-GUIDE-AI-DRIVEN-TEST-GOVERNANCE-v2.11.0.md`](./migration/MIGRATION-GUIDE-AI-DRIVEN-TEST-GOVERNANCE-v2.11.0.md)：`v2.11.0` AI 自主测试设计与持续用例治理迁移指南。
 - [`docs/migration/MIGRATION-GUIDE-STD-035.md`](./migration/MIGRATION-GUIDE-STD-035.md)：`v2.9.0` 工程文档生命周期初始接入指南（已由 `v3.0.0` 迁移指南演进替代）。

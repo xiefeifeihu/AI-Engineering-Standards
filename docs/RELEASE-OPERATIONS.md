@@ -14,7 +14,7 @@ supersedes: null
 change_summary: "Release & Operations Manual for AI-Engineering-Standards v3.0.0 covering Draft PR gate, independent review, main CI verification, and Annotated Tag governance."
 history_reference: "standards/13-git-release/STD-017-git-release-versioning.md"
 primary_entrypoint: true
-content_sha256: "sha256:7be94368a1ceb8f8bba773cd39f07a1490aa73618a3d1fe69752f163b9eed64e"
+content_sha256: null
 ---
 
 
@@ -39,3 +39,26 @@ content_sha256: "sha256:7be94368a1ceb8f8bba773cd39f07a1490aa73618a3d1fe69752f163
 
 - **规范发布前阻断**：若 Draft PR 远端 CI、ChatGPT 审核或 Owner 审批未通过，保持 Draft 状态在特性分支修正，严禁合入 `main` 或创建正式 Tag。
 - **下游工程同步回滚**：若下游工程在升级后发现回归异常，执行 `python tools/standards_sync/cli.py rollback --project-root <PROJECT_ROOT>` 立即恢复 `previous_locks` 中的上一版已验证四元组锁定。
+
+
+## 3. 版本与发布生命周期（Version & Release Lifecycle）
+
+Standards 的候选版本与正式发布版本必须严格区分：
+
+| 状态 | 判定条件 | 是否可作为消费端最新正式版本 |
+|---|---|---|
+| `UNRELEASED` | 变更仅存在工作分支或 Draft PR；CHANGELOG 位于 `[Unreleased]` | 否 |
+| `CANDIDATE` | 已有候选 `VERSION`、PR 和候选 Commit，但尚未合入 main | 否 |
+| `APPROVED` | ChatGPT 审核完成，Owner 必批事项已明确批准 | 否，仍需合入及 main CI |
+| `MERGED` | 已合入官方 main，main CI 尚未完成或未通过 | 否 |
+| `RELEASED` | main CI 通过，正式 Annotated Tag 已创建并核验 Tag Object/Peeled Commit/VERSION 一致 | 是 |
+| `SUPERSEDED` | 已被更新的正式 Release 替代 | 否，保留历史 |
+
+- `VERSION` 是当前工作树声明的候选版本，不单独证明已发布。
+- `CHANGELOG.md` 的 `[Unreleased]` 内容仅在正式 Tag 创建后，才可归档为带发布日期的版本章节。
+- `standards.lock.json` 记录工程当前采用的正式版本，不得因候选分支的 `VERSION` 提前升级。
+- 消费端发现到候选 Tag 或 main 上未发布 Commit 时，必须返回非正式状态，不得自动晋升。
+
+## 4. 消费端发布边界
+
+本次 v3.0.0 候选以 AI-Engineering-Hub 为首个消费端试点。试点计划、当前观测基线和验收边界见 [`migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md`](./migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)。本 PR 不授权修改 Hub，也不授权 AI-KB、VTIP 或 SideCar 升级。

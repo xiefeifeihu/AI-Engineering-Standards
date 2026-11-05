@@ -14,7 +14,7 @@ supersedes: null
 change_summary: "Continuous Test & Acceptance Baseline for AI-Engineering-Standards v3.0.0 covering Schema, Document Collection, Standards Sync, Approval Authenticity, and Cross-Platform gates."
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
-content_sha256: "sha256:e319ce1831f56f55a332bfdc8f6bb2bb3049bee7c5401bab004fbe360db89884"
+content_sha256: null
 ---
 
 
@@ -41,3 +41,12 @@ content_sha256: "sha256:e319ce1831f56f55a332bfdc8f6bb2bb3049bee7c5401bab004fbe36
 | `TC-SYNC-002` | 同步工具测试 | CI 失败阻断、网络超时返回 `NOT_VERIFIABLE`、晋升与回滚闭环 | `ci_status!=PASS` 阻断晋升；超时返回 `NOT_VERIFIABLE`；`rollback` 精确恢复历史锁 | `tests/test_baseline_sync_and_approval_governance.py` |
 | `TC-APPR-001` | 审批真实性测试 | 拦截编程智能体自批 `AI_APPROVED` / `OWNER_APPROVED` | 拒绝 `CODING_AGENT` 审批人；篡改文档正文或 Commit 后原审批立即失效 | `tests/test_baseline_sync_and_approval_governance.py` |
 | `TC-PLAT-001` | 跨平台测试 | 扫描 `tools/` 无硬编码 `D:/Projects` 等机器私有路径 | Windows 与 Linux 环境统一通过 | `tests/test_baseline_sync_and_approval_governance.py` |
+
+
+## 3. 消费端集成契约测试
+
+- `TC-CONSUMER-001`：缺少 `standards.lock.json` 时，版本比较/影响分析不得静默回退到固定历史版本。
+- `TC-CONSUMER-002`：发现工具只能访问官方仓库 `xiefeifeihu/AI-Engineering-Standards`，任意 Fork 或非官方 Remote 必须阻断。
+- `TC-CONSUMER-003`：模板不得将某一历史正式版本写成所有工程的默认最新版本。
+- `TC-CONSUMER-004`：迁移计划仅将 AI-Engineering-Hub 标记为首个试点；AI-KB、VTIP、SideCar 不得被静态标记为兼容或要求升级。
+- `TC-CONSUMER-005`：兼容性维度未执行测试/安全/业务回归时，结果必须保持 `NOT_RUN` 或 `NOT_VERIFIABLE`，不得汇总为 `COMPATIBLE`。

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -35,6 +36,31 @@ from tools.standards_sync.core import (
     validate_upgrade_candidate,
     verify_project_lock,
 )
+
+
+def resolve_locked_standards_ref(project_root: Path, explicit_from: str | None = None) -> str | None:
+    """Resolve a source ref without silently selecting a historical default."""
+    if explicit_from:
+        return explicit_from
+    lock_path = project_root / "standards.lock.json"
+    if not lock_path.exists():
+        return None
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if lock.get("repository") != DEFAULT_OFFICIAL_REPO:
+        return None
+    tag = str(lock.get("tag") or "").strip()
+    version = str(lock.get("version") or "").strip()
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+        return None
+    if tag.lstrip("v") != version:
+        return None
+    for field in ("tag_object_sha", "peeled_commit"):
+        if not re.fullmatch(r"[0-9a-f]{40}", str(lock.get(field) or "")):
+            return None
+    return tag
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -128,21 +154,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "PASS" else 1
 
-    def resolve_from_ref(p_root: Path, explicit_from: str | None) -> str:
-        if explicit_from:
-            return explicit_from
-        lock_f = p_root / "standards.lock.json"
-        if lock_f.exists():
-            try:
-                lk = json.loads(lock_f.read_text(encoding="utf-8"))
-                return str(lk.get("tag") or lk.get("version") or "v2.11.0")
-            except Exception:
-                pass
-        return "v2.11.0"
-
     if args.subcommand == "compare":
         p_root = Path(args.project_root)
-        eff_from = resolve_from_ref(p_root, args.from_ref)
+        eff_from = resolve_locked_standards_ref(p_root, args.from_ref)
+        if not eff_from:
+            print(json.dumps({"status": "BLOCK", "reason": "MISSING_OR_INVALID_STANDARDS_LOCK: Provide a valid exact four-tuple lock or explicit --from-ref for read-only bootstrap analysis"}, indent=2))
+            return 1
         res = compare_versions_and_artifacts(
             from_ref=eff_from,
             to_ref=args.to_ref,
@@ -153,7 +170,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.subcommand == "impact":
         p_root = Path(args.project_root)
-        eff_from = resolve_from_ref(p_root, args.from_ref)
+        eff_from = resolve_locked_standards_ref(p_root, args.from_ref)
+        if not eff_from:
+            print(json.dumps({"status": "BLOCK", "reason": "MISSING_OR_INVALID_STANDARDS_LOCK: Provide a valid exact four-tuple lock or explicit --from-ref for read-only bootstrap analysis"}, indent=2))
+            return 1
         res = analyze_consumer_impact(
             project_root=p_root,
             from_ref=eff_from,

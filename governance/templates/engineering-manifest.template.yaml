@@ -7,10 +7,10 @@ schema_version: "1.3.0"
 
 standards:
   repository: "xiefeifeihu/AI-Engineering-Standards"
-  version: "2.11.0"
-  tag: "v2.11.0"
-  tag_object_sha: "2f4b4b54348a5ac8891e5a0b33c04635a27213a0"
-  peeled_commit: "5e17c0ef560ab8abafe880b988d70f85f380a104"
+  version: "{{DISCOVERED_VERSION}}"
+  tag: "{{DISCOVERED_TAG}}"
+  tag_object_sha: "{{DISCOVERED_TAG_OBJECT_SHA}}"
+  peeled_commit: "{{DISCOVERED_PEELED_COMMIT}}"
   lock_file: "standards.lock.json"
 
 project:

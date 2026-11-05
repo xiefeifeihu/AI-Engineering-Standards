@@ -37,7 +37,7 @@ SCHEMA_REF=schemas/cross-session-handoff.schema.json, schemas/documentation-meta
 
 ## 2. 跨会话交接十项加一自动化采集要求 (Automated Handoff Collection Requirements)
 
-跨会话交接生成器（`tools/generate_handoff.py`）与机器校验契约（`schemas/cross-session-handoff.schema.json`）**MUST** 自动采集、结构化记录并验证以下 11 项核心工程事实：
+跨会话交接生成器（`tools/generate_handoff.py`）与机器校验契约（`schemas/cross-session-handoff.schema.json`）**MUST** 自动采集、结构化记录并验证以下 11 项核心工程事实。生成器 **MUST NOT** 根据任务完成状态、文件存在或 Markdown 状态字符串自动授予 `AI_APPROVED` / `OWNER_APPROVED`；新生成的候选交接默认保持 `status: IN_REVIEW` 与 `approval_status: IN_REVIEW`，经 ChatGPT 独立审核后，按 `approval_scope` 决定是否需要 Owner 批准，满足审批与 Git 门禁后方可转为 `ACTIVE`。
 
 1. **自动采集 Git 状态 (`git_state.status_summary`)**：实时执行 `git status -sb`，如实记录工作区是否干净（`worktree_clean`）及未提交变更摘要。
 2. **自动采集分支及 Commit (`git_state.branch`, `local_head`, `remote_head`)**：实时采集当前分支名、本地 `HEAD` 精确 Commit SHA 及远端跟踪分支 Commit（若网络不可达则标记 `NOT_VERIFIABLE`）。

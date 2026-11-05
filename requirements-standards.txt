@@ -1,0 +1,4 @@
+# Runtime dependencies for the official Standards validators and generators.
+# Keep ranges bounded; CI and consumer projects install this same dependency contract.
+jsonschema>=4.21,<5
+PyYAML>=6.0,<7

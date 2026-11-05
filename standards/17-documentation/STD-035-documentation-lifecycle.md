@@ -163,18 +163,19 @@ approval_evidence_ref: "docs/approvals/DOC-STD-ENGINEERING-BASELINE-001.approval
 
 ### 4.2 强制信息来源
 基线生成器（`tools/generate_engineering_baseline.py`）**MUST** 聚合以下两类权威输入：
-1. **十类正式文档事实源**：
+1. **十一类正式文档事实源**：
    - 1) `PROJECT-BLUEPRINT`
    - 2) `PRODUCT-BASELINE`
    - 3) `SYSTEM-ARCHITECTURE`
    - 4) `TECHNICAL-DESIGN`
    - 5) `API-CONTRACT`
-   - 6) `DECISION-RECORD`
-   - 7) `TEST-ACCEPTANCE`
-   - 8) `RELEASE-OPERATIONS`
-   - 9) `DOCUMENT-INDEX`
-   - 10) `CROSS-SESSION-HANDOFF`
-2. **九类实时工程事实**：
+   - 6) `PROTOTYPE-UX`
+   - 7) `DECISION-RECORD`
+   - 8) `TEST-ACCEPTANCE`
+   - 9) `RELEASE-OPERATIONS`
+   - 10) `DOCUMENT-INDEX`
+   - 11) `CROSS-SESSION-HANDOFF`
+2. **十类实时工程事实**：
    - `Git`（当前分支、本地 HEAD、工作区状态）
    - `GitHub main`（远端 `origin/main` 精确 Commit）
    - `Git Tag`（最新正式附注 Tag、Tag Object SHA 与 Peeled Commit）
@@ -185,6 +186,8 @@ approval_evidence_ref: "docs/approvals/DOC-STD-ENGINEERING-BASELINE-001.approval
    - `Acceptance`（最近验收证据状态）
    - `Test Evidence`（实际执行的单元/契约/集成测试结果）
    - `Standards Lock`（`standards.lock.json` 与 `engineering-manifest.yaml` 锁定一致性）
+
+
 
 ### 4.3 基线十八项必填内容
 每份 `ENGINEERING_BASELINE` **MUST** 至少包含以下 18 项结构化章节与字段：

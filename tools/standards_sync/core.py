@@ -218,9 +218,18 @@ def discover_latest_official_tag(
             "reason": "Network unavailable; refusing to use local cache as latest official release",
         }
 
-    effective_remote = remote_url or f"https://github.com/{repository}.git"
+    official_remote = f"https://github.com/{DEFAULT_OFFICIAL_REPO}.git"
+    if remote_url:
+        supplied_remote = str(remote_url).rstrip("/")
+        accepted_remotes = {official_remote, official_remote[:-4]}
+        if supplied_remote not in accepted_remotes:
+            return {
+                "status": "BLOCK",
+                "repository": repository,
+                "reason": "UNOFFICIAL_REMOTE_FORBIDDEN: Discovery is restricted to the canonical official GitHub repository URL",
+            }
     ls_status, refs, err_msg = query_remote_ls_remote(
-        remote_url=effective_remote,
+        remote_url=official_remote,
         cwd=std_root if std_root.exists() else None,
         timeout=timeout,
     )
@@ -820,20 +829,46 @@ def analyze_consumer_impact(
     std_root = resolve_standards_root(standards_root)
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Read project lock to determine input_commit and from_ref
+    # Read the consumer's exact lock. Never infer or silently fall back to a historical version.
     lock_path = project_root / "standards.lock.json"
     input_commit = "UNKNOWN"
     eff_from = from_ref
     if lock_path.exists():
         try:
             lk = json.loads(lock_path.read_text(encoding="utf-8"))
-            input_commit = str(lk.get("peeled_commit") or "UNKNOWN")
-            if not eff_from:
-                eff_from = str(lk.get("tag") or lk.get("version") or "v2.11.0")
-        except Exception:
-            pass
-    if not eff_from:
-        eff_from = "v2.11.0"
+        except Exception as exc:
+            return {
+                "status": "BLOCK",
+                "analysis_status": "FAILED",
+                "compatibility_status": "UPGRADE_BLOCKED",
+                "reason": f"CORRUPT_STANDARDS_LOCK: {exc}",
+            }
+        required_fields = ("repository", "version", "tag", "tag_object_sha", "peeled_commit")
+        missing_fields = [field for field in required_fields if not lk.get(field)]
+        if missing_fields:
+            return {
+                "status": "BLOCK",
+                "analysis_status": "FAILED",
+                "compatibility_status": "UPGRADE_BLOCKED",
+                "reason": f"INCOMPLETE_STANDARDS_LOCK: Missing {missing_fields}",
+            }
+        if lk.get("repository") != DEFAULT_OFFICIAL_REPO:
+            return {
+                "status": "BLOCK",
+                "analysis_status": "FAILED",
+                "compatibility_status": "UPGRADE_BLOCKED",
+                "reason": "UNOFFICIAL_REPOSITORY_FORBIDDEN",
+            }
+        input_commit = str(lk["peeled_commit"])
+        if not eff_from:
+            eff_from = str(lk["tag"])
+    elif not eff_from:
+        return {
+            "status": "BLOCK",
+            "analysis_status": "FAILED",
+            "compatibility_status": "UPGRADE_BLOCKED",
+            "reason": "MISSING_STANDARDS_LOCK: Supply an explicit --from-ref only for a read-only bootstrap assessment; promotion still requires a verified four-tuple lock",
+        }
 
     target_commit = "WORKTREE"
     if to_ref not in ("WORKTREE", "CURRENT"):
@@ -1111,13 +1146,21 @@ def prepare_upgrade_candidate(
         to_ref=target_tag,
         standards_root=std_root,
     )
-    if impact.get("status") != "PASS" or impact.get("compatibility_status") != "COMPATIBLE":
-        blocked = impact.get("compatibility_status") == "UPGRADE_BLOCKED"
+    if impact.get("compatibility_status") == "UPGRADE_BLOCKED" or impact.get("analysis_status") == "FAILED":
         return {
-            "status": "BLOCK" if blocked else "NOT_VERIFIABLE",
-            "reason": "UPGRADE_BLOCKED" if blocked else "IMPACT_ANALYSIS_INCOMPLETE",
+            "status": "BLOCK",
+            "reason": "UPGRADE_BLOCKED",
             "impact": impact,
         }
+    if impact.get("compatibility_status") not in ("COMPATIBLE", "NOT_VERIFIABLE"):
+        return {
+            "status": "NOT_VERIFIABLE",
+            "reason": "IMPACT_ANALYSIS_INCOMPLETE",
+            "impact": impact,
+        }
+    # Candidate preparation is not approval or promotion. A partial impact
+    # report may be saved for review, but the lock cannot be promoted until
+    # all required consumer evidence is independently verified.
 
     cand_dir = project_root / ".artifacts" / "standards_upgrade" / target_tag
     cand_dir.mkdir(parents=True, exist_ok=True)
