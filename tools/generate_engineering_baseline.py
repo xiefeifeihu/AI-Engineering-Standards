@@ -266,6 +266,7 @@ def build_engineering_baseline(
 
     # 4. Collect Git identity facts
     rc_head, git_head = run_git(project_root, ["rev-parse", "HEAD"])
+    local_head = git_head if rc_head == 0 and re.fullmatch(r"[0-9a-f]{40}", git_head) else "NOT_VERIFIABLE"
     if source_commit_override:
         if not re.match(r"^[0-9a-f]{40}$", source_commit_override):
             errors.append(f"BASELINE_CONFLICT_INVALID_COMMIT: source_commit_override '{source_commit_override}' is not 40-hex SHA")
@@ -279,7 +280,7 @@ def build_engineering_baseline(
     rc_branch, git_branch = run_git(project_root, ["branch", "--show-current"])
     branch_name = git_branch if rc_branch == 0 and git_branch else "HEAD"
     rc_status, git_status_out = run_git(project_root, ["status", "--porcelain"])
-    worktree_clean = rc_status == 0 and len(git_status_out.strip()) == 0
+    worktree_clean = (len(git_status_out.strip()) == 0) if rc_status == 0 else None
 
     # Live query remote main - never fallback to local cache
     remote_main_head = query_remote_main_head(project_root)
@@ -342,6 +343,29 @@ def build_engineering_baseline(
         )
     elif len(doc_source_commits) == 1 and not source_commit_override:
         source_commit = next(iter(doc_source_commits))
+
+    # A declared source_commit must be a real commit in this repository and
+    # must contain every source document used to build the baseline.
+    if source_commit:
+        if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+            errors.append(f"BASELINE_CONFLICT_INVALID_SOURCE_COMMIT: '{source_commit}' is not a full 40-hex SHA")
+        else:
+            rc_source, _ = run_git(project_root, ["cat-file", "-e", f"{source_commit}^{{commit}}"])
+            if rc_source != 0:
+                errors.append(f"BASELINE_CONFLICT_SOURCE_COMMIT_NOT_FOUND: {source_commit}")
+            for source_type, (source_path, _, _) in source_docs.items():
+                rel_path = source_path.relative_to(project_root).as_posix()
+                rc_path, _ = run_git(project_root, ["cat-file", "-e", f"{source_commit}:{rel_path}"])
+                if rc_path != 0:
+                    errors.append(
+                        f"BASELINE_CONFLICT_SOURCE_PATH_NOT_IN_COMMIT: {source_type} path '{rel_path}' does not exist at {source_commit}"
+                    )
+            if rc_head == 0 and re.fullmatch(r"[0-9a-f]{40}", git_head):
+                rc_ancestor, _ = run_git(project_root, ["merge-base", "--is-ancestor", source_commit, git_head])
+                if rc_ancestor != 0:
+                    errors.append(
+                        f"BASELINE_CONFLICT_SOURCE_COMMIT_NOT_ANCESTOR: {source_commit} is not an ancestor of current HEAD {git_head}"
+                    )
 
     if errors:
         return False, errors, None, None
@@ -533,10 +557,10 @@ def build_engineering_baseline(
         },
         "git_identity": {
             "branch": branch_name,
-            "local_head": source_commit,
+            "local_head": local_head,
             "remote_main_head": remote_main_head,
             "worktree_clean": worktree_clean,
-            "verification_status": "PASS" if rc_head == 0 else "NOT_VERIFIABLE",
+            "verification_status": "PASS" if rc_head == 0 and rc_status == 0 else "NOT_VERIFIABLE",
         },
         "recent_ci_facts": ci_fact,
         "recent_build_facts": build_fact,
@@ -544,9 +568,9 @@ def build_engineering_baseline(
         "test_and_acceptance_facts": test_fact,
         "open_issues": [
             {
-                "issue_id": "MIGRATION-DOWNSTREAM-V3-001",
-                "summary": "下游四大工程 (AI-Hub, AI-KB, VTIP, SideCar) 待在本仓库 v3.0.0 正式发布后按迁移指南执行受控升级",
-                "status": "DEFERRED",
+                "issue_id": "AIHUB-FIRST-CONSUMER-PILOT-001",
+                "summary": "AI-Hub 是首个消费端试点，待 Standards 正式发布后由 AI-Hub Owner 独立批准并执行；AI-KB、VTIP、SideCar 不在本轮范围",
+                "status": "PROPOSED",
             }
         ],
         "pending_approvals": [
@@ -646,7 +670,8 @@ def build_engineering_baseline(
         "",
         "## 2. 当前产品版本 (`product_version`)",
         f"- **当前版本 (`VERSION`)**：`{version_str}`",
-        f"- **目标发布标签 (`release_tag`)**：`v{version_str}`",
+        f"- **候选目标标签 (`release_tag`)**：`v{version_str}`",
+        "- **正式发布状态**：候选分支上的 VERSION 不等于正式发布；正式版本以官方 main 上的 Annotated Tag 和 main CI 为准。",
         f"- **版本事实来源**：`VERSION` @ `{source_commit}`",
         "",
         "## 3. 正式产品功能及职责 (`product_capabilities`)",
@@ -681,9 +706,9 @@ def build_engineering_baseline(
         "",
         "## 8. Git 分支及 Commit 身份 (`git_identity`)",
         f"- **当前分支 (`branch`)**：`{branch_name}`",
-        f"- **本地 HEAD (`local_head`)**：`{source_commit}`",
+        f"- **本地 HEAD (`local_head`)**：`{local_head}`",
         f"- **远端 main (`remote_main_head`)**：`{remote_main_head}`",
-        f"- **工作区干净状态 (`worktree_clean`)**：`{str(worktree_clean).lower()}`",
+        f"- **工作区干净状态 (`worktree_clean`)**：`{str(worktree_clean).lower() if worktree_clean is not None else "NOT_VERIFIABLE"}`",
         f"- **核验状态 (`verification_status`)**：`{baseline_payload['git_identity']['verification_status']}`",
         "",
         "## 9. 最近 CI 事实 (`recent_ci_facts`)",
@@ -746,6 +771,14 @@ def build_engineering_baseline(
         f"- `{content_sha}`",
         "",
     ]
+    md_lines.extend([
+        "",
+        "## 19. 当前候选状态与消费端试点",
+        "",
+        f"- 当前候选版本：`{version_str}`；候选分支和 Draft PR 不构成正式发布。",
+        "- 正式发布版本必须以官方 main 上的 Annotated Tag、Tag Object SHA、Peeled Commit 与 main CI 为准。",
+        "- 首个消费端试点为 AI-Engineering-Hub；AI-KB、VTIP、SideCar 不在本轮试点范围，是否接入由各工程 Owner 后续决定。",
+    ])
     markdown_text = "\n".join(md_lines)
     # Also update frontmatter content_sha256 using compute_canonical_document_sha256
     canonical_doc_sha = compute_canonical_document_sha256(markdown_text)
@@ -797,9 +830,15 @@ def main() -> None:
         expected_fm, _ = extract_frontmatter_and_body(md_text)
         # Compare core fields
         mismatches: List[str] = []
-        for fld in ("document_id", "document_type", "project_id", "status", "source_commit"):
+        for fld in ("document_id", "document_type", "project_id", "status", "approval_status", "source_commit"):
             if actual_fm.get(fld) != expected_fm.get(fld):
                 mismatches.append(f"field '{fld}': committed='{actual_fm.get(fld)}' != generated='{expected_fm.get(fld)}'")
+
+        actual_digest = compute_canonical_document_sha256(actual_content)
+        if actual_fm.get("content_sha256") != actual_digest:
+            mismatches.append(
+                f"field 'content_sha256': committed='{actual_fm.get('content_sha256')}' does not match actual document digest '{actual_digest}'"
+            )
 
         if mismatches:
             print(f"[FAIL] Committed baseline mismatches generated facts ({len(mismatches)} issues):")

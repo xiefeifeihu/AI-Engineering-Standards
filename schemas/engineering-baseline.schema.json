@@ -364,14 +364,14 @@
         },
         "local_head": {
           "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
+          "pattern": "^([0-9a-f]{40}|NOT_VERIFIABLE)$"
         },
         "remote_main_head": {
           "type": "string",
           "pattern": "^([0-9a-f]{40}|NOT_VERIFIABLE)$"
         },
         "worktree_clean": {
-          "type": "boolean"
+          "type": ["boolean", "null"]
         },
         "verification_status": {
           "$ref": "#/$defs/verification_status"

@@ -565,9 +565,15 @@ def main() -> None:
         expected_fm = yaml.safe_load(md_text.split("---")[1])
 
         mismatches: List[str] = []
-        for fld in ("document_id", "document_type", "project_id", "status"):
+        for fld in ("document_id", "document_type", "project_id", "status", "approval_status"):
             if actual_fm.get(fld) != expected_fm.get(fld):
                 mismatches.append(f"field '{fld}': committed='{actual_fm.get(fld)}' != expected='{expected_fm.get(fld)}'")
+
+        actual_digest = compute_canonical_document_sha256(actual_content)
+        if actual_fm.get("content_sha256") != actual_digest:
+            mismatches.append(
+                f"field 'content_sha256': committed='{actual_fm.get('content_sha256')}' does not match actual document digest '{actual_digest}'"
+            )
 
         if mismatches:
             print(f"[FAIL] Committed handoff mismatches expected facts ({len(mismatches)} issues):")
