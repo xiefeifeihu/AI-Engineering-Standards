@@ -38,6 +38,12 @@ from tools.standards_sync.core import (
 
 
 def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(
         prog="standards_sync",
         description="Official AI Engineering Standards Discovery & Controlled Sync Tool (STD-034 v3.0.0)",
@@ -107,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
             repository=args.repo_slug,
             timeout=args.timeout,
         )
-        print(json.dumps(res, indent=2, ensure_ascii=False))
+        print(json.dumps(res, indent=2))
         if res.get("status") == "PASS":
             return 0
         if res.get("status") == "NOT_VERIFIABLE":
@@ -119,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
             project_root=Path(args.project_root),
             standards_root=std_root,
         )
-        print(json.dumps(res, indent=2, ensure_ascii=False))
+        print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "PASS" else 1
 
     def resolve_from_ref(p_root: Path, explicit_from: str | None) -> str:
@@ -142,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
             to_ref=args.to_ref,
             standards_root=std_root,
         )
-        print(json.dumps(res, indent=2, ensure_ascii=False))
+        print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "PASS" else 1
 
     if args.subcommand == "impact":
@@ -154,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
             to_ref=args.to_ref,
             standards_root=std_root,
         )
-        print(json.dumps(res, indent=2, ensure_ascii=False))
+        print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "PASS" else 1
 
     if args.subcommand == "prepare-upgrade":
@@ -166,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
             target_peeled_commit=args.target_peeled_commit,
             standards_root=std_root,
         )
-        print(json.dumps(res, indent=2, ensure_ascii=False))
+        print(json.dumps(res, indent=2))
         return 0 if res.get("status") in ("CANDIDATE_GENERATED", "READY") else 1
 
     if args.subcommand == "validate-upgrade":
@@ -174,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
             project_root=Path(args.project_root),
             standards_root=std_root,
         )
-        print(json.dumps(res, indent=2, ensure_ascii=False))
+        print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "PASS" else 1
 
     if args.subcommand == "promote":
@@ -188,12 +194,12 @@ def main(argv: list[str] | None = None) -> int:
             ci_status=args.ci_status,
             standards_root=std_root,
         )
-        print(json.dumps(res, indent=2, ensure_ascii=False))
+        print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "PROMOTED" else 1
 
     if args.subcommand == "rollback":
         res = rollback_lock(project_root=Path(args.project_root))
-        print(json.dumps(res, indent=2, ensure_ascii=False))
+        print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "ROLLED_BACK" else 1
 
     return 1
