@@ -106,7 +106,7 @@ python -m pip install -r .standards/requirements-standards.txt
 | `docs/CROSS-SESSION-HANDOFF.md` | `tools/generate_handoff.py` | 由真实 Git、Lock、测试和 CI 事实生成 |
 | 其他正式文档 | `templates/documentation/*.template.md` | 按 Manifest 的 `document_type_applicability` 选择，不适用类型必须有理由 |
 
-模板中的 `{{...}}` 是未填充占位符，不是有效版本锁。占位符未替换前，Lock **MUST NOT** 通过 Schema 或 `verify-lock`，也不得提交为正式锁定。
+模板使用 `0.0.0`、`v0.0.0` 和全零 SHA 作为 Schema 合法的哨兵值（TEMPLATE_ONLY），不是正式版本锁。未用 `discover` 输出替换全部哨兵值前，Lock **MUST NOT** 通过 `verify-lock`，也不得提交为正式锁定。
 
 更完整的模板清单见 `templates/consumer-project/README.md`。
 

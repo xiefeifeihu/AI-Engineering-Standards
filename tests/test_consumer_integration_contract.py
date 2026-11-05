@@ -41,8 +41,10 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn('"version": "2.11.0"', lock_template)
         self.assertNotIn('version: "2.11.0"', manifest_template)
-        self.assertIn("{{DISCOVERED_PEELED_COMMIT}}", lock_template)
-        self.assertIn("{{DISCOVERED_VERSION}}", manifest_template)
+        self.assertIn('"version": "0.0.0"', lock_template)
+        self.assertIn('"tag": "v0.0.0"', lock_template)
+        self.assertIn("0000000000000000000000000000000000000000", lock_template)
+        self.assertIn('version: "0.0.0"', manifest_template)
 
     def test_only_ai_hub_is_the_first_consumer_pilot(self) -> None:
         guide = (

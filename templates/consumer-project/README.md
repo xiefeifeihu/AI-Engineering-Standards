@@ -32,4 +32,4 @@
 7. 使用官方基线生成器与交接生成器生成动态综合视图。
 8. 由 ChatGPT 审核候选文档；Owner 必批的决策必须单独批准。
 
-模板中的占位符不是有效工程事实。未完成填充和核验前，所有候选文档保持 `CANDIDATE` / `IN_REVIEW`，不得标记 `ACTIVE`。
+Lock 模板中的 `0.0.0`、`v0.0.0` 和全零 SHA 是 `TEMPLATE_ONLY` 哨兵值，不是有效正式锁定。未用 `discover` 输出替换并通过 `verify-lock` 前，不得提交为正式 Lock。未完成填充和核验前，所有候选文档保持 `CANDIDATE` / `IN_REVIEW`，不得标记 `ACTIVE`。
