@@ -352,6 +352,109 @@
           }
         }
       }
+    },
+    "standards_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "required_ci_jobs"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "required_ci_jobs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "unit_tests",
+            "integration_tests",
+            "release_gates",
+            "security_scan",
+            "business_api"
+          ],
+          "properties": {
+            "unit_tests": {
+              "$ref": "#/$defs/consumer_ci_job"
+            },
+            "integration_tests": {
+              "$ref": "#/$defs/consumer_ci_job"
+            },
+            "release_gates": {
+              "$ref": "#/$defs/consumer_ci_job"
+            },
+            "security_scan": {
+              "$ref": "#/$defs/consumer_ci_job"
+            },
+            "business_api": {
+              "$ref": "#/$defs/consumer_ci_job"
+            },
+            "runtime_acceptance": {
+              "$ref": "#/$defs/consumer_ci_job"
+            }
+          }
+        }
+      }
     }
-  }
+  },
+  "$defs": {
+    "consumer_ci_job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workflow_path",
+        "job_name",
+        "command"
+      ],
+      "properties": {
+        "workflow_path": {
+          "type": "string",
+          "pattern": "^\\.github/workflows/.+\\.ya?ml$"
+        },
+        "job_name": {
+          "type": "string",
+          "minLength": 3
+        },
+        "command": {
+          "type": "string",
+          "minLength": 3
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "project": {
+            "properties": {
+              "deployment_kind": {
+                "const": "SERVICE"
+              }
+            },
+            "required": [
+              "deployment_kind"
+            ]
+          }
+        },
+        "required": [
+          "project"
+        ]
+      },
+      "then": {
+        "properties": {
+          "standards_validation": {
+            "properties": {
+              "required_ci_jobs": {
+                "required": [
+                  "runtime_acceptance"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

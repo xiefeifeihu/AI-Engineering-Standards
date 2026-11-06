@@ -1753,6 +1753,25 @@ def validate_upgrade_candidate(
     deployment_kind = str(project.get("deployment_kind") or "")
     if evidence.get("deployment_kind") != deployment_kind:
         errors.append("CONSUMER_EVIDENCE_DEPLOYMENT_KIND_MISMATCH")
+
+    # CI job identities are declared in the Owner-reviewed Manifest, not selected
+    # by the evidence producer. This prevents an agent from pointing at an arbitrary
+    # always-green workflow and calling it the required test gate.
+    validation_config = manifest_data.get("standards_validation") or {}
+    required_ci_jobs = validation_config.get("required_ci_jobs") or {}
+    required_dimensions = ["unit_tests", "integration_tests", "release_gates", "security_scan", "business_api"]
+    if deployment_kind == "SERVICE":
+        required_dimensions.append("runtime_acceptance")
+    for dimension in required_dimensions:
+        expected_job = required_ci_jobs.get(dimension)
+        gate = (evidence.get("dimensions") or {}).get(dimension) or {}
+        if not isinstance(expected_job, dict):
+            errors.append(f"MANIFEST_REQUIRED_CI_JOB_MAPPING_MISSING: {dimension}")
+            continue
+        for field in ("workflow_path", "job_name", "command"):
+            if gate.get(field) != expected_job.get(field):
+                errors.append(f"CONSUMER_CI_JOB_MAPPING_MISMATCH: {dimension}.{field}")
+
     if errors:
         return {
             "status": "UPGRADE_BLOCKED",
