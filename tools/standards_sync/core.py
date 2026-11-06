@@ -1027,50 +1027,107 @@ def analyze_consumer_impact(
         breaking_items.append("Missing mandatory primary entrypoint for ENGINEERING_BASELINE (docs/当前权威基线.md)")
         migration_tasks.append("Generate docs/当前权威基线.md using tools/generate_engineering_baseline.py and register in DOCUMENT-INDEX")
 
-    # Check AGENTS.md & CLAUDE.md for hardcoded versions
+    # Check mandatory agent entrypoints and version literals in all guidance files.
+    required_agent_docs = ("AGENTS.md", "CLAUDE.md")
+    guidance_docs = ("AGENTS.md", "CLAUDE.md", "README.md")
+    missing_agent_docs: List[str] = []
     hardcoded_agent_docs: List[str] = []
-    for agent_doc_name in ("AGENTS.md", "CLAUDE.md"):
-        p = project_root / agent_doc_name
-        if p.exists():
-            txt = p.read_text(encoding="utf-8", errors="ignore")
-            if re.search(r"v?2\.(?:5|9|10|11)\.\d+", txt):
-                hardcoded_agent_docs.append(agent_doc_name)
+    standards_version_patterns = (
+        re.compile(r"(?i)\\bstandards?\\b[^\\r\\n]{0,120}\\bv?\\d+\\.\\d+\\.\\d+\\b"),
+        re.compile(r"(?i)\\bv?\\d+\\.\\d+\\.\\d+\\b[^\\r\\n]{0,80}\\bstandards?\\b"),
+    )
+    for guidance_name in guidance_docs:
+        guidance_path = project_root / guidance_name
+        if not guidance_path.exists():
+            if guidance_name in required_agent_docs:
+                missing_agent_docs.append(guidance_name)
+            continue
+        guidance_text = guidance_path.read_text(encoding="utf-8", errors="ignore")
+        if any(pattern.search(guidance_text) for pattern in standards_version_patterns):
+            hardcoded_agent_docs.append(guidance_name)
+
+    if missing_agent_docs:
+        breaking_items.append(f"Missing mandatory agent guidance entrypoints: {missing_agent_docs}")
+        migration_tasks.append(f"Create required agent guidance entrypoints: {missing_agent_docs}")
     if hardcoded_agent_docs:
         migration_tasks.append(
             f"Replace hardcoded Standards version strings in {hardcoded_agent_docs} with thin references to standards.lock.json"
         )
 
-    # Build the 10-dimension structured 8-tuple records
+    # Execute documentation collection and baseline verification; do not infer PASS from file presence.
+    doc_schema_path = std_root / "schemas" / "documentation-metadata.schema.json"
+    doc_collection_ok, doc_collection_errors = run_collection_validation(
+        project_root=project_root,
+        schema_path=doc_schema_path,
+        standards_root=std_root,
+        check_templates=True,
+        verify_source_paths=True,
+    )
+    baseline_script = std_root / "tools" / "generate_engineering_baseline.py"
+    baseline_exit_code: Optional[int] = None
+    baseline_output = "NOT_VERIFIABLE: baseline generator is unavailable"
+    if baseline_script.exists():
+        try:
+            baseline_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(baseline_script),
+                    "--project-root",
+                    str(project_root),
+                    "--standards-root",
+                    str(std_root),
+                    "--verify-only",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+            )
+            baseline_exit_code = baseline_result.returncode
+            baseline_output = (baseline_result.stdout or "") + (baseline_result.stderr or "")
+        except Exception as exc:
+            baseline_output = f"NOT_VERIFIABLE: {exc}"
+
+    # Build the 10-dimension structured 8-tuple records.
+    schema_compatible = not diff_report.get("breaking_changes") and manifest_valid
+    guidance_status = "UPGRADE_BLOCKED" if (missing_agent_docs or hardcoded_agent_docs) else "COMPATIBLE"
+    docs_status = "UPGRADE_BLOCKED" if (historical_archive_files or not doc_collection_ok) else "COMPATIBLE"
+    baseline_status = (
+        "COMPATIBLE" if baseline_exit_code == 0
+        else "UPGRADE_BLOCKED" if baseline_exit_code not in (None, 0)
+        else "NOT_VERIFIABLE"
+    )
     dimensions_checked: Dict[str, Dict[str, Any]] = {
         "Schema": {
-            "check_method": "DEEP_SCHEMA_AST_DIFF",
+            "check_method": "DEEP_SCHEMA_AST_DIFF_AND_MANIFEST_SCHEMA_VALIDATE",
             "input_commit": input_commit,
             "target_commit": target_commit,
             "command": "python tools/standards_sync/cli.py compare",
             "executed_at": now_iso,
-            "raw_evidence": f"Standards breaking changes: {len(diff_report['breaking_changes'])}; Consumer violations: {len(historical_archive_files)}",
-            "exit_code": 0 if not (historical_archive_files or not manifest_valid) else 1,
-            "status": "UPGRADE_BLOCKED" if (historical_archive_files or not manifest_valid) else "COMPATIBLE",
+            "raw_evidence": f"Standards breaking changes: {len(diff_report['breaking_changes'])}; manifest_schema_valid={manifest_valid}",
+            "exit_code": 0 if schema_compatible else 1,
+            "status": "COMPATIBLE" if schema_compatible else "UPGRADE_BLOCKED",
         },
         "AGENTS.md": {
-            "check_method": "REGEX_SCAN_HARDCODED_VERSION",
+            "check_method": "REQUIRED_ENTRYPOINT_AND_STANDARDS_VERSION_SCAN",
             "input_commit": input_commit,
             "target_commit": target_commit,
-            "command": "python -c 'import re...'",
+            "command": "read AGENTS.md and scan Standards version literals",
             "executed_at": now_iso,
-            "raw_evidence": f"Hardcoded version files: {hardcoded_agent_docs or 'None'}",
-            "exit_code": 0,
-            "status": "UPGRADE_BLOCKED" if "AGENTS.md" in hardcoded_agent_docs else "COMPATIBLE",
+            "raw_evidence": f"missing={missing_agent_docs}; hardcoded={hardcoded_agent_docs}",
+            "exit_code": 0 if ("AGENTS.md" not in missing_agent_docs and "AGENTS.md" not in hardcoded_agent_docs) else 1,
+            "status": "UPGRADE_BLOCKED" if ("AGENTS.md" in missing_agent_docs or "AGENTS.md" in hardcoded_agent_docs) else "COMPATIBLE",
         },
         "CLAUDE.md": {
-            "check_method": "REGEX_SCAN_HARDCODED_VERSION",
+            "check_method": "REQUIRED_ENTRYPOINT_AND_STANDARDS_VERSION_SCAN",
             "input_commit": input_commit,
             "target_commit": target_commit,
-            "command": "python -c 'import re...'",
+            "command": "read CLAUDE.md and scan Standards version literals",
             "executed_at": now_iso,
-            "raw_evidence": f"Hardcoded version files: {hardcoded_agent_docs or 'None'}",
-            "exit_code": 0,
-            "status": "UPGRADE_BLOCKED" if "CLAUDE.md" in hardcoded_agent_docs else "COMPATIBLE",
+            "raw_evidence": f"missing={missing_agent_docs}; hardcoded={hardcoded_agent_docs}",
+            "exit_code": 0 if ("CLAUDE.md" not in missing_agent_docs and "CLAUDE.md" not in hardcoded_agent_docs) else 1,
+            "status": "UPGRADE_BLOCKED" if ("CLAUDE.md" in missing_agent_docs or "CLAUDE.md" in hardcoded_agent_docs) else "COMPATIBLE",
         },
         "Engineering Manifest": {
             "check_method": "MANIFEST_SCHEMA_VALIDATE",
@@ -1083,24 +1140,24 @@ def analyze_consumer_impact(
             "status": "COMPATIBLE" if manifest_valid else "UPGRADE_BLOCKED",
         },
         "Documentation Metadata": {
-            "check_method": "SCAN_HISTORICAL_ARCHIVE_ENUM",
+            "check_method": "DOCUMENT_METADATA_AND_REMOVED_ENUM_SCAN",
             "input_commit": input_commit,
             "target_commit": target_commit,
             "command": "python tools/validate-documentation-collection.py",
             "executed_at": now_iso,
-            "raw_evidence": f"HISTORICAL_ARCHIVE files count: {len(historical_archive_files)}",
-            "exit_code": 0 if not historical_archive_files else 1,
-            "status": "UPGRADE_BLOCKED" if historical_archive_files else "COMPATIBLE",
+            "raw_evidence": f"HISTORICAL_ARCHIVE files={len(historical_archive_files)}; hardcoded_guidance_versions={hardcoded_agent_docs}; collection_errors={doc_collection_errors}",
+            "exit_code": 0 if docs_status == "COMPATIBLE" else 1,
+            "status": docs_status,
         },
         "Documentation Collection": {
-            "check_method": "VERIFY_ENGINEERING_BASELINE_ENTRYPOINT",
+            "check_method": "COLLECTION_AND_BASELINE_VERIFY_ONLY",
             "input_commit": input_commit,
             "target_commit": target_commit,
-            "command": "python tools/generate_engineering_baseline.py --verify-only",
+            "command": "python tools/validate-documentation-collection.py --check-templates --verify-source-paths && python tools/generate_engineering_baseline.py --verify-only",
             "executed_at": now_iso,
-            "raw_evidence": f"has_engineering_baseline={has_engineering_baseline}",
-            "exit_code": 0 if has_engineering_baseline else 1,
-            "status": "NOT_VERIFIABLE" if has_engineering_baseline else "UPGRADE_BLOCKED",
+            "raw_evidence": f"collection_ok={doc_collection_ok}; collection_errors={doc_collection_errors}; baseline_exit_code={baseline_exit_code}; baseline_output={baseline_output[-4000:]}",
+            "exit_code": 0 if docs_status == "COMPATIBLE" and baseline_status == "COMPATIBLE" else (1 if docs_status == "UPGRADE_BLOCKED" or baseline_status == "UPGRADE_BLOCKED" else None),
+            "status": "UPGRADE_BLOCKED" if docs_status == "UPGRADE_BLOCKED" or baseline_status == "UPGRADE_BLOCKED" else ("NOT_VERIFIABLE" if baseline_status == "NOT_VERIFIABLE" else "COMPATIBLE"),
         },
         "Tests": {
             "check_method": "UNIT_AND_CONTRACT_TEST_EXECUTION",
@@ -1180,7 +1237,7 @@ def analyze_consumer_impact(
         "HISTORICAL_ARCHIVE_FILES": historical_archive_files,
         "HAS_ENGINEERING_BASELINE": has_engineering_baseline,
         "DIMENSIONS_CHECKED": dimensions_checked,
-        "APPROVAL_REQUIREMENT": "OWNER_APPROVAL_REQUIRED" if requires_owner_approval else "AI_APPROVED",
+        "APPROVAL_REQUIREMENT": "OWNER_APPROVAL_REQUIRED" if requires_owner_approval else "CHATGPT_REVIEW_REQUIRED",
         "TEST_REQUIREMENTS": [
             "python tools/validate-schemas.py",
             "python tools/validate-documentation-collection.py --project-root <PROJECT_ROOT>",
