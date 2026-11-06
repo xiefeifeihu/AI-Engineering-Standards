@@ -173,6 +173,12 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
         self.assertNotIn("git checkout -- docs/ engineering-manifest.yaml", core)
         self.assertIn("does not revert docs/", core)
 
+    def test_release_tag_workflow_preserves_existing_immutable_version_tags(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "standards-ci.yml").read_text(encoding="utf-8")
+        self.assertIn("git merge-base --is-ancestor \"$peeled\" \"$current_sha\"", workflow)
+        self.assertIn("TAG_ACTION=SKIPPED_EXISTING_RELEASE", workflow)
+        self.assertIn("refusing to overwrite or reuse it", workflow)
+
     def test_only_ai_hub_is_the_first_consumer_pilot(self) -> None:
         guide = (
             ROOT / "docs" / "migration"

@@ -113,11 +113,19 @@ jobs:
           if [[ -n "$existing" ]]; then
             git fetch origin "refs/tags/$tag:refs/tags/$tag"
             peeled="$(git rev-parse "$tag^{commit}")"
-            if [[ "$peeled" != "$current_sha" ]]; then
-              echo "::error::Existing Tag points to another commit; no overwrite"
+            if [[ "$peeled" == "$current_sha" ]]; then
+              echo "Tag already verified: $tag -> $peeled"
+            elif git merge-base --is-ancestor "$peeled" "$current_sha"; then
+              echo "Existing immutable release Tag $tag -> $peeled is an ancestor of current main $current_sha."
+              echo "No new Tag is created because this VERSION has already been released."
+              echo "STANDARDS_TAG=$tag" >> "$GITHUB_STEP_SUMMARY"
+              echo "STANDARDS_PEELED_COMMIT=$peeled" >> "$GITHUB_STEP_SUMMARY"
+              echo "TAG_ACTION=SKIPPED_EXISTING_RELEASE" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            else
+              echo "::error::Existing immutable Tag is not on current main ancestry; refusing to overwrite or reuse it"
               exit 1
             fi
-            echo "Tag already verified: $tag -> $peeled"
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
