@@ -419,6 +419,11 @@
         "command": {
           "type": "string",
           "minLength": 3
+        },
+        "min_tests_passed": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Owner-reviewed minimum number of passing tests required for this gate"
         }
       }
     }

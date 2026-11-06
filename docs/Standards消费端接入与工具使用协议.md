@@ -26,7 +26,7 @@ content_sha256: null
 1. Standards 是公共规范与共享工具的唯一维护仓库。
 2. 消费工程 **MUST** 引用官方实现，**MUST NOT** 将 `tools/`、`schemas/` 或规范正文复制到工程后分叉维护。
 3. 消费工程 **MUST** 保留自己的产品基线、架构、接口、测试、发布和交接资料；Standards 模板只提供结构与契约，不替代工程 Owner 的业务决策。
-4. 官方 `main` 用于发现最新正式 Release；工程实际执行 **MUST** 锁定正式 Tag 的精确四元组（`version`、`tag`、`tag_object_sha`、`peeled_commit`）。
+4. 官方 `main` 用于发现最新正式 Release。官方正式版本的唯一权威来源是 Canonical 规范仓库上的 **Git Annotated Tag**（`refs/tags/vX.Y.Z`），严禁依赖 GitHub Web UI 的 `/releases/latest` REST API（该 API 仅反映 Web Release 对象，可能滞后或脱节）。工程实际执行 **MUST** 锁定正式 Tag 的精确四元组（`repository`、`version`、`tag`、`tag_object_sha`、`peeled_commit`）。`standards_sync discover` 是只读探测操作，严禁在未经过 `prepare-upgrade`、`validate-upgrade` 与 Owner 批准前自动修改消费工程的锁定版本。
 5. 候选分支、Draft PR、未发布的 main Commit 不得作为“最新正式版本”晋升。
 
 ## 2. 共享工具引用方式
@@ -139,7 +139,7 @@ python .standards/tools/standards_sync/cli.py --standards-root .standards impact
 3. `impact` 按消费工程实际 Lock 评估影响；未执行维度必须标记 `NOT_RUN` / `NOT_VERIFIABLE`。
 4. `prepare-upgrade` 只生成候选 Lock 和影响报告，输出到 `.artifacts/standards_upgrade/`；不修改正式 Lock。
 5. 消费工程先在 Owner 审核的 `engineering-manifest.yaml` → `standards_validation.required_ci_jobs` 中登记每个门禁的真实 Workflow 路径、Job 名称和命令；再在自身 CI 中执行单元、集成、发布、安全、业务 API 与 Runtime 回归，所有必需 Job 必须运行在同一个消费工程 Commit 上。
-6. 从 `templates/consumer-project/consumer-validation-evidence.template.json` 生成 `.artifacts/standards_upgrade/<TAG>/consumer-validation-evidence.json`，填写真实仓库、项目标识、消费 Commit、目标 Standards 四元组，以及每个 CI Job 的 Workflow 路径、Run ID、Job 名称、命令、Head SHA 和 GitHub Actions 证据链接；这些字段必须与 Owner 审核的 Manifest 门禁映射完全一致。
+6. 从 `templates/consumer-project/consumer-validation-evidence.template.json` 生成 `.artifacts/standards_upgrade/<TAG>/consumer-validation-evidence.json`，填写真实仓库、项目标识、消费 Commit、目标 Standards 四元组，以及每个 CI Job 的 Workflow 路径、Run ID、Job 名称、命令、Head SHA、GitHub Actions 证据链接及结构化测试执行证据（`test_execution` 包含 `tests_collected >= 1`、`tests_passed >= 1`、`tests_failed == 0`、`tests_skipped >= 0`）；严禁通过空测试、全跳过测试或未真实执行测试的绿色 Job 蒙混晋升。这些字段必须与 Owner 审核的 Manifest 门禁映射完全一致。
 7. 执行以下只读验证；工具先核对证据与 Owner 审核的 Manifest 门禁映射，再通过 GitHub Actions API 核验每个 Run 和 Job 的仓库、Workflow、Commit、完成状态及成功结论：
 
 ```powershell
@@ -148,7 +148,7 @@ python .standards/tools/standards_sync/cli.py --standards-root .standards valida
 
 8. 只有 Manifest、文档集合、权威基线和全部必需消费端 CI Job 均通过，`validate-upgrade` 才能返回 `PASS`。缺少证据、网络不可用或 GitHub API 不可核验时返回 `NOT_VERIFIABLE`；任一证据失败、Commit 不一致或 Job 失败时返回 `UPGRADE_BLOCKED`。`NON_RUNTIME_ARTIFACT` 的 Runtime 维度必须明确标记 `NOT_APPLICABLE` 并说明原因；`SERVICE` 必须提供 Runtime CI 证据。
 9. ChatGPT 独立审核候选差异；属于 Owner 必批范围的变更，必须取得 Owner 明确批准。
-10. 所有必需门禁通过后，才可执行 `promote` 更新 Lock/Manifest；随后重新运行 `verify-lock` 并记录远端 CI/Commit。
+10. 所有必需门禁通过后，才可执行 `promote` 更新 Lock/Manifest。晋升与回滚采用双文件事务写入机制（`execute_transactional_two_file_update`），先写入临时文件与备份文件，在第二步替换或磁盘写入发生故障时自动触发回滚恢复，杜绝中途写入失败产生“Lock 与 Manifest 不一致”的半升级状态；随后重新运行 `verify-lock` 并记录远端 CI/Commit。
 11. 任一门禁失败，保持旧 Lock 不变；不得通过修改测试断言或降低 Standards 要求使升级“变绿”。
 
 ## 7. 工具权限分级

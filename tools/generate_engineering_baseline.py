@@ -399,7 +399,7 @@ def build_engineering_baseline(
         "evidence_ref": ".github/workflows/standards-ci.yml",
         "observed_at": now_iso,
         "verification_status": "NOT_VERIFIABLE",
-        "summary": "当前分支远端 GitHub Actions CI 待推送后由远端 Runner 核验（禁止本地伪造远端 CI PASS）",
+        "summary": "当前分支远端 GitHub Actions CI 待推送后由远端 Runner 实测（执行前保持 NOT_VERIFIABLE；历史已通过 Run: 42169418901, 42169424617）",
         "details": {"run_id": None, "workflow": "standards-ci.yml"},
     }
 
@@ -775,9 +775,11 @@ def build_engineering_baseline(
         "",
         "## 19. 当前候选状态与消费端试点",
         "",
-        f"- 当前候选版本：`{version_str}`；候选分支和 Draft PR 不构成正式发布。",
-        "- 正式发布版本必须以官方 main 上的 Annotated Tag、Tag Object SHA、Peeled Commit 与 main CI 为准。",
+        f"- 当前候选版本：`{version_str}`；PR #8 尚未合入官方 main，尚未创建正式 v{version_str} Tag。",
+        "- 正式发布版本必须以官方 main 上的 Annotated Tag、Tag Object SHA、Peeled Commit 与 main CI 为准；严禁依赖 GitHub /releases/latest REST API 对象。",
+        "- 区分历史 CI 快照与当前 CI 实测：历史候选 Commit `4041b1d` 的 Run 42169418901 (Push) 与 Run 42169424617 (PR #8) 均已在 Windows 与 Ubuntu 通过；更早的 Run 42005120682 归档为历史摘要未刷新快照；当前分支最新整改 Commit 待推送后由远端 GitHub Actions 实测，远端完成前保持 `NOT_VERIFIABLE`，严禁本地伪造 PASS。",
         "- 首个消费端试点为 AI-Engineering-Hub；AI-KB、VTIP、SideCar 不在本轮试点范围，是否接入由各工程 Owner 后续决定。",
+        "- 审批状态：保持 `IN_REVIEW`，严禁智能体自批或伪造 `OWNER_APPROVED`。",
     ])
     markdown_text = "\n".join(md_lines)
     # Also update frontmatter content_sha256 using compute_canonical_document_sha256

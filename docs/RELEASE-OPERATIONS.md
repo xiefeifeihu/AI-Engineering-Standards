@@ -59,6 +59,23 @@ Standards 的候选版本与正式发布版本必须严格区分：
 - `standards.lock.json` 记录工程当前采用的正式版本，不得因候选分支的 `VERSION` 提前升级。
 - 消费端发现到候选 Tag 或 main 上未发布 Commit 时，必须返回非正式状态，不得自动晋升。
 
+### 3.1 官方正式版本的权威来源与发现语义 (Authoritative Source vs GitHub Releases)
+
+1. **唯一权威来源：Git Annotated Tag**：
+   - 官方正式版本的唯一事实源是 Canonical 规范仓库（`xiefeifeihu/AI-Engineering-Standards`）上的 **Git Annotated Tag**（`refs/tags/vX.Y.Z`）。
+   - 判定标准：
+     - Tag Object SHA 与 Peeled Commit SHA **严格不等**（拒绝未附注的 lightweight tag）；
+     - Peeled Commit 必须是官方 `main` 分支的祖先提交（`git merge-base --is-ancestor <peeled_commit> refs/heads/main`）；
+     - Peeled Commit 处的 `VERSION` 文件内容与 Tag 版本严格一致；
+     - Peeled Commit 在 GitHub Actions 上的全量 CI 门禁真实运行全绿。
+2. **严禁依赖 GitHub Release 对象 (`/releases/latest`)**：
+   - GitHub Web 界面或 API 的 `/releases/latest` 返回的是 GitHub Release 对象，属于发布展示层，不等于 Git 真实 Tag。
+   - 若某次规范发布仅通过 Git Annotated Tag 签发并推送，但未在 GitHub Web 上手动创建 Release 对象，`/releases/latest` 将停留在旧版本（如 `v2.6.0`），而真实最新正式 Tag 已推进至 `v2.11.0`。
+   - 所有官方治理工具（`standards_sync discover`）及下游消费端验证 **MUST NOT** 调用 GitHub `/releases/latest` 接口，必须基于 `git ls-remote --tags` 查询 Annotated Tag。
+3. **不可变四元组精确锁定**：
+   - 下游工程执行治理时，`standards.lock.json` 必须严格锁定四元组：`repository`、`version`、`tag`、`tag_object_sha`、`peeled_commit`。
+   - `standards_sync discover` 属于纯只读探测命令，严禁在未经过 `prepare-upgrade`、`validate-upgrade` 与 Owner 批准前自动修改消费工程的锁定版本。
+
 ## 4. 消费端发布边界
 
 本次 v3.0.0 候选以 AI-Engineering-Hub 为首个消费端试点。试点计划、当前观测基线和验收边界见 [`migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md`](./migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)。本 PR 不授权修改 Hub，也不授权 AI-KB、VTIP 或 SideCar 升级。其他工程是否接入必须由其 Owner 单独批准。

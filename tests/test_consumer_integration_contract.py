@@ -83,6 +83,12 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
             "job_name": "Unit Tests",
             "head_sha": commit,
             "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "test_execution": {
+                "tests_collected": 10,
+                "tests_passed": 10,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+            },
         }
         run_payload = {
             "repository": {"full_name": repository},
@@ -121,6 +127,144 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
         status, errors = verify_consumer_ci_gate("example/consumer", gate, "a" * 40)
         self.assertEqual(status, "FAILED")
         self.assertIn("CONSUMER_CI_EVIDENCE_COMMIT_MISMATCH", errors)
+
+    def test_consumer_ci_gate_rejects_missing_test_execution(self) -> None:
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": "a" * 40,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+        }
+        status, errors = verify_consumer_ci_gate("example/consumer", gate, "a" * 40)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_TEST_EXECUTION_MISSING" in e for e in errors), errors)
+
+    def test_consumer_ci_gate_rejects_zero_tests_collected(self) -> None:
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": "a" * 40,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "test_execution": {
+                "tests_collected": 0,
+                "tests_passed": 0,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+            },
+        }
+        status, errors = verify_consumer_ci_gate("example/consumer", gate, "a" * 40)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_ZERO_TESTS_COLLECTED" in e for e in errors), errors)
+
+    def test_consumer_ci_gate_rejects_all_tests_skipped(self) -> None:
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": "a" * 40,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "test_execution": {
+                "tests_collected": 5,
+                "tests_passed": 0,
+                "tests_failed": 0,
+                "tests_skipped": 5,
+            },
+        }
+        status, errors = verify_consumer_ci_gate("example/consumer", gate, "a" * 40)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_NO_TESTS_PASSED" in e or "CONSUMER_CI_GATE_ALL_TESTS_SKIPPED" in e for e in errors), errors)
+
+    def test_consumer_ci_gate_rejects_failed_tests(self) -> None:
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": "a" * 40,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "test_execution": {
+                "tests_collected": 10,
+                "tests_passed": 8,
+                "tests_failed": 2,
+                "tests_skipped": 0,
+            },
+        }
+        status, errors = verify_consumer_ci_gate("example/consumer", gate, "a" * 40)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_HAS_FAILED_TESTS" in e for e in errors), errors)
+
+    def test_consumer_ci_gate_rejects_test_counts_inconsistent(self) -> None:
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": "a" * 40,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "test_execution": {
+                "tests_collected": 10,
+                "tests_passed": 5,
+                "tests_failed": 0,
+                "tests_skipped": 1,
+            },
+        }
+        status, errors = verify_consumer_ci_gate("example/consumer", gate, "a" * 40)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_TEST_COUNTS_INCONSISTENT" in e for e in errors), errors)
+
+    def test_consumer_ci_gate_rejects_tests_passed_below_manifest_minimum(self) -> None:
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": "a" * 40,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "test_execution": {
+                "tests_collected": 10,
+                "tests_passed": 10,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+            },
+        }
+        status, errors = verify_consumer_ci_gate("example/consumer", gate, "a" * 40, min_tests_passed=15)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_TESTS_PASSED_BELOW_MINIMUM" in e for e in errors), errors)
+
+    def test_consumer_ci_gate_unreachable_api_returns_not_verifiable(self) -> None:
+        from unittest.mock import patch
+        import urllib.error
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": "a" * 40,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "test_execution": {
+                "tests_collected": 10,
+                "tests_passed": 10,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+            },
+        }
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Network unreachable")):
+            status, errors = verify_consumer_ci_gate("example/consumer", gate, "a" * 40)
+        self.assertEqual(status, "NOT_VERIFIABLE")
+        self.assertNotEqual(status, "PASS")
+        self.assertTrue(any("CONSUMER_CI_API_NOT_VERIFIABLE" in e for e in errors), errors)
 
     def test_missing_lock_does_not_resolve_to_a_historical_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

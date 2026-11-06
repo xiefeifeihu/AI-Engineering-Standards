@@ -125,7 +125,8 @@
             "run_id",
             "job_name",
             "head_sha",
-            "evidence_ref"
+            "evidence_ref",
+            "test_execution"
           ],
           "properties": {
             "status": {
@@ -154,6 +155,42 @@
             "evidence_ref": {
               "type": "string",
               "format": "uri"
+            },
+            "test_execution": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "tests_collected",
+                "tests_passed",
+                "tests_failed",
+                "tests_skipped"
+              ],
+              "properties": {
+                "tests_collected": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "tests_passed": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "tests_failed": {
+                  "type": "integer",
+                  "maximum": 0,
+                  "minimum": 0
+                },
+                "tests_skipped": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "exit_code": {
+                  "type": "integer",
+                  "const": 0
+                },
+                "evidence_log_ref": {
+                  "type": "string"
+                }
+              }
             }
           }
         },

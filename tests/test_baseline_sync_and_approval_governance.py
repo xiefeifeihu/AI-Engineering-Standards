@@ -40,6 +40,7 @@ from tools.standards_sync.core import (
     parse_semver,
     prepare_upgrade_candidate,
     promote_upgrade,
+    execute_transactional_two_file_update,
     rollback_lock,
     validate_upgrade_candidate,
     verify_project_lock,
@@ -967,6 +968,179 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             ok, errs = run_collection_validation(project_root=dst, standards_root=ROOT, verify_source_paths=True)
             self.assertFalse(ok)
             self.assertTrue(any("SOURCE_PATH_MISSING_AT_COMMIT" in e for e in errs), f"Got: {errs}")
+
+    # =========================================================================
+    # G. Transactional Safety & Fault Injection Tests (P0 Remediation)
+    # =========================================================================
+    def test_g1_transactional_two_file_update_recovers_when_second_replace_fails(self) -> None:
+        """P0 Fault Injection: When the second os.replace fails, the first file is restored,
+        temporary/backup files are cleaned up, and both files remain completely consistent.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_path = dst / "standards.lock.json"
+            manifest_path = dst / "engineering-manifest.yaml"
+            self.assertTrue(lock_path.exists())
+            self.assertTrue(manifest_path.exists())
+
+            orig_lock = lock_path.read_text(encoding="utf-8")
+            orig_manifest = manifest_path.read_text(encoding="utf-8")
+
+            # Target new lock and manifest updates
+            new_lock_obj = json.loads(orig_lock)
+            new_lock_obj["version"] = "3.0.0"
+            new_lock_obj["tag"] = "v3.0.0"
+            new_manifest_std = {"version": "3.0.0", "tag": "v3.0.0"}
+
+            # Fault injection: Succeed on call 1 (lock), fail on call 2 (manifest)
+            call_count = 0
+            def fault_replace(src: Path, target: Path) -> None:
+                nonlocal call_count
+                call_count += 1
+                if call_count == 2:
+                    raise OSError("Injected disk I/O failure on second os.replace")
+                os.replace(src, target)
+
+            ok, err = execute_transactional_two_file_update(
+                project_root=dst,
+                new_lock=new_lock_obj,
+                new_manifest_standards=new_manifest_std,
+                replace_fn=fault_replace,
+            )
+
+            self.assertFalse(ok)
+            self.assertIn("TRANSACTION_FAILED", str(err))
+            self.assertIn("State successfully rolled back", str(err))
+
+            # Verify files are identical to their pre-transaction states
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), orig_lock)
+            self.assertEqual(manifest_path.read_text(encoding="utf-8"), orig_manifest)
+
+            # Verify no temporary or backup files left behind
+            self.assertFalse((dst / "standards.lock.json.tmp").exists())
+            self.assertFalse((dst / "standards.lock.json.bak").exists())
+            self.assertFalse((dst / "engineering-manifest.yaml.tmp").exists())
+            self.assertFalse((dst / "engineering-manifest.yaml.bak").exists())
+
+    def test_g2_transactional_rollback_recovers_when_second_replace_fails(self) -> None:
+        """P0 Fault Injection: When rollback_lock encounters failure on the second replace,
+        it aborts cleanly, rolls back changes, and preserves original lock and manifest.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_path = dst / "standards.lock.json"
+            manifest_path = dst / "engineering-manifest.yaml"
+
+            # Populate a valid previous lock entry so rollback is possible
+            lock_data = json.loads(lock_path.read_text(encoding="utf-8"))
+            lock_data["previous_locks"] = [
+                {
+                    "repository": "xiefeifeihu/AI-Engineering-Standards",
+                    "version": "2.10.0",
+                    "tag": "v2.10.0",
+                    "tag_object_sha": "3" * 40,
+                    "peeled_commit": "4" * 40,
+                    "locked_at": "2026-04-12T00:00:00Z",
+                    "lock_reason": "Prior official release v2.10.0",
+                    "approval_evidence_ref": "CHANGELOG.md",
+                    "ci_verification_status": "PASS",
+                }
+            ]
+            lock_path.write_text(json.dumps(lock_data, indent=2), encoding="utf-8")
+
+            pre_lock = lock_path.read_text(encoding="utf-8")
+            pre_manifest = manifest_path.read_text(encoding="utf-8")
+
+            call_count = 0
+            def fault_replace(src: Path, target: Path) -> None:
+                nonlocal call_count
+                call_count += 1
+                if call_count == 2:
+                    raise PermissionError("Injected permission denied on manifest replacement")
+                os.replace(src, target)
+
+            res = rollback_lock(project_root=dst, replace_fn=fault_replace)
+            self.assertEqual(res["status"], "FAIL")
+            self.assertIn("TRANSACTION_FAILED", res.get("reason", ""))
+
+            # Both files must remain in exact pre-rollback state
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), pre_lock)
+            self.assertEqual(manifest_path.read_text(encoding="utf-8"), pre_manifest)
+            self.assertFalse((dst / "standards.lock.json.tmp").exists())
+            self.assertFalse((dst / "standards.lock.json.bak").exists())
+
+    def test_g3_transactional_two_file_update_post_replace_inconsistency_fails(self) -> None:
+        """P0 Transactional Safety: If post-replace verification detects inconsistency
+        between lock and manifest, the transaction aborts and rolls back to pre-transaction state.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_path = dst / "standards.lock.json"
+            manifest_path = dst / "engineering-manifest.yaml"
+            orig_lock = lock_path.read_text(encoding="utf-8")
+            orig_manifest = manifest_path.read_text(encoding="utf-8")
+
+            new_lock_obj = json.loads(orig_lock)
+            new_lock_obj["version"] = "3.0.0"
+            new_lock_obj["tag"] = "v3.0.0"
+            # Intentionally mismatched manifest standards version
+            new_manifest_std = {"version": "2.99.0", "tag": "v2.99.0"}
+
+            ok, err = execute_transactional_two_file_update(
+                project_root=dst,
+                new_lock=new_lock_obj,
+                new_manifest_standards=new_manifest_std,
+            )
+            self.assertFalse(ok)
+            self.assertIn("POST_REPLACE_INCONSISTENCY", str(err))
+
+            # Restored to pre-transaction state
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), orig_lock)
+            self.assertEqual(manifest_path.read_text(encoding="utf-8"), orig_manifest)
+
+    # =========================================================================
+    # H. Release Discovery & Semantic Tests (P2 Remediation)
+    # =========================================================================
+    def test_h1_official_release_defined_by_annotated_git_tags_not_github_releases(self) -> None:
+        """P2 Regression: Official releases are discovered from Git Annotated Tags,
+        never from GitHub /releases/latest REST API objects.
+        """
+        res = discover_latest_official_tag(
+            standards_root=ROOT,
+            remote_url=str(ROOT),
+            ci_status_override="PASS",
+        )
+        self.assertIn(res["status"], ("PASS", "NOT_VERIFIABLE"))
+        self.assertEqual(res["tag"], "v2.11.0")
+        self.assertEqual(res["version"], "2.11.0")
+        self.assertEqual(res["tag_object_sha"], BASELINE_TAG_OBJ)
+        self.assertEqual(res["peeled_commit"], BASELINE_COMMIT)
+        # Tag object SHA must differ from peeled commit SHA (proving annotated tag, not lightweight)
+        self.assertNotEqual(res["tag_object_sha"], res["peeled_commit"])
+
+    def test_h2_discover_never_mutates_local_project_files(self) -> None:
+        """P2 Regression: Discover operation is strictly read-only and does not modify
+        standards.lock.json or engineering-manifest.yaml in consumer projects.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_path = dst / "standards.lock.json"
+            manifest_path = dst / "engineering-manifest.yaml"
+            pre_lock = lock_path.read_text(encoding="utf-8")
+            pre_manifest = manifest_path.read_text(encoding="utf-8")
+
+            _ = discover_latest_official_tag(
+                standards_root=ROOT,
+                remote_url=str(ROOT),
+                ci_status_override="PASS",
+            )
+
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), pre_lock)
+            self.assertEqual(manifest_path.read_text(encoding="utf-8"), pre_manifest)
 
 if __name__ == "__main__":
     unittest.main()

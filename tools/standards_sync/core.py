@@ -185,6 +185,17 @@ def check_remote_main_ci(
     except Exception as exc:
         return "NOT_VERIFIABLE", None, f"GitHub Actions API unreachable: {exc}"
 
+def is_canonical_repository_url(url: str, canonical_repo: str = DEFAULT_OFFICIAL_REPO) -> bool:
+    """Check whether a remote URL (HTTPS or SSH) points to the canonical official repository."""
+    raw = str(url or "").strip().rstrip("/")
+    if raw.endswith(".git"):
+        raw = raw[:-4]
+    m = re.search(r"github\.com[:/]([^/]+/[^/.]+)", raw)
+    if m:
+        return m.group(1).lower() == canonical_repo.lower()
+    return False
+
+
 def discover_latest_official_tag(
     standards_root: Optional[Path] = None,
     remote_url: Optional[str] = None,
@@ -194,12 +205,16 @@ def discover_latest_official_tag(
     timeout: int = 10,
 ) -> Dict[str, Any]:
     """Discover the latest official annotated SemVer tag from remote, verifying:
-    1. Official SemVer tag sorting.
+    1. Official SemVer tag sorting (e.g. v2.11.0 > v2.10.0 > v2.6.0).
     2. Fixed official repository (rejects arbitrary forks).
-    3. Annotated tag object SHA != peeled commit SHA (lightweight tags rejected).
-    4. Local/target VERSION file at peeled commit matches tag version.
-    5. Peeled commit is on main (ancestor of or equal to refs/heads/main).
-    6. Main CI verification status.
+    3. Authoritative release source: Official releases are strictly defined by Git Annotated Tags
+       on the canonical repository (refs/tags/vX.Y.Z) whose tag object SHA != peeled commit SHA.
+       Lightweight tags, unannotated tags, and untagged main commits are rejected.
+       GitHub /releases/latest REST API objects are NOT the authoritative release source.
+    4. Target VERSION file at peeled commit matches tag version.
+    5. Peeled commit is on canonical main ancestry (ancestor of or equal to refs/heads/main).
+    6. Main CI verification status for the exact release commit.
+    7. Read-only operation: Discover never mutates local standards.lock.json or consumer manifests.
     If network is unavailable or CI is not verifiable, returns status='NOT_VERIFIABLE' and never claims PASS.
     """
     if repository != DEFAULT_OFFICIAL_REPO:
@@ -222,13 +237,11 @@ def discover_latest_official_tag(
     effective_remote = official_remote
     if remote_url:
         supplied_remote = str(remote_url).rstrip("/")
-        accepted_remotes = {official_remote, official_remote[:-4]}
-        if supplied_remote in accepted_remotes:
+        if is_canonical_repository_url(supplied_remote, repository):
             effective_remote = official_remote
         elif Path(supplied_remote).is_dir():
             rc_origin, origin_url, _ = run_git(Path(supplied_remote), ["remote", "get-url", "origin"])
-            normalized_origin = origin_url.rstrip("/") if rc_origin == 0 else ""
-            if normalized_origin not in accepted_remotes:
+            if rc_origin != 0 or not is_canonical_repository_url(origin_url, repository):
                 return {
                     "status": "BLOCK",
                     "repository": repository,
@@ -1491,9 +1504,10 @@ def verify_consumer_ci_gate(
     repository: str,
     gate: Dict[str, Any],
     expected_commit: str,
+    min_tests_passed: Optional[int] = None,
     timeout: int = 12,
 ) -> Tuple[str, List[str]]:
-    """Verify a consumer GitHub Actions run and named job against the exact consumer commit."""
+    """Verify a consumer GitHub Actions run, named job, and actual test execution evidence."""
     if repository != str(repository).strip() or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         return "FAILED", ["INVALID_CONSUMER_REPOSITORY"]
     run_id = gate.get("run_id")
@@ -1508,6 +1522,42 @@ def verify_consumer_ci_gate(
     expected_url = f"https://github.com/{repository}/actions/runs/{run_id}"
     if gate.get("evidence_ref") != expected_url:
         return "FAILED", ["CONSUMER_CI_EVIDENCE_REFERENCE_MISMATCH"]
+
+    # Test Execution verification (STD-014/STD-034): Job success != test execution.
+    # We require structured counts: tests_collected, tests_passed, tests_failed, tests_skipped.
+    execution = gate.get("test_execution")
+    if not isinstance(execution, dict):
+        if any(k in gate for k in ("tests_collected", "tests_passed", "tests_failed", "tests_skipped")):
+            execution = {
+                "tests_collected": gate.get("tests_collected"),
+                "tests_passed": gate.get("tests_passed"),
+                "tests_failed": gate.get("tests_failed"),
+                "tests_skipped": gate.get("tests_skipped", 0),
+            }
+        else:
+            return "FAILED", ["CONSUMER_CI_GATE_TEST_EXECUTION_MISSING: Missing test execution results (tests_collected, tests_passed, tests_failed, tests_skipped)"]
+
+    collected = execution.get("tests_collected")
+    passed = execution.get("tests_passed")
+    failed = execution.get("tests_failed")
+    skipped = execution.get("tests_skipped", 0)
+
+    if not isinstance(collected, int) or collected <= 0:
+        return "FAILED", ["CONSUMER_CI_GATE_ZERO_TESTS_COLLECTED: Gate must execute at least one test"]
+    if not isinstance(passed, int) or passed <= 0:
+        return "FAILED", ["CONSUMER_CI_GATE_NO_TESTS_PASSED: Gate has zero passed tests"]
+    if not isinstance(failed, int) or failed > 0:
+        return "FAILED", [f"CONSUMER_CI_GATE_HAS_FAILED_TESTS: {failed} failed tests"]
+    if not isinstance(skipped, int) or skipped < 0:
+        return "FAILED", ["INVALID_CONSUMER_CI_SKIPPED_COUNT"]
+    if skipped >= collected:
+        return "FAILED", ["CONSUMER_CI_GATE_ALL_TESTS_SKIPPED: All collected tests were skipped"]
+    if passed + failed + skipped != collected:
+        return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNTS_INCONSISTENT: collected={collected} != passed({passed}) + failed({failed}) + skipped({skipped})"]
+
+    if min_tests_passed is not None and isinstance(min_tests_passed, int):
+        if passed < min_tests_passed:
+            return "FAILED", [f"CONSUMER_CI_GATE_TESTS_PASSED_BELOW_MINIMUM: passed={passed} < required={min_tests_passed}"]
 
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     headers = {
@@ -1784,10 +1834,12 @@ def validate_upgrade_candidate(
     verification_results: Dict[str, Any] = {}
     for dimension in ("unit_tests", "integration_tests", "release_gates", "security_scan", "business_api"):
         gate = dimensions.get(dimension) or {}
+        expected_job = required_ci_jobs.get(dimension) or {}
         gate_status, gate_errors = verify_consumer_ci_gate(
             repository=expected_repository,
             gate=gate,
             expected_commit=consumer_head,
+            min_tests_passed=expected_job.get("min_tests_passed"),
         )
         verification_results[dimension] = {"status": gate_status, "errors": gate_errors}
     runtime_gate = dimensions.get("runtime_acceptance") or {}
@@ -1797,10 +1849,12 @@ def validate_upgrade_candidate(
             "errors": [] if runtime_gate.get("status") == "NOT_APPLICABLE" else ["RUNTIME_ACCEPTANCE_MUST_BE_NOT_APPLICABLE_FOR_NON_RUNTIME_ARTIFACT"],
         }
     else:
+        expected_runtime_job = required_ci_jobs.get("runtime_acceptance") or {}
         gate_status, gate_errors = verify_consumer_ci_gate(
             repository=expected_repository,
             gate=runtime_gate,
             expected_commit=consumer_head,
+            min_tests_passed=expected_runtime_job.get("min_tests_passed"),
         )
         verification_results["runtime_acceptance"] = {"status": gate_status, "errors": gate_errors}
 
@@ -1843,6 +1897,136 @@ def validate_upgrade_candidate(
         "errors": [],
     }
 
+def execute_transactional_two_file_update(
+    project_root: Path,
+    new_lock: Dict[str, Any],
+    new_manifest_standards: Optional[Dict[str, Any]] = None,
+    replace_fn: Optional[Callable[[Path, Path], None]] = None,
+) -> Tuple[bool, Optional[str]]:
+    """Atomically apply updates to standards.lock.json and engineering-manifest.yaml.
+
+    Transactional safety properties:
+    1. Pre-transaction snapshot: Both files are read and backed up to .bak before modification.
+    2. Temp-write: Target contents are serialized to .tmp files before modifying original files.
+    3. Failure recovery: If any step fails (e.g. second file replace raises an exception,
+       or disk error occurs), all already-replaced files are rolled back from .bak,
+       temporary and backup files are cleaned up, and pre-transaction consistency is verified.
+    4. Post-replacement verification: On-disk cross-validation guarantees that both files
+       are strictly consistent (lock version/tag/commit match manifest standards mapping).
+       If an inconsistency is detected, changes are immediately rolled back.
+    5. Clean state: On completion (success or recovered failure), all .tmp and .bak files are deleted.
+    """
+    actual_replace = replace_fn if replace_fn is not None else os.replace
+    lock_path = project_root / "standards.lock.json"
+    manifest_path = project_root / "engineering-manifest.yaml"
+
+    lock_tmp = project_root / "standards.lock.json.tmp"
+    lock_bak = project_root / "standards.lock.json.bak"
+    manifest_tmp = project_root / "engineering-manifest.yaml.tmp"
+    manifest_bak = project_root / "engineering-manifest.yaml.bak"
+
+    orig_lock_content: Optional[str] = None
+    if lock_path.exists():
+        orig_lock_content = lock_path.read_text(encoding="utf-8")
+        lock_bak.write_text(orig_lock_content, encoding="utf-8")
+
+    orig_manifest_content: Optional[str] = None
+    has_manifest_update = False
+    if manifest_path.exists() and new_manifest_standards is not None:
+        try:
+            manifest_text = manifest_path.read_text(encoding="utf-8")
+            manifest_data = yaml.safe_load(manifest_text) or {}
+            if "standards" in manifest_data and isinstance(manifest_data["standards"], dict):
+                has_manifest_update = True
+                orig_manifest_content = manifest_text
+                manifest_bak.write_text(orig_manifest_content, encoding="utf-8")
+                manifest_data["standards"].update(new_manifest_standards)
+                manifest_tmp.write_text(
+                    yaml.safe_dump(manifest_data, sort_keys=False, allow_unicode=True),
+                    encoding="utf-8",
+                )
+        except Exception as exc:
+            for p in (lock_bak, manifest_bak, manifest_tmp):
+                if p.exists():
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
+            return False, f"FAILED_PREPARING_MANIFEST_UPDATE: {exc}"
+
+    lock_tmp.write_text(json.dumps(new_lock, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    replaced_files: List[Tuple[Path, Path, Optional[str]]] = []
+    try:
+        # Step 1: Replace lock file
+        actual_replace(lock_tmp, lock_path)
+        replaced_files.append((lock_path, lock_bak, orig_lock_content))
+
+        # Step 2: Replace manifest file if applicable
+        if has_manifest_update and manifest_tmp.exists():
+            actual_replace(manifest_tmp, manifest_path)
+            replaced_files.append((manifest_path, manifest_bak, orig_manifest_content))
+
+        # Step 3: Verify on-disk mutual consistency between lock and manifest
+        if has_manifest_update and manifest_path.exists():
+            disk_lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            disk_manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            m_std = disk_manifest.get("standards") or {}
+            m_ver = str(m_std.get("version") or m_std.get("standard_version") or "").lstrip("v")
+            m_tag = str(m_std.get("tag") or m_std.get("release_tag") or "")
+            m_commit = str(m_std.get("peeled_commit") or m_std.get("standard_commit") or "")
+            if (
+                disk_lock.get("version") != m_ver
+                or disk_lock.get("tag") != m_tag
+                or disk_lock.get("peeled_commit") != m_commit
+            ):
+                raise ValueError("POST_REPLACE_INCONSISTENCY: disk manifest standards block does not match lock")
+
+    except Exception as exc:
+        recovery_errors: List[str] = []
+        for target, bak, orig_content in reversed(replaced_files):
+            try:
+                if bak.exists():
+                    os.replace(bak, target)
+                elif orig_content is not None:
+                    target.write_text(orig_content, encoding="utf-8")
+                elif target.exists():
+                    target.unlink()
+            except Exception as rec_err:
+                recovery_errors.append(f"Failed to restore {target.name}: {rec_err}")
+
+        for p in (lock_tmp, lock_bak, manifest_tmp, manifest_bak):
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+
+        pre_restored = True
+        if orig_lock_content is not None and lock_path.exists():
+            if lock_path.read_text(encoding="utf-8") != orig_lock_content:
+                pre_restored = False
+        if orig_manifest_content is not None and manifest_path.exists():
+            if manifest_path.read_text(encoding="utf-8") != orig_manifest_content:
+                pre_restored = False
+
+        msg = f"TRANSACTION_FAILED: {exc}."
+        if recovery_errors or not pre_restored:
+            msg += f" RECOVERY_FAILED: {recovery_errors}; inconsistent state detected"
+        else:
+            msg += " State successfully rolled back to pre-transaction snapshot; consistency verified."
+        return False, msg
+
+    for p in (lock_tmp, lock_bak, manifest_tmp, manifest_bak):
+        if p.exists():
+            try:
+                p.unlink()
+            except Exception:
+                pass
+
+    return True, None
+
+
 def promote_upgrade(
     project_root: Path,
     target_tag: str,
@@ -1853,6 +2037,7 @@ def promote_upgrade(
     approval_file: Optional[Path] = None,
     ci_status: Optional[str] = None,
     standards_root: Optional[Path] = None,
+    replace_fn: Optional[Callable[[Path, Path], None]] = None,
 ) -> Dict[str, Any]:
     """Promote project lock to target version ONLY if:
     1. Target version is not a downgrade.
@@ -2014,23 +2199,24 @@ def promote_upgrade(
     }
 
     # 6. Transactional write to lock and engineering-manifest.yaml
-    lock_tmp = project_root / "standards.lock.json.tmp"
-    lock_tmp.write_text(json.dumps(new_lock, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-    manifest_path = project_root / "engineering-manifest.yaml"
-    manifest_tmp = project_root / "engineering-manifest.yaml.tmp"
-    if manifest_path.exists():
-        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-        if "standards" in manifest and isinstance(manifest["standards"], dict):
-            manifest["standards"]["repository"] = DEFAULT_OFFICIAL_REPO
-            manifest["standards"]["version"] = target_version.lstrip("v")
-            manifest["standards"]["tag"] = target_tag
-            manifest["standards"]["tag_object_sha"] = target_tag_object_sha
-            manifest["standards"]["peeled_commit"] = target_peeled_commit
-            manifest_tmp.write_text(yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True), encoding="utf-8")
-            os.replace(manifest_tmp, manifest_path)
-
-    os.replace(lock_tmp, lock_path)
+    manifest_standards = {
+        "repository": DEFAULT_OFFICIAL_REPO,
+        "version": target_version.lstrip("v"),
+        "tag": target_tag,
+        "tag_object_sha": target_tag_object_sha,
+        "peeled_commit": target_peeled_commit,
+    }
+    tx_ok, tx_err = execute_transactional_two_file_update(
+        project_root=project_root,
+        new_lock=new_lock,
+        new_manifest_standards=manifest_standards,
+        replace_fn=replace_fn,
+    )
+    if not tx_ok:
+        return {
+            "status": "UPGRADE_BLOCKED",
+            "reason": tx_err,
+        }
 
     return {
         "status": "PROMOTED",
@@ -2038,7 +2224,10 @@ def promote_upgrade(
     }
 
 
-def rollback_lock(project_root: Path) -> Dict[str, Any]:
+def rollback_lock(
+    project_root: Path,
+    replace_fn: Optional[Callable[[Path, Path], None]] = None,
+) -> Dict[str, Any]:
     """Rollback standards.lock.json to the most recent entry in previous_locks.
     Verifies historical lock integrity, preserves historical approval evidence and CI status,
     and applies transactional updates to standards.lock.json and engineering-manifest.yaml.
@@ -2083,23 +2272,25 @@ def rollback_lock(project_root: Path) -> Dict[str, Any]:
         "previous_locks": prev_locks,
     }
 
-    # Transactional update
-    lock_tmp = project_root / "standards.lock.json.tmp"
-    lock_tmp.write_text(json.dumps(rolled_back_lock, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-    manifest_path = project_root / "engineering-manifest.yaml"
-    manifest_tmp = project_root / "engineering-manifest.yaml.tmp"
-    if manifest_path.exists():
-        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-        if "standards" in manifest and isinstance(manifest["standards"], dict):
-            manifest["standards"]["version"] = restored["version"]
-            manifest["standards"]["tag"] = restored["tag"]
-            manifest["standards"]["tag_object_sha"] = restored["tag_object_sha"]
-            manifest["standards"]["peeled_commit"] = restored["peeled_commit"]
-            manifest_tmp.write_text(yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True), encoding="utf-8")
-            os.replace(manifest_tmp, manifest_path)
-
-    os.replace(lock_tmp, lock_path)
+    # Transactional update to standards.lock.json and engineering-manifest.yaml
+    manifest_standards = {
+        "repository": restored["repository"],
+        "version": restored["version"],
+        "tag": restored["tag"],
+        "tag_object_sha": restored["tag_object_sha"],
+        "peeled_commit": restored["peeled_commit"],
+    }
+    tx_ok, tx_err = execute_transactional_two_file_update(
+        project_root=project_root,
+        new_lock=rolled_back_lock,
+        new_manifest_standards=manifest_standards,
+        replace_fn=replace_fn,
+    )
+    if not tx_ok:
+        return {
+            "status": "FAIL",
+            "reason": tx_err,
+        }
 
     return {
         "status": "ROLLED_BACK",

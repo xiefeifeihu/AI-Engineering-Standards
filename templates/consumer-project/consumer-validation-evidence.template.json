@@ -16,23 +16,23 @@
   "dimensions": {
     "unit_tests": {
       "status": "NOT_RUN",
-      "reason": "Replace with a verified GitHub Actions Run and Job bound to consumer_commit."
+      "reason": "Replace with a verified GitHub Actions Run, Job and test_execution (tests_collected, tests_passed, tests_failed, tests_skipped) bound to consumer_commit."
     },
     "integration_tests": {
       "status": "NOT_RUN",
-      "reason": "Replace with a verified GitHub Actions Run and Job bound to consumer_commit."
+      "reason": "Replace with a verified GitHub Actions Run, Job and test_execution bound to consumer_commit."
     },
     "release_gates": {
       "status": "NOT_RUN",
-      "reason": "Replace with a verified GitHub Actions Run and Job bound to consumer_commit."
+      "reason": "Replace with a verified GitHub Actions Run, Job and test_execution bound to consumer_commit."
     },
     "security_scan": {
       "status": "NOT_RUN",
-      "reason": "Replace with a verified GitHub Actions Run and Job bound to consumer_commit."
+      "reason": "Replace with a verified GitHub Actions Run, Job and test_execution bound to consumer_commit."
     },
     "business_api": {
       "status": "NOT_RUN",
-      "reason": "Replace with a verified GitHub Actions Run and Job bound to consumer_commit."
+      "reason": "Replace with a verified GitHub Actions Run, Job and test_execution bound to consumer_commit."
     },
     "runtime_acceptance": {
       "status": "NOT_APPLICABLE",

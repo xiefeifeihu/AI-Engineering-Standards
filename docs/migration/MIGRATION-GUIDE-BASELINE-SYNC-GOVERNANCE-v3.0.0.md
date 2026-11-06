@@ -130,13 +130,13 @@ GitHub main 的历史快照不得替代执行时的本机事实。结果缺失�
 9. 发布与安全门禁；
 10. Hub API、浏览器和运行时业务回归（仅在任务明确要求且具备环境时）。
 
-每个维度记录 Source Commit、Target Commit、执行命令、时间、退出码、原始证据和状态。未执行为 `NOT_RUN`；无法核验为 `NOT_VERIFIABLE`；任一必需维度未知时不得汇总为 `COMPATIBLE`。
+每个维度记录 Source Commit、Target Commit、执行命令、时间、退出码、原始证据和状态。测试门禁必须包含真实测试执行证据（`tests_collected >= 1`、`tests_passed >= 1`、`tests_failed == 0`、`tests_skipped >= 0`），分离 Job 绿色与测试真实执行两个概念，严禁空测试或全部跳过被认定为有效通过。未执行为 `NOT_RUN`；无法核验为 `NOT_VERIFIABLE`；任一必需维度未知时不得汇总为 `COMPATIBLE`。
 
 ### H5：受控晋升与回滚
 
 只有在 v3.0.0 正式 Tag 已存在、官方 main CI 通过、AI-Hub 全部必需兼容性门禁通过、审批证据有效且 AI-Hub Owner 批准后，才允许更新 AI-Hub 的精确锁定。
 
-升级前保存当前 2.11.0 四元组及工程 Manifest；升级失败时不得静默降级或覆盖历史证据，按 AI-Hub 的正式发布策略恢复旧锁定并重新验证。
+升级前保存当前 2.11.0 四元组及工程 Manifest；升级与回滚采用双文件事务原子保障（`execute_transactional_two_file_update`），在第二步写入或磁盘异常时自动执行一致性回滚与清理，杜绝半升级状态。升级失败时不得静默降级或覆盖历史证据，按 AI-Hub 的正式发布策略恢复旧锁定并重新验证。
 
 ## 5. Standards 侧验收标准
 
