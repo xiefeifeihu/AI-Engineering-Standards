@@ -1385,6 +1385,10 @@ def prepare_upgrade_candidate(
 ) -> Dict[str, Any]:
     project_root = project_root.resolve()
     std_root = resolve_standards_root(standards_root)
+    if target_tag != f"v{target_version.lstrip('v')}":
+        return {"status": "BLOCK", "reason": "TARGET_TAG_VERSION_MISMATCH"}
+    if not re.fullmatch(r"[0-9a-f]{40}", target_tag_object_sha or "") or not re.fullmatch(r"[0-9a-f]{40}", target_peeled_commit or ""):
+        return {"status": "BLOCK", "reason": "INVALID_TARGET_TAG_OR_COMMIT_SHA"}
 
     # Determine consumer baseline exclusively from its authoritative lock.
     lock_path = project_root / "standards.lock.json"
@@ -1410,13 +1414,13 @@ def prepare_upgrade_candidate(
         to_ref=target_tag,
         standards_root=std_root,
     )
-    if impact.get("compatibility_status") == "UPGRADE_BLOCKED" or impact.get("analysis_status") == "FAILED":
+    if impact.get("analysis_status") == "FAILED":
         return {
             "status": "BLOCK",
-            "reason": "UPGRADE_BLOCKED",
+            "reason": "IMPACT_ANALYSIS_FAILED",
             "impact": impact,
         }
-    if impact.get("compatibility_status") not in ("COMPATIBLE", "NOT_VERIFIABLE"):
+    if impact.get("compatibility_status") not in ("COMPATIBLE", "NOT_VERIFIABLE", "UPGRADE_BLOCKED"):
         return {
             "status": "NOT_VERIFIABLE",
             "reason": "IMPACT_ANALYSIS_INCOMPLETE",
@@ -1493,6 +1497,10 @@ def verify_consumer_ci_gate(
     run_id = gate.get("run_id")
     if not isinstance(run_id, int) or run_id <= 0:
         return "FAILED", ["INVALID_CONSUMER_CI_RUN_ID"]
+    if gate.get("status") != "PASS":
+        if gate.get("status") in ("FAIL", "BLOCK"):
+            return "FAILED", [f"CONSUMER_CI_GATE_REPORTED_{gate.get('status')}"]
+        return "NOT_VERIFIABLE", [f"CONSUMER_CI_GATE_NOT_COMPLETED: {gate.get('status')}"]
     if gate.get("head_sha") != expected_commit:
         return "FAILED", ["CONSUMER_CI_EVIDENCE_COMMIT_MISMATCH"]
     expected_url = f"https://github.com/{repository}/actions/runs/{run_id}"

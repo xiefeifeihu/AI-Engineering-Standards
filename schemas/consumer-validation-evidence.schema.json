@@ -114,46 +114,72 @@
   },
   "$defs": {
     "ci_gate": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "status",
-        "command",
-        "workflow_path",
-        "run_id",
-        "job_name",
-        "head_sha",
-        "evidence_ref"
-      ],
-      "properties": {
-        "status": {
-          "const": "PASS"
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "command",
+            "workflow_path",
+            "run_id",
+            "job_name",
+            "head_sha",
+            "evidence_ref"
+          ],
+          "properties": {
+            "status": {
+              "const": "PASS"
+            },
+            "command": {
+              "type": "string",
+              "minLength": 3
+            },
+            "workflow_path": {
+              "type": "string",
+              "pattern": "^\\.github/workflows/.+\\.ya?ml$"
+            },
+            "run_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "job_name": {
+              "type": "string",
+              "minLength": 3
+            },
+            "head_sha": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "evidence_ref": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
         },
-        "command": {
-          "type": "string",
-          "minLength": 3
-        },
-        "workflow_path": {
-          "type": "string",
-          "pattern": "^\\.github/workflows/.+\\.ya?ml$"
-        },
-        "run_id": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "job_name": {
-          "type": "string",
-          "minLength": 3
-        },
-        "head_sha": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
-        },
-        "evidence_ref": {
-          "type": "string",
-          "format": "uri"
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "FAIL",
+                "BLOCK",
+                "NOT_RUN",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 3
+            }
+          }
         }
-      }
+      ]
     },
     "runtime_gate": {
       "oneOf": [
