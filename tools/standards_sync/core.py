@@ -294,7 +294,22 @@ def discover_latest_official_tag(
             "reason": f"UNANNOTATED_TAG_FORBIDDEN: Tag '{latest_tag}' is not an annotated tag",
         }
 
-    # Verify against local standards repository if available
+    # A Standards Git checkout is required to verify VERSION at the peeled commit
+    # and prove that the release commit is on the official main ancestry.
+    if not std_root.exists() or not (std_root / ".git").exists():
+        return {
+            "status": "NOT_VERIFIABLE",
+            "remote_latest_status": "NOT_VERIFIABLE",
+            "repository": repository,
+            "version": latest_version,
+            "tag": latest_tag,
+            "tag_object_sha": tag_obj_sha,
+            "peeled_commit": peeled_sha,
+            "reason": "LOCAL_STANDARDS_GIT_METADATA_UNAVAILABLE: Cannot verify tag VERSION and main ancestry without a Standards Git checkout",
+            "tag_refs": {name: sha for name, sha in refs.items() if name.startswith("refs/tags/")},
+        }
+
+    # Verify against local standards repository
     if std_root.exists() and (std_root / ".git").exists():
         rc_local_tag, local_tag_obj, _ = run_git(std_root, ["rev-parse", f"refs/tags/{latest_tag}"])
         if rc_local_tag == 0 and local_tag_obj != tag_obj_sha:
@@ -315,17 +330,36 @@ def discover_latest_official_tag(
             }
 
         rc_ver, ver_content, _ = run_git(std_root, ["show", f"{peeled_sha}:VERSION"])
-        if rc_ver == 0:
-            clean_ver = ver_content.strip().lstrip("v")
-            if clean_ver != latest_version:
-                return {
-                    "status": "BLOCK",
-                    "repository": repository,
-                    "tag": latest_tag,
-                    "version": latest_version,
-                    "reason": f"VERSION_MISMATCH: VERSION file at {peeled_sha} is '{clean_ver}', expected '{latest_version}'",
-                }
+        if rc_ver != 0:
+            return {
+                "status": "BLOCK",
+                "repository": repository,
+                "tag": latest_tag,
+                "version": latest_version,
+                "reason": f"VERSION_FILE_MISSING_AT_TAG: Cannot read VERSION from {peeled_sha}",
+            }
+        clean_ver = ver_content.strip().lstrip("v")
+        if clean_ver != latest_version:
+            return {
+                "status": "BLOCK",
+                "repository": repository,
+                "tag": latest_tag,
+                "version": latest_version,
+                "reason": f"VERSION_MISMATCH: VERSION file at {peeled_sha} is '{clean_ver}', expected '{latest_version}'",
+            }
 
+        if not remote_main:
+            return {
+                "status": "NOT_VERIFIABLE",
+                "remote_latest_status": "NOT_VERIFIABLE",
+                "repository": repository,
+                "tag": latest_tag,
+                "version": latest_version,
+                "tag_object_sha": tag_obj_sha,
+                "peeled_commit": peeled_sha,
+                "reason": "REMOTE_MAIN_NOT_FOUND: Cannot verify official main ancestry",
+                "tag_refs": {name: sha for name, sha in refs.items() if name.startswith("refs/tags/")},
+            }
         if remote_main:
             rc_anc, _, _ = run_git(std_root, ["merge-base", "--is-ancestor", peeled_sha, remote_main])
             if rc_anc != 0:
@@ -368,6 +402,7 @@ def discover_latest_official_tag(
             "ci_run_id": ci_run_id,
             "reason": f"MAIN_CI_NOT_VERIFIABLE: {ci_detail}",
             "all_tags": sorted_tags,
+            "tag_refs": {name: sha for name, sha in refs.items() if name.startswith("refs/tags/")},
         }
 
     return {
@@ -383,6 +418,7 @@ def discover_latest_official_tag(
         "ci_run_id": ci_run_id,
         "ci_detail": ci_detail,
         "all_tags": sorted_tags,
+        "tag_refs": {name: sha for name, sha in refs.items() if name.startswith("refs/tags/")},
     }
 
 
@@ -528,6 +564,14 @@ def verify_project_lock(
             "remote_latest_status": remote_latest_status,
             "lock": lock,
             "errors": errors,
+        }
+
+    if remote_info.get("status") == "BLOCK" or remote_latest_status == "BLOCK":
+        return {
+            "status": "BLOCK",
+            "remote_latest_status": "BLOCK",
+            "lock": lock,
+            "errors": [remote_info.get("reason", "OFFICIAL_STANDARDS_DISCOVERY_BLOCKED")],
         }
 
     if remote_latest_status == "NOT_VERIFIABLE":
