@@ -640,117 +640,231 @@ def deep_diff_schema(
     new_schema: Any,
     path: str = "",
 ) -> Tuple[List[str], Dict[str, Any]]:
-    """Recursively diff two JSON schemas across all structural levels:
-    - required fields at all object levels
-    - type changes
-    - enum additions and removals
-    - pattern changes
-    - additionalProperties changes
-    - const changes
-    - numeric and string constraints (minLength, maxLength, minItems, maxItems)
-    - $ref changes
-    Returns (breaking_changes, diff_details).
+    """Conservatively compare JSON Schema constraints at every nesting level.
+
+    Breaking changes include narrowed types/enums, new required fields, removed
+    properties/definitions, tightened numeric/string/array/object constraints,
+    stricter additional/unevaluated properties, and changed composition/ref rules.
+    Annotation-only changes are recorded but are not classified as breaking.
     """
     breaking: List[str] = []
     details: Dict[str, Any] = {}
 
+    if old_schema == new_schema:
+        return breaking, details
     if not isinstance(old_schema, dict) or not isinstance(new_schema, dict):
-        if old_schema != new_schema:
-            details["changed"] = {"old": old_schema, "new": new_schema}
+        details["changed"] = {"old": old_schema, "new": new_schema}
+        # A non-dict schema node is normally a boolean schema or an array-valued
+        # tuple schema. Changing it can change validation semantics.
+        if old_schema is not None:
+            breaking.append(f"[{path or 'root'}]: schema node changed")
         return breaking, details
 
-    # 1. Type change
+    annotation_keys = {
+        "$schema", "$id", "$anchor", "$comment", "title", "description",
+        "default", "examples", "deprecated", "readOnly", "writeOnly",
+    }
+    lower_bound_keys = {
+        "minimum", "exclusiveMinimum", "minLength", "minItems",
+        "minProperties", "minContains",
+    }
+    upper_bound_keys = {
+        "maximum", "exclusiveMaximum", "maxLength", "maxItems",
+        "maxProperties", "maxContains",
+    }
+    complex_schema_keys = {
+        "allOf", "anyOf", "oneOf", "not", "if", "then", "else",
+        "patternProperties", "propertyNames", "dependentSchemas",
+        "dependentRequired", "unevaluatedProperties", "unevaluatedItems",
+        "contains", "prefixItems",
+    }
+
+    # Type narrowing or any ambiguous type rewrite is treated as breaking.
     old_type = old_schema.get("type")
     new_type = new_schema.get("type")
-    if old_type and new_type and old_type != new_type:
-        msg = f"[{path or 'root'}]: type changed from '{old_type}' to '{new_type}'"
-        breaking.append(msg)
+    if old_type != new_type and ("type" in old_schema or "type" in new_schema):
+        old_types = set(old_type if isinstance(old_type, list) else ([old_type] if old_type else []))
+        new_types = set(new_type if isinstance(new_type, list) else ([new_type] if new_type else []))
         details["type_change"] = {"old": old_type, "new": new_type}
+        if old_types and (not new_types or not old_types.issubset(new_types)):
+            breaking.append(f"[{path or 'root'}]: type changed from '{old_type}' to '{new_type}'")
 
-    # 2. Required fields
+    # Required fields: additions narrow accepted instances; removals are compatible.
     old_req = set(old_schema.get("required") or [])
     new_req = set(new_schema.get("required") or [])
     added_req = sorted(new_req - old_req)
     removed_req = sorted(old_req - new_req)
+    if added_req or removed_req:
+        details["required_changes"] = {"added": added_req, "removed": removed_req}
     if added_req:
         breaking.append(f"[{path or 'root'}]: added required fields {added_req}")
-        details["added_required"] = added_req
-    if removed_req:
-        details["removed_required"] = removed_req
 
-    # 3. Enum values
+    # Enum removal and const changes narrow accepted values.
+    old_enum = set(str(v) for v in (old_schema.get("enum") or []))
+    new_enum = set(str(v) for v in (new_schema.get("enum") or []))
+    removed_enum = sorted(old_enum - new_enum)
+    added_enum = sorted(new_enum - old_enum)
     if "enum" in old_schema or "enum" in new_schema:
-        old_enums = set(str(x) for x in (old_schema.get("enum") or []))
-        new_enums = set(str(x) for x in (new_schema.get("enum") or []))
-        added_e = sorted(new_enums - old_enums)
-        removed_e = sorted(old_enums - new_enums)
-        if removed_e:
-            breaking.append(f"[{path or 'root'}]: removed enum values {removed_e}")
-        if added_e or removed_e:
-            details["enum_changes"] = {"added": added_e, "removed": removed_e}
+        details["enum_changes"] = {"added": added_enum, "removed": removed_enum}
+        if removed_enum:
+            breaking.append(f"[{path or 'root'}]: removed enum values {removed_enum}")
+    if ("const" in old_schema or "const" in new_schema) and old_schema.get("const") != new_schema.get("const"):
+        details["const_change"] = {"old": old_schema.get("const"), "new": new_schema.get("const")}
+        breaking.append(f"[{path or 'root'}]: const changed")
 
-    # 4. Pattern change
-    old_pat = old_schema.get("pattern")
-    new_pat = new_schema.get("pattern")
-    if old_pat != new_pat:
-        details["pattern_change"] = {"old": old_pat, "new": new_pat}
+    # Tightened bounds and validation formats.
+    for key in sorted(lower_bound_keys | upper_bound_keys | {"multipleOf", "minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties", "minContains", "maxContains"}):
+        old_value = old_schema.get(key)
+        new_value = new_schema.get(key)
+        if old_value == new_value:
+            continue
+        details[f"constraint:{key}"] = {"old": old_value, "new": new_value}
+        if new_value is None:
+            continue
+        if old_value is None:
+            breaking.append(f"[{path or 'root'}]: added validation constraint '{key}={new_value}'")
+            continue
+        try:
+            tightened = (
+                new_value > old_value if key in lower_bound_keys
+                else new_value < old_value if key in upper_bound_keys
+                else True
+            )
+        except TypeError:
+            tightened = True
+        if tightened:
+            breaking.append(f"[{path or 'root'}]: validation constraint '{key}' tightened from '{old_value}' to '{new_value}'")
 
-    # 5. additionalProperties
-    old_ap = old_schema.get("additionalProperties")
-    new_ap = new_schema.get("additionalProperties")
-    if old_ap != new_ap:
-        if old_ap is not False and new_ap is False:
-            breaking.append(f"[{path or 'root'}]: additionalProperties changed to false (closed schema)")
-        details["additionalProperties"] = {"old": old_ap, "new": new_ap}
+    for key in ("pattern", "format", "contentEncoding", "contentMediaType"):
+        if old_schema.get(key) != new_schema.get(key):
+            details[f"constraint:{key}"] = {"old": old_schema.get(key), "new": new_schema.get(key)}
+            if new_schema.get(key) is not None:
+                breaking.append(f"[{path or 'root'}]: validation constraint '{key}' changed")
 
-    # 6. Const change
-    if "const" in old_schema or "const" in new_schema:
-        if old_schema.get("const") != new_schema.get("const"):
-            breaking.append(f"[{path or 'root'}]: const changed from '{old_schema.get('const')}' to '{new_schema.get('const')}'")
-            details["const_change"] = {"old": old_schema.get("const"), "new": new_schema.get("const")}
+    # Closed object schemas and stricter property evaluation.
+    for key in ("additionalProperties", "unevaluatedProperties", "unevaluatedItems"):
+        old_value = old_schema.get(key)
+        new_value = new_schema.get(key)
+        if old_value == new_value:
+            continue
+        details[f"constraint:{key}"] = {"old": old_value, "new": new_value}
+        if new_value is False and old_value is not False:
+            breaking.append(f"[{path or 'root'}]: '{key}' changed to false")
+        elif isinstance(new_value, (dict, bool)) and new_value is not True and old_value in (None, True):
+            breaking.append(f"[{path or 'root'}]: '{key}' added or tightened")
 
-    # 7. $ref change
-    if "$ref" in old_schema or "$ref" in new_schema:
-        if old_schema.get("$ref") != new_schema.get("$ref"):
+    if old_schema.get("$ref") != new_schema.get("$ref"):
+        if "$ref" in old_schema or "$ref" in new_schema:
             details["$ref_change"] = {"old": old_schema.get("$ref"), "new": new_schema.get("$ref")}
+            breaking.append(f"[{path or 'root'}]: $ref changed")
 
-    # Recursively check properties
+    # Property map: removed properties are breaking; newly optional properties are additive.
     old_props = old_schema.get("properties") or {}
     new_props = new_schema.get("properties") or {}
-    for p_name in sorted(set(old_props.keys()) | set(new_props.keys())):
-        sub_p = f"{path}.{p_name}" if path else p_name
-        if p_name in old_props and p_name in new_props:
-            sub_b, sub_d = deep_diff_schema(old_props[p_name], new_props[p_name], sub_p)
-            breaking.extend(sub_b)
-            if sub_d:
-                details[f"prop:{p_name}"] = sub_d
-        elif p_name in old_props:
-            breaking.append(f"[{path or 'root'}]: removed property '{p_name}'")
-            details[f"prop_removed:{p_name}"] = True
+    for name in sorted(set(old_props) | set(new_props)):
+        sub_path = f"{path}.{name}" if path else name
+        if name not in new_props:
+            breaking.append(f"[{path or 'root'}]: removed property '{name}'")
+            details[f"prop_removed:{name}"] = True
+        elif name in old_props:
+            sub_breaking, sub_details = deep_diff_schema(old_props[name], new_props[name], sub_path)
+            breaking.extend(sub_breaking)
+            if sub_details:
+                details[f"prop:{name}"] = sub_details
+        else:
+            details[f"prop_added:{name}"] = True
 
-    # Recursively check items
-    if "items" in old_schema and "items" in new_schema:
-        sub_b, sub_d = deep_diff_schema(old_schema["items"], new_schema["items"], f"{path}[]")
-        breaking.extend(sub_b)
-        if sub_d:
-            details["items"] = sub_d
+    # Definitions are part of the published contract; removing one can break refs.
+    for key in ("$defs", "definitions"):
+        old_defs = old_schema.get(key) or {}
+        new_defs = new_schema.get(key) or {}
+        for name in sorted(set(old_defs) | set(new_defs)):
+            sub_path = f"{path}.{key}.{name}" if path else f"{key}.{name}"
+            if name not in new_defs:
+                breaking.append(f"[{path or 'root'}]: removed definition '{key}.{name}'")
+                details[f"{key}_removed:{name}"] = True
+            elif name in old_defs:
+                sub_breaking, sub_details = deep_diff_schema(old_defs[name], new_defs[name], sub_path)
+                breaking.extend(sub_breaking)
+                if sub_details:
+                    details[f"{key}:{name}"] = sub_details
 
-    # Recursively check $defs
-    old_defs = old_schema.get("$defs") or {}
-    new_defs = new_schema.get("$defs") or {}
-    for d_name in sorted(set(old_defs.keys()) | set(new_defs.keys())):
-        sub_p = f"{path}.$defs.{d_name}" if path else f"$defs.{d_name}"
-        if d_name in old_defs and d_name in new_defs:
-            sub_b, sub_d = deep_diff_schema(old_defs[d_name], new_defs[d_name], sub_p)
-            breaking.extend(sub_b)
-            if sub_d:
-                details[f"$defs:{d_name}"] = sub_d
-        elif d_name in old_defs:
-            breaking.append(f"[{path or 'root'}]: removed definition '$defs.{d_name}'")
-            details[f"def_removed:{d_name}"] = True
+    # Schema-bearing keywords recurse. Changes to composition and conditional
+    # keywords are conservatively breaking because their semantic impact is non-local.
+    child_keys = {
+        "items", "contains", "propertyNames", "additionalProperties",
+        "unevaluatedProperties", "unevaluatedItems", "not", "if", "then",
+        "else", "allOf", "anyOf", "oneOf", "prefixItems", "patternProperties",
+        "dependentSchemas",
+    }
+    for key in sorted(child_keys):
+        if key not in old_schema and key not in new_schema:
+            continue
+        old_value = old_schema.get(key)
+        new_value = new_schema.get(key)
+        if old_value == new_value:
+            continue
+        sub_path = f"{path}.{key}" if path else key
+        if isinstance(old_value, dict) and isinstance(new_value, dict):
+            sub_breaking, sub_details = deep_diff_schema(old_value, new_value, sub_path)
+            breaking.extend(sub_breaking)
+            if sub_details:
+                details[f"schema:{key}"] = sub_details
+            if key in complex_schema_keys and not sub_breaking:
+                breaking.append(f"[{sub_path}]: composition/conditional schema changed")
+        elif isinstance(old_value, list) and isinstance(new_value, list):
+            nested_breaking: List[str] = []
+            nested_details: Dict[str, Any] = {}
+            max_len = max(len(old_value), len(new_value))
+            for index in range(max_len):
+                if index >= len(old_value) or index >= len(new_value):
+                    nested_breaking.append(f"[{sub_path}]: schema array cardinality changed")
+                    continue
+                child_breaking, child_details = deep_diff_schema(old_value[index], new_value[index], f"{sub_path}[{index}]")
+                nested_breaking.extend(child_breaking)
+                if child_details:
+                    nested_details[str(index)] = child_details
+            breaking.extend(nested_breaking)
+            if nested_details:
+                details[f"schema:{key}"] = nested_details
+            if key in complex_schema_keys and not nested_breaking:
+                breaking.append(f"[{sub_path}]: composition/conditional schema changed")
+        else:
+            details[f"schema:{key}"] = {"old": old_value, "new": new_value}
+            if new_value is not None:
+                breaking.append(f"[{sub_path}]: schema constraint changed")
 
-    return breaking, details
+    # Record annotation changes without classifying them as compatibility breaks.
+    for key in sorted(annotation_keys):
+        if old_schema.get(key) != new_schema.get(key) and (key in old_schema or key in new_schema):
+            details[f"annotation:{key}"] = {"old": old_schema.get(key), "new": new_schema.get(key)}
 
+    # Preserve visibility of all unhandled keyword changes. Unknown schema keywords
+    # are conservatively marked breaking instead of silently ignored.
+    handled = (
+        annotation_keys | lower_bound_keys | upper_bound_keys
+        | {"type", "required", "enum", "const", "pattern", "format", "contentEncoding",
+           "contentMediaType", "additionalProperties", "unevaluatedProperties",
+           "unevaluatedItems", "$ref", "properties", "$defs", "definitions",
+           "items", "contains", "propertyNames", "not", "if", "then", "else",
+           "allOf", "anyOf", "oneOf", "prefixItems", "patternProperties",
+           "dependentSchemas", "dependentRequired", "multipleOf"}
+    )
+    for key in sorted((set(old_schema) | set(new_schema)) - handled):
+        if old_schema.get(key) != new_schema.get(key):
+            details[f"keyword:{key}"] = {"old": old_schema.get(key), "new": new_schema.get(key)}
+            if key in new_schema:
+                breaking.append(f"[{path or 'root'}]: unclassified schema keyword '{key}' changed")
+
+    if old_schema.get("dependentRequired") != new_schema.get("dependentRequired"):
+        details["dependentRequired"] = {
+            "old": old_schema.get("dependentRequired"),
+            "new": new_schema.get("dependentRequired"),
+        }
+        if new_schema.get("dependentRequired"):
+            breaking.append(f"[{path or 'root'}]: dependentRequired constraints changed")
+
+    return sorted(set(breaking)), details
 
 def extract_normative_clauses(markdown_text: str) -> Set[str]:
     """Extract normative MUST / MUST NOT / SHALL / REQUIRED clauses from markdown text."""

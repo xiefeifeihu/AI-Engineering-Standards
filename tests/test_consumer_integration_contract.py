@@ -10,12 +10,53 @@ from tools.standards_sync.core import (
     DEFAULT_OFFICIAL_REPO,
     analyze_consumer_impact,
     discover_latest_official_tag,
+    deep_diff_schema,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class ConsumerIntegrationContractTests(unittest.TestCase):
+    def test_deep_schema_diff_detects_nested_tightening(self) -> None:
+        old_schema = {
+            "type": "object",
+            "properties": {
+                "payload": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string", "minLength": 1}},
+                }
+            },
+        }
+        new_schema = {
+            "type": "object",
+            "properties": {
+                "payload": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string", "minLength": 5}},
+                }
+            },
+        }
+        breaking, _ = deep_diff_schema(old_schema, new_schema)
+        self.assertTrue(any("minLength" in item for item in breaking), breaking)
+
+    def test_deep_schema_diff_detects_pattern_and_composition_changes(self) -> None:
+        old_schema = {"type": "object", "properties": {"code": {"type": "string", "pattern": "^[A-Z]+$"}}}
+        new_schema = {"type": "object", "properties": {"code": {"type": "string", "pattern": "^[A-Z]{3}$"}}}
+        breaking, _ = deep_diff_schema(old_schema, new_schema)
+        self.assertTrue(any("pattern" in item for item in breaking), breaking)
+        old_composition = {"allOf": [{"type": "object", "required": ["id"]}]}
+        new_composition = {"allOf": [{"type": "object", "required": ["id", "name"]}]}
+        composition_breaking, _ = deep_diff_schema(old_composition, new_composition)
+        self.assertTrue(composition_breaking, composition_breaking)
+
+    def test_schema_diff_does_not_flag_annotation_only_change(self) -> None:
+        breaking, details = deep_diff_schema(
+            {"type": "string", "description": "old"},
+            {"type": "string", "description": "new"},
+        )
+        self.assertEqual(breaking, [])
+        self.assertIn("annotation:description", details)
+
     def test_missing_lock_does_not_resolve_to_a_historical_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(resolve_locked_standards_ref(Path(tmp)))
