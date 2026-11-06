@@ -62,6 +62,21 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
             self.assertIsNone(metadata.get("content_sha256"), path.name)
             self.assertIsNone(metadata.get("approval_evidence_ref"), path.name)
 
+    def test_only_explicitly_adopted_consumers_are_subject_to_auto_upgrade(self) -> None:
+        std034 = (
+            ROOT / "standards" / "00-governance"
+            / "STD-034-coding-agent-execution-governance.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("消费端接入与受控升级", std034)
+        self.assertIn("不代表所有受管工程自动加入升级计划", std034)
+        self.assertIn("AI-Engineering-Hub", std034)
+        self.assertIn("AI-KB、VTIP、SideCar 不属于本轮迁移范围", std034)
+
+    def test_rollback_plan_never_recommends_blind_docs_checkout(self) -> None:
+        core = (ROOT / "tools" / "standards_sync" / "core.py").read_text(encoding="utf-8")
+        self.assertNotIn("git checkout -- docs/ engineering-manifest.yaml", core)
+        self.assertIn("does not revert docs/", core)
+
     def test_only_ai_hub_is_the_first_consumer_pilot(self) -> None:
         guide = (
             ROOT / "docs" / "migration"

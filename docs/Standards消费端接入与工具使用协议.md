@@ -172,7 +172,7 @@ python .standards/tools/standards_sync/cli.py --standards-root .standards impact
 
 ## 9. 首个消费端试点
 
-本次候选版本只选择 AI-Engineering-Hub 作为首个消费端试点。试点当前观测基线、阶段和验收标准见迁移指南。AI-KB、VTIP、SideCar 不属于本轮试点，不得从 AI-Hub 试点结果推导其兼容性或升级批准。
+Standards 提供可复用能力，但消费端必须由各自 Owner 显式批准接入。本次候选版本只选择 AI-Engineering-Hub 作为首个消费端试点。试点当前观测基线、阶段和验收标准见迁移指南。AI-KB、VTIP、SideCar 不属于本轮试点，不得从 AI-Hub 试点结果推导其兼容性或升级批准；不默认加入自动巡检或自动升级。
 
 ## 10. 路径与显示名称
 
