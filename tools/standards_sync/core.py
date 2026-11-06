@@ -413,7 +413,9 @@ def verify_project_lock(
         return {"status": "BLOCK", "errors": [f"CORRUPT_STANDARDS_LOCK: {e}"]}
 
     lock_schema_path = std_root / "schemas" / "standards-lock.schema.json"
-    if lock_schema_path.exists():
+    if not lock_schema_path.exists():
+        errors.append("MISSING_STANDARDS_LOCK_SCHEMA: schemas/standards-lock.schema.json is required")
+    else:
         schema = json.loads(lock_schema_path.read_text(encoding="utf-8"))
         validator = jsonschema.Draft202012Validator(schema)
         for err in validator.iter_errors(lock):
@@ -443,6 +445,16 @@ def verify_project_lock(
         try:
             manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
             m_std = manifest.get("standards") or {}
+            if not isinstance(m_std, dict) or not m_std:
+                errors.append("MISSING_MANIFEST_STANDARDS_BLOCK: engineering-manifest.yaml must contain a standards mapping")
+                m_std = {}
+            manifest_schema_path = std_root / "schemas" / "engineering-manifest.schema.json"
+            if not manifest_schema_path.exists():
+                errors.append("MISSING_ENGINEERING_MANIFEST_SCHEMA: schemas/engineering-manifest.schema.json is required")
+            else:
+                manifest_schema = json.loads(manifest_schema_path.read_text(encoding="utf-8"))
+                for schema_error in jsonschema.Draft202012Validator(manifest_schema).iter_errors(manifest):
+                    errors.append(f"MANIFEST_SCHEMA_VIOLATION: {schema_error.message}")
             m_ver = str(
                 m_std.get("version")
                 or m_std.get("standard_version")
@@ -520,12 +532,23 @@ def verify_project_lock(
 
     if remote_latest_status == "NOT_VERIFIABLE":
         return {
-            "status": "PASS" if allow_offline else "NOT_VERIFIABLE",
+            "status": "NOT_VERIFIABLE",
             "remote_latest_status": "NOT_VERIFIABLE",
             "offline_verified_lock": True,
             "lock": lock,
             "errors": [],
-            "note": "Locked version verified locally; latest remote version is NOT_VERIFIABLE due to network unavailability",
+            "note": "The exact locked Tag/Commit was verified locally, but the latest official release and remote CI could not be verified. Offline use of the existing lock may continue; this result is not a PASS.",
+        }
+
+    remote_tag_refs = remote_info.get("tag_refs") or {}
+    remote_tag_object = remote_tag_refs.get(f"refs/tags/{tag}")
+    remote_peeled = remote_tag_refs.get(f"refs/tags/{tag}^{{}}")
+    if remote_tag_object != tag_obj_sha or remote_peeled != peeled_commit:
+        return {
+            "status": "BLOCK",
+            "remote_latest_status": remote_latest_status,
+            "lock": lock,
+            "errors": [f"REMOTE_LOCK_TAG_MISMATCH: Official remote Tag {tag} does not match the locked tag_object_sha/peeled_commit"],
         }
 
     is_up_to_date = remote_info.get("tag") == tag and remote_info.get("peeled_commit") == peeled_commit

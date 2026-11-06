@@ -152,7 +152,11 @@ def main(argv: list[str] | None = None) -> int:
             standards_root=std_root,
         )
         print(json.dumps(res, indent=2))
-        return 0 if res.get("status") == "PASS" else 1
+        if res.get("status") == "PASS":
+            return 0
+        if res.get("status") == "NOT_VERIFIABLE":
+            return 2
+        return 1
 
     if args.subcommand == "compare":
         p_root = Path(args.project_root)
