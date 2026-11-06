@@ -98,6 +98,15 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
         self.assertEqual(status, "VERIFIED", errors)
         self.assertEqual(errors, [])
 
+    def test_consumer_upgrade_requires_owner_reviewed_ci_job_mapping(self) -> None:
+        manifest_schema = json.loads(
+            (ROOT / "schemas" / "engineering-manifest.schema.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("standards_validation", manifest_schema["properties"])
+        core = (ROOT / "tools" / "standards_sync" / "core.py").read_text(encoding="utf-8")
+        self.assertIn("MANIFEST_REQUIRED_CI_JOB_MAPPING_MISSING", core)
+        self.assertIn("CONSUMER_CI_JOB_MAPPING_MISMATCH", core)
+
     def test_consumer_ci_gate_rejects_commit_mismatch_before_network(self) -> None:
         gate = {
             "status": "PASS",

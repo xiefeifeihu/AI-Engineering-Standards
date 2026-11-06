@@ -35,3 +35,40 @@
 9. 升级时按证据模板记录消费工程同一 Commit 的单元、集成、发布、安全、业务 API 与 Runtime CI Job；使用 `validate-upgrade` 核验后方可申请晋升。
 
 Lock 模板中的 `0.0.0`、`v0.0.0` 和全零 SHA 是 `TEMPLATE_ONLY` 哨兵值，不是有效正式锁定。未用 `discover` 输出替换并通过 `verify-lock` 前，不得提交为正式 Lock。所有文档模板必须保持 `status: CANDIDATE`、`approval_status: NOT_SUBMITTED`，且 `source_commit`、`content_sha256`、`approval_evidence_ref` 为 `null`；不得预置 `ACTIVE`、`AI_APPROVED` 或 `OWNER_APPROVED`。未完成填充、真实证据核验和独立审批前，不得正式生效。
+
+## 消费端 CI 门禁登记（Owner-reviewed Manifest Policy）
+
+消费工程必须在 `engineering-manifest.yaml` 的 `standards_validation.required_ci_jobs` 中登记每个门禁的真实 Workflow 路径、Job 名称和实际命令。该映射属于工程治理配置，必须经工程 Owner 审核；证据文件不得自行选择任意绿色 Workflow。
+
+```yaml
+standards_validation:
+  schema_version: "1.0.0"
+  required_ci_jobs:
+    unit_tests:
+      workflow_path: ".github/workflows/ci.yml"
+      job_name: "Unit Tests"
+      command: "python -m unittest discover -s tests -v"
+    integration_tests:
+      workflow_path: ".github/workflows/ci.yml"
+      job_name: "Integration Tests"
+      command: "python -m unittest discover -s tests -p '*integration*'"
+    release_gates:
+      workflow_path: ".github/workflows/ci.yml"
+      job_name: "Release Gates"
+      command: "python tools/validate_release.py"
+    security_scan:
+      workflow_path: ".github/workflows/security.yml"
+      job_name: "Secret and Dependency Scan"
+      command: "python tools/security_scan.py"
+    business_api:
+      workflow_path: ".github/workflows/ci.yml"
+      job_name: "Business API Regression"
+      command: "python -m pytest tests/business"
+    # deployment_kind=SERVICE 时必须登记：
+    runtime_acceptance:
+      workflow_path: ".github/workflows/runtime-acceptance.yml"
+      job_name: "Runtime Acceptance"
+      command: "python tests/runtime/run_acceptance.py"
+```
+
+以上路径、Job 名称和命令仅为格式示例，必须替换成消费工程真实存在且经 Owner 审核的 CI 门禁。

@@ -13,6 +13,7 @@
 | `generate_handoff.py` | 生成当前交接、任务快照和可选临时交接 | 写入指定工程交接路径；不得覆盖历史快照 |
 | `validate_approval_contract.py` | 校验审批范围、候选 Commit、内容摘要及外部审批事件 | 只读 |
 | `consumer-validation-evidence.schema.json` | 消费端 CI 证据契约；绑定仓库、项目、Commit、目标 Standards 四元组与六类验证维度 | 只读 Schema |
+| `engineering-manifest.yaml → standards_validation.required_ci_jobs` | Owner 审核的消费端 CI Workflow/Job/命令白名单；证据不得自行选择任意绿色 Job | 只读核验 |
 | `verify_consumer_ci_gate()` | 通过 GitHub Actions API 核验消费端 Workflow Run 与指定 Job 的真实状态 | 只读网络核验 |
 | `validate_test_coverage.py` | 测试覆盖与证据契约校验 | 只读 |
 | `validate_two_stage_release.py` | 两阶段发布证据契约校验 | 只读 |
