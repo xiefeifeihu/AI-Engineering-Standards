@@ -11,6 +11,7 @@ from tools.standards_sync.core import (
     analyze_consumer_impact,
     discover_latest_official_tag,
     deep_diff_schema,
+    verify_consumer_ci_gate,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +57,60 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
         )
         self.assertEqual(breaking, [])
         self.assertIn("annotation:description", details)
+
+    def test_consumer_ci_gate_verifies_exact_run_and_job(self) -> None:
+        import json
+        from unittest.mock import patch
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.payload = json.dumps(payload).encode("utf-8")
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self):
+                return self.payload
+
+        repository = "example/consumer"
+        commit = "a" * 40
+        gate = {
+            "status": "PASS",
+            "command": "python -m unittest discover -s tests -v",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": commit,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+        }
+        run_payload = {
+            "repository": {"full_name": repository},
+            "head_sha": commit,
+            "path": ".github/workflows/ci.yml",
+            "status": "completed",
+            "conclusion": "success",
+        }
+        jobs_payload = {
+            "jobs": [{"name": "Unit Tests", "status": "completed", "conclusion": "success"}]
+        }
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "VERIFIED", errors)
+        self.assertEqual(errors, [])
+
+    def test_consumer_ci_gate_rejects_commit_mismatch_before_network(self) -> None:
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": "b" * 40,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+        }
+        status, errors = verify_consumer_ci_gate("example/consumer", gate, "a" * 40)
+        self.assertEqual(status, "FAILED")
+        self.assertIn("CONSUMER_CI_EVIDENCE_COMMIT_MISMATCH", errors)
 
     def test_missing_lock_does_not_resolve_to_a_historical_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

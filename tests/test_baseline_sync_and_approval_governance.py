@@ -121,7 +121,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
     # =========================================================================
     def test_a1_all_schemas_valid_and_manifest_schemas_unified(self) -> None:
         schema_files = sorted(SCHEMAS_DIR.glob("*.schema.json"))
-        self.assertGreaterEqual(len(schema_files), 30)
+        self.assertGreaterEqual(len(schema_files), 31)
         for sf in schema_files:
             data = json.loads(sf.read_text(encoding="utf-8"))
             jsonschema.validators.validator_for(data).check_schema(data)
@@ -153,6 +153,17 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         self.assertTrue(ok, f"Baseline build failed: {errs}")
         eb_schema = json.loads((SCHEMAS_DIR / "engineering-baseline.schema.json").read_text(encoding="utf-8"))
         jsonschema.validate(instance=payload, schema=eb_schema)
+
+        # 3. consumer-validation-evidence.schema.json
+        evidence_schema = json.loads((SCHEMAS_DIR / "consumer-validation-evidence.schema.json").read_text(encoding="utf-8"))
+        evidence_template = json.loads(
+            (ROOT / "templates" / "consumer-project" / "consumer-validation-evidence.template.json").read_text(encoding="utf-8")
+        )
+        jsonschema.validate(instance=evidence_template, schema=evidence_schema)
+        bad_evidence = dict(evidence_template)
+        bad_evidence["consumer_commit"] = "short-sha"
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(instance=bad_evidence, schema=evidence_schema)
 
         # 3. cross-session-handoff.schema.json
         h_ok, h_errs, h_payload, _ = build_handoff_payload(
@@ -513,7 +524,15 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
                 target_peeled_commit=head,
                 standards_root=ROOT,
             )
-            self.assertIn(prep["status"], ("BLOCK", "NOT_VERIFIABLE"))
+            self.assertIn(prep["status"], ("CANDIDATE_GENERATED", "BLOCK", "NOT_VERIFIABLE"))
+            if prep["status"] == "CANDIDATE_GENERATED":
+                validation = validate_upgrade_candidate(
+                    project_root=dst,
+                    standards_root=ROOT,
+                    target_tag="v3.0.0",
+                )
+                self.assertEqual(validation["status"], "NOT_VERIFIABLE")
+                self.assertTrue(any("CONSUMER_VALIDATION_EVIDENCE_MISSING" in item for item in validation["errors"]))
 
             prom = promote_upgrade(
                 project_root=dst,
