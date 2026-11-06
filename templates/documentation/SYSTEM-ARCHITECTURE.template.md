@@ -3,13 +3,18 @@ document_id: "DOC-SYSTEM-ARCHITECTURE-001"
 document_version: "1.0.0"
 project_id: "example-project"
 document_type: "SYSTEM_ARCHITECTURE"
-status: "ACTIVE"
+status: "CANDIDATE"
 applies_to_release: "v1.0.0"
-last_updated: "2026-10-27"
+last_updated: "2026-11-05"
 supersedes: null
 change_summary: "系统架构设计初始基线"
 history_reference: null
 primary_entrypoint: true
+source_commit: null
+content_sha256: null
+approval_scope: "OWNER_MANDATORY"
+approval_status: "NOT_SUBMITTED"
+approval_evidence_ref: null
 ---
 
 # 系统架构设计 (System Architecture)

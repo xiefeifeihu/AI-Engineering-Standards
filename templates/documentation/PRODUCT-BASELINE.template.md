@@ -3,13 +3,18 @@ document_id: "DOC-PRODUCT-BASELINE-001"
 document_version: "1.0.0"
 project_id: "example-project"
 document_type: "PRODUCT_BASELINE"
-status: "ACTIVE"
+status: "CANDIDATE"
 applies_to_release: "v1.0.0"
-last_updated: "2026-10-27"
+last_updated: "2026-11-05"
 supersedes: null
 change_summary: "产品功能基线初始版本"
 history_reference: null
 primary_entrypoint: true
+source_commit: null
+content_sha256: null
+approval_scope: "OWNER_MANDATORY"
+approval_status: "NOT_SUBMITTED"
+approval_evidence_ref: null
 ---
 
 # 产品基线 (Product Baseline)

@@ -1,0 +1,348 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/cross-session-handoff.schema.json",
+  "title": "Cross-Session Handoff Automated Contract Schema (STD-020 v2.0.0)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "handoff_type",
+    "task_id",
+    "version",
+    "status",
+    "git_state",
+    "standards_lock",
+    "test_results",
+    "ci_run",
+    "completed_items",
+    "pending_items",
+    "blockers",
+    "approved_decisions",
+    "proposed_items",
+    "next_session_guide",
+    "captured_at",
+    "content_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2.0.0"
+    },
+    "handoff_type": {
+      "type": "string",
+      "enum": [
+        "DURABLE",
+        "TEMPORARY"
+      ]
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "COMPLETED",
+        "IN_PROGRESS",
+        "BLOCKED"
+      ]
+    },
+    "git_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "branch",
+        "local_head",
+        "remote_head",
+        "worktree_clean",
+        "status_summary"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "local_head": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "remote_head": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{40}|NOT_VERIFIABLE)$"
+        },
+        "worktree_clean": {
+          "type": "boolean"
+        },
+        "status_summary": {
+          "type": "string"
+        }
+      }
+    },
+    "standards_lock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "version",
+        "tag",
+        "tag_object_sha",
+        "peeled_commit"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "tag": {
+          "type": "string",
+          "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+        },
+        "tag_object_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "peeled_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "test_results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verification_status",
+        "command",
+        "exit_code",
+        "passed_count",
+        "failed_count",
+        "evidence_ref"
+      ],
+      "properties": {
+        "verification_status": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "FAIL",
+            "BLOCK",
+            "NOT_RUN",
+            "NOT_VERIFIABLE"
+          ]
+        },
+        "command": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "passed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidence_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ci_run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "workflow",
+        "commit",
+        "verification_status",
+        "evidence_ref"
+      ],
+      "properties": {
+        "run_id": {
+          "type": [
+            "string",
+            "integer",
+            "null"
+          ]
+        },
+        "workflow": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{40}|NOT_RUN|NOT_VERIFIABLE)$"
+        },
+        "verification_status": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "FAIL",
+            "BLOCK",
+            "NOT_RUN",
+            "NOT_VERIFIABLE"
+          ]
+        },
+        "evidence_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "completed_items": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 2
+      }
+    },
+    "pending_items": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 2
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "blocker_id",
+          "description",
+          "severity",
+          "remediation"
+        ],
+        "properties": {
+          "blocker_id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "LOW",
+              "MEDIUM",
+              "HIGH",
+              "CRITICAL"
+            ]
+          },
+          "remediation": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "approved_decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision_id",
+          "summary",
+          "approval_status",
+          "approval_reference"
+        ],
+        "properties": {
+          "decision_id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "approval_status": {
+            "type": "string",
+            "enum": [
+              "AI_APPROVED",
+              "OWNER_APPROVED"
+            ]
+          },
+          "approval_reference": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "proposed_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "proposal_id",
+          "summary",
+          "requires_owner_approval",
+          "status"
+        ],
+        "properties": {
+          "proposal_id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "requires_owner_approval": {
+            "type": "boolean"
+          },
+          "status": {
+            "const": "PROPOSED"
+          }
+        }
+      }
+    },
+    "next_session_guide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mandatory_read_order",
+        "verification_commands",
+        "immediate_next_steps"
+      ],
+      "properties": {
+        "mandatory_read_order": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "string"
+          }
+        },
+        "verification_commands": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string"
+          }
+        },
+        "immediate_next_steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "captured_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^(sha256:)?[0-9a-f]{64}$"
+    }
+  }
+}

@@ -1414,6 +1414,73 @@ def test_samples():
         sample_cov = json.load(f)
     jsonschema.validate(instance=sample_cov, schema=cov_schema)
 
+    # Test v3.0.0 Governance Schemas (D1-D5 / STD-020 / STD-034 / STD-035)
+    # 1. Negative test: HISTORICAL_ARCHIVE removed from documentation-metadata.schema.json
+    bad_hist_doc = dict(sample_doc_meta)
+    bad_hist_doc["document_type"] = "HISTORICAL_ARCHIVE"
+    try:
+        jsonschema.validate(instance=bad_hist_doc, schema=doc_meta_schema)
+        raise AssertionError("Failed negative test: HISTORICAL_ARCHIVE was accepted as document_type!")
+    except jsonschema.ValidationError:
+        pass
+
+    # 2. Positive test: ENGINEERING_BASELINE document_type
+    eb_doc_meta = dict(sample_doc_meta)
+    eb_doc_meta["document_type"] = "ENGINEERING_BASELINE"
+    jsonschema.validate(instance=eb_doc_meta, schema=doc_meta_schema)
+
+    # 3. Verify schemas/engineering-manifest.schema.json and governance/engineering-manifest-schema.json equivalence
+    with open(ROOT / "governance" / "engineering-manifest-schema.json", "r", encoding="utf-8") as f:
+        gov_manifest_schema = json.load(f)
+    assert manifest_schema == gov_manifest_schema, "Dual-path engineering-manifest schemas drifted!"
+
+    # 4. Validate standards.lock.json and template against standards-lock.schema.json
+    with open(SCHEMAS_DIR / "standards-lock.schema.json", "r", encoding="utf-8") as f:
+        lock_schema = json.load(f)
+    with open(ROOT / "standards.lock.json", "r", encoding="utf-8") as f:
+        root_lock = json.load(f)
+    jsonschema.validate(instance=root_lock, schema=lock_schema)
+    with open(ROOT / "templates" / "standards.lock.template.json", "r", encoding="utf-8") as f:
+        tmpl_lock = json.load(f)
+    jsonschema.validate(instance=tmpl_lock, schema=lock_schema)
+
+    # 5. Validate documentation-approval.schema.json positive and negative samples
+    with open(SCHEMAS_DIR / "documentation-approval.schema.json", "r", encoding="utf-8") as f:
+        doc_app_schema = json.load(f)
+    valid_ai_app = {
+        "schema_version": "1.0.0",
+        "task_id": "STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001",
+        "repository": "xiefeifeihu/AI-Engineering-Standards",
+        "candidate_commit": "5e17c0ef560ab8abafe880b988d70f85f380a104",
+        "content_sha256": "sha256:" + "a" * 64,
+        "decision_scope": "AI_APPROVABLE",
+        "approval_scope": "AI_APPROVABLE",
+        "reviewer_type": "CHATGPT_INDEPENDENT_REVIEW",
+        "review_result": "AI_APPROVED",
+        "approval_status": "AI_APPROVED",
+        "approved_at": "2026-11-05T10:00:00Z",
+        "approval_reference": "chatgpt://review/session-001",
+        "chatgpt_review": {
+            "reviewer": "ChatGPT",
+            "reviewed_at": "2026-11-05T10:00:00Z",
+            "review_result": "AI_APPROVED",
+            "review_reference": "chatgpt://review/session-001",
+            "candidate_commit": "5e17c0ef560ab8abafe880b988d70f85f380a104",
+            "content_sha256": "sha256:" + "a" * 64,
+            "summary": "Independent cross-document review passed"
+        },
+        "owner_approval": None
+    }
+    jsonschema.validate(instance=valid_ai_app, schema=doc_app_schema)
+    bad_self_app = dict(valid_ai_app)
+    bad_self_app["reviewer_type"] = "CODING_AGENT"
+    try:
+        jsonschema.validate(instance=bad_self_app, schema=doc_app_schema)
+        raise AssertionError("Failed negative test: CODING_AGENT reviewer_type was accepted!")
+    except jsonschema.ValidationError:
+        pass
+
+
     print(f"Sample validation PASS: Standards {(ROOT / 'VERSION').read_text().strip()}.")
     return True
 
