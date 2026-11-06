@@ -20,6 +20,7 @@
 | `docs/DECISION-RECORD.md` | `templates/documentation/DECISION-RECORD.template.md` | 已批准 ADR 与待审决策分离 |
 | `docs/CROSS-SESSION-HANDOFF.md` | `tools/generate_handoff.py` | 必须从真实 Git/Lock/测试/CI 事实生成 |
 | `docs/当前权威基线.md` | `tools/generate_engineering_baseline.py` | 必须从正式文档和实时事实生成，不得手工填造 |
+| `.artifacts/standards_upgrade/<TAG>/consumer-validation-evidence.json` | `templates/consumer-project/consumer-validation-evidence.template.json` | 记录消费端各项 CI 的 Workflow Run、Job、Commit 和证据链接，供 `validate-upgrade` 独立核验 |
 
 ## 初始化顺序
 
@@ -31,5 +32,6 @@
 6. 运行官方文档集合和 Schema 校验。
 7. 使用官方基线生成器与交接生成器生成动态综合视图。
 8. 由 ChatGPT 审核候选文档；Owner 必批的决策必须单独批准。
+9. 升级时按证据模板记录消费工程同一 Commit 的单元、集成、发布、安全、业务 API 与 Runtime CI Job；使用 `validate-upgrade` 核验后方可申请晋升。
 
 Lock 模板中的 `0.0.0`、`v0.0.0` 和全零 SHA 是 `TEMPLATE_ONLY` 哨兵值，不是有效正式锁定。未用 `discover` 输出替换并通过 `verify-lock` 前，不得提交为正式 Lock。所有文档模板必须保持 `status: CANDIDATE`、`approval_status: NOT_SUBMITTED`，且 `source_commit`、`content_sha256`、`approval_evidence_ref` 为 `null`；不得预置 `ACTIVE`、`AI_APPROVED` 或 `OWNER_APPROVED`。未完成填充、真实证据核验和独立审批前，不得正式生效。

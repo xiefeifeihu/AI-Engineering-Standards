@@ -21,6 +21,7 @@ All notable changes to the AI Engineering Standards baseline are documented in t
   - 新增 schemas/cross-session-handoff.schema.json 与 tools/generate_handoff.py，自动采集 11 项实时工程事实并强制新会话启动重验。
 - **Standards 官方同步工具与四元组锁定契约 (STD-034 §4 / D3-D5=APPROVED)**:
   - 新增 schemas/standards-lock.schema.json 与 templates/standards.lock.template.json，强制锁定 version、tag、tag_object_sha、peeled_commit 并保留 previous_locks 历史栈。
+  - 新增 schemas/consumer-validation-evidence.schema.json，绑定消费工程 Commit、目标 Standards 四元组与 GitHub Actions 六类 CI Job；`validate-upgrade` 通过 GitHub Actions API 核验真实 Run/Job。
   - 新增 tools/standards_sync/ 官方共享工具 (discover, verify-lock, compare, impact, prepare-upgrade, validate-upgrade, promote, rollback)。
 - **跨工程迁移指南 (docs/migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)**:
   - 提供以 AI-Engineering-Hub 为首个消费端试点的接入与验证方案；其他工程不在本次迁移范围内。

@@ -53,12 +53,13 @@
 
 ## 2. 机器可读契约（JSON Schemas）
 
-规范库提供 30 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
+规范库提供 31 个标准 JSON Schema，均支持通过 `python tools/validate-schemas.py` 自动化检验：
 - `schemas/audit-event.schema.json`
 - `schemas/canonical-action.schema.json`
 - `schemas/coding-agent-outcome.schema.json`
 - `schemas/coding-gateway.schema.json`
 - `schemas/cross-session-handoff.schema.json`
+- `schemas/consumer-validation-evidence.schema.json`
 - `schemas/documentation-approval.schema.json`
 - `schemas/documentation-metadata.schema.json`
 - `schemas/endpoint.schema.json`
@@ -94,6 +95,7 @@
 - `tools/generate_engineering_baseline.py`：`docs/当前权威基线.md` 确定性生成与 `--verify-only` 校验工具。
 - `tools/generate_handoff.py`：`docs/CROSS-SESSION-HANDOFF.md` 与任务级快照自动采集生成工具（`STD-020`）。
 - `tools/validate_approval_contract.py`：ChatGPT 独立审核与 Owner 批准证据校验工具（`D2` / `STD-034 §16`）。
+- `tools/standards_sync/core.py`：消费端 CI Run/Job 证据核验，确保升级测试绑定精确消费 Commit。
 
 详细接入、安装、调用权限、Windows/Linux 示例与升级流程见 [`消费端接入与工具使用协议`](./docs/Standards消费端接入与工具使用协议.md)。
 

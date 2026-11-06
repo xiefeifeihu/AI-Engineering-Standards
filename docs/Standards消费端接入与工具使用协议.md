@@ -138,8 +138,15 @@ python .standards/tools/standards_sync/cli.py --standards-root .standards impact
 2. `compare` 分析标准正文、Schema 和规范性条款差异。
 3. `impact` 按消费工程实际 Lock 评估影响；未执行维度必须标记 `NOT_RUN` / `NOT_VERIFIABLE`。
 4. `prepare-upgrade` 只生成候选 Lock 和影响报告，输出到 `.artifacts/standards_upgrade/`；不修改正式 Lock。
-5. 消费工程执行自身 Schema、单元、集成、业务、发布、安全及 Runtime 回归，保存绑定消费工程 Commit 与目标 Standards Peeled Commit 的原始证据。
-6. `validate-upgrade` 只有在全部必需验证证据可核验后才能给出可晋升结论；当前工具尚未完成消费端多类证据的统一导入适配，缺证据时必须返回 `NOT_VERIFIABLE`。
+5. 消费工程在自身 CI 中执行单元、集成、发布、安全、业务 API 与 Runtime 回归；所有必需 Job 必须运行在同一个消费工程 Commit 上。
+6. 从 `templates/consumer-project/consumer-validation-evidence.template.json` 生成 `.artifacts/standards_upgrade/<TAG>/consumer-validation-evidence.json`，填写真实仓库、项目标识、消费 Commit、目标 Standards 四元组，以及每个 CI Job 的 Workflow 路径、Run ID、Job 名称、Head SHA 和 GitHub Actions 证据链接。
+7. 执行以下只读验证；工具通过 GitHub Actions API 核验每个 Run 和 Job 的仓库、Workflow、Commit、完成状态及成功结论：
+
+```powershell
+python .standards/tools/standards_sync/cli.py --standards-root .standards validate-upgrade --project-root . --target-tag vX.Y.Z
+```
+
+8. 只有 Manifest、文档集合、权威基线和全部必需消费端 CI Job 均通过，`validate-upgrade` 才能返回 `PASS`。缺少证据、网络不可用或 GitHub API 不可核验时返回 `NOT_VERIFIABLE`；任一证据失败、Commit 不一致或 Job 失败时返回 `UPGRADE_BLOCKED`。`NON_RUNTIME_ARTIFACT` 的 Runtime 维度必须明确标记 `NOT_APPLICABLE` 并说明原因；`SERVICE` 必须提供 Runtime CI 证据。
 7. ChatGPT 独立审核候选差异；属于 Owner 必批范围的变更，必须取得 Owner 明确批准。
 8. 所有必需门禁通过后，才可执行 `promote` 更新 Lock/Manifest；随后重新运行 `verify-lock` 并记录远端 CI/Commit。
 9. 任一门禁失败，保持旧 Lock 不变；不得通过修改测试断言或降低 Standards 要求使升级“变绿”。

@@ -12,6 +12,8 @@
 | `generate_engineering_baseline.py` | 生成工程当前权威基线综合视图 | 写入指定工程的 `docs/当前权威基线.md` 和机器报告 |
 | `generate_handoff.py` | 生成当前交接、任务快照和可选临时交接 | 写入指定工程交接路径；不得覆盖历史快照 |
 | `validate_approval_contract.py` | 校验审批范围、候选 Commit、内容摘要及外部审批事件 | 只读 |
+| `consumer-validation-evidence.schema.json` | 消费端 CI 证据契约；绑定仓库、项目、Commit、目标 Standards 四元组与六类验证维度 | 只读 Schema |
+| `verify_consumer_ci_gate()` | 通过 GitHub Actions API 核验消费端 Workflow Run 与指定 Job 的真实状态 | 只读网络核验 |
 | `validate_test_coverage.py` | 测试覆盖与证据契约校验 | 只读 |
 | `validate_two_stage_release.py` | 两阶段发布证据契约校验 | 只读 |
 | `cleanup_audit.py` | 工作区与制品清理审计 | 只读审计；不得绕过人工授权删除数据 |
