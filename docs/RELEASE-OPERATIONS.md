@@ -61,4 +61,4 @@ Standards 的候选版本与正式发布版本必须严格区分：
 
 ## 4. 消费端发布边界
 
-本次 v3.0.0 候选以 AI-Engineering-Hub 为首个消费端试点。试点计划、当前观测基线和验收边界见 [`migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md`](./migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)。本 PR 不授权修改 Hub，也不授权 AI-KB、VTIP 或 SideCar 升级。
+本次 v3.0.0 候选以 AI-Engineering-Hub 为首个消费端试点。试点计划、当前观测基线和验收边界见 [`migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md`](./migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)。本 PR 不授权修改 Hub，也不授权 AI-KB、VTIP 或 SideCar 升级。其他工程是否接入必须由其 Owner 单独批准。
