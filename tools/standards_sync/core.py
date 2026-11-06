@@ -1385,6 +1385,8 @@ def prepare_upgrade_candidate(
 ) -> Dict[str, Any]:
     project_root = project_root.resolve()
     std_root = resolve_standards_root(standards_root)
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", target_tag or "") or not re.fullmatch(r"\d+\.\d+\.\d+", target_version.lstrip("v")):
+        return {"status": "BLOCK", "reason": "INVALID_TARGET_TAG_OR_VERSION"}
     if target_tag != f"v{target_version.lstrip('v')}":
         return {"status": "BLOCK", "reason": "TARGET_TAG_VERSION_MISMATCH"}
     if not re.fullmatch(r"[0-9a-f]{40}", target_tag_object_sha or "") or not re.fullmatch(r"[0-9a-f]{40}", target_peeled_commit or ""):
@@ -1559,7 +1561,7 @@ def validate_upgrade_candidate(
     project_root = project_root.resolve()
     std_root = resolve_standards_root(standards_root)
     errors: List[str] = []
-    if target_tag and not re.fullmatch(r"v\\d+\\.\\d+\\.\\d+", target_tag):
+    if target_tag and not re.fullmatch(r"v\d+\.\d+\.\d+", target_tag):
         return {
             "status": "UPGRADE_BLOCKED",
             "compatible": False,
@@ -1722,7 +1724,7 @@ def validate_upgrade_candidate(
     candidate_prefix = candidate_dir.relative_to(project_root).as_posix().rstrip("/") + "/"
     unexpected_worktree_entries = []
     for status_line in worktree_status.splitlines():
-        changed_path = status_line[3:].strip().replace("\\\\", "/") if len(status_line) >= 4 else status_line.strip()
+        changed_path = status_line[3:].strip().replace("\\", "/") if len(status_line) >= 4 else status_line.strip()
         if not changed_path.startswith(candidate_prefix):
             unexpected_worktree_entries.append(status_line)
     if rc_status != 0 or unexpected_worktree_entries:
