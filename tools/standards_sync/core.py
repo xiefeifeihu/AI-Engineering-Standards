@@ -1559,6 +1559,13 @@ def validate_upgrade_candidate(
     project_root = project_root.resolve()
     std_root = resolve_standards_root(standards_root)
     errors: List[str] = []
+    if target_tag and not re.fullmatch(r"v\\d+\\.\\d+\\.\\d+", target_tag):
+        return {
+            "status": "UPGRADE_BLOCKED",
+            "compatible": False,
+            "analysis_status": "FAILED",
+            "errors": ["INVALID_TARGET_TAG: target_tag must be a stable vMAJOR.MINOR.PATCH Tag"],
+        }
 
     manifest_path = project_root / "engineering-manifest.yaml"
     manifest_schema_path = std_root / "schemas" / "engineering-manifest.schema.json"
@@ -1642,6 +1649,17 @@ def validate_upgrade_candidate(
         candidate_lock = json.loads(candidate_lock_path.read_text(encoding="utf-8"))
         lock_schema = json.loads((std_root / "schemas" / "standards-lock.schema.json").read_text(encoding="utf-8"))
         jsonschema.validate(instance=candidate_lock, schema=lock_schema)
+        if candidate_lock.get("repository") != DEFAULT_OFFICIAL_REPO:
+            raise ValueError("candidate lock repository is not the official Standards repository")
+        if candidate_lock.get("tag") != target_tag or candidate_lock.get("tag") != f"v{candidate_lock.get('version')}":
+            raise ValueError("candidate lock Tag/Version does not match the selected target")
+        if candidate_lock.get("tag_object_sha") == candidate_lock.get("peeled_commit"):
+            raise ValueError("candidate lock points to a lightweight Tag")
+        current_lock_data = json.loads((project_root / "standards.lock.json").read_text(encoding="utf-8"))
+        current_version = parse_semver(current_lock_data.get("version") or "")
+        target_version_tuple = parse_semver(candidate_lock.get("version") or "")
+        if current_version and target_version_tuple and target_version_tuple < current_version:
+            raise ValueError("candidate Standards version is a downgrade")
     except Exception as exc:
         return {
             "status": "UPGRADE_BLOCKED",
@@ -1650,7 +1668,11 @@ def validate_upgrade_candidate(
             "errors": [f"INVALID_STANDARDS_CANDIDATE_LOCK: {exc}"],
         }
 
-    evidence_path = Path(evidence_file).resolve() if evidence_file else (candidate_dir / "consumer-validation-evidence.json").resolve()
+    if evidence_file:
+        evidence_arg = Path(evidence_file)
+        evidence_path = (project_root / evidence_arg).resolve() if not evidence_arg.is_absolute() else evidence_arg.resolve()
+    else:
+        evidence_path = (candidate_dir / "consumer-validation-evidence.json").resolve()
     try:
         evidence_path.relative_to(project_root)
     except ValueError:
@@ -1689,7 +1711,7 @@ def validate_upgrade_candidate(
         }
 
     rc_head, consumer_head, _ = run_git(project_root, ["rev-parse", "HEAD"])
-    rc_status, worktree_status, _ = run_git(project_root, ["status", "--porcelain"])
+    rc_status, worktree_status, _ = run_git(project_root, ["status", "--porcelain", "--untracked-files=all"])
     if rc_head != 0 or not re.fullmatch(r"[0-9a-f]{40}", consumer_head):
         return {
             "status": "NOT_VERIFIABLE",
@@ -1697,12 +1719,18 @@ def validate_upgrade_candidate(
             "analysis_status": "PARTIAL",
             "errors": ["CONSUMER_GIT_HEAD_NOT_VERIFIABLE"],
         }
-    if rc_status != 0 or worktree_status.strip():
+    candidate_prefix = candidate_dir.relative_to(project_root).as_posix().rstrip("/") + "/"
+    unexpected_worktree_entries = []
+    for status_line in worktree_status.splitlines():
+        changed_path = status_line[3:].strip().replace("\\\\", "/") if len(status_line) >= 4 else status_line.strip()
+        if not changed_path.startswith(candidate_prefix):
+            unexpected_worktree_entries.append(status_line)
+    if rc_status != 0 or unexpected_worktree_entries:
         return {
             "status": "UPGRADE_BLOCKED",
             "compatible": False,
             "analysis_status": "FAILED",
-            "errors": ["CONSUMER_WORKTREE_NOT_CLEAN: CI evidence must bind to an immutable clean commit"],
+            "errors": [f"CONSUMER_WORKTREE_NOT_CLEAN: changes outside the generated candidate evidence directory: {unexpected_worktree_entries}"],
         }
 
     project = manifest_data.get("project") or {}
