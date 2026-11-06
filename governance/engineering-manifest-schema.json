@@ -453,7 +453,10 @@
               }
             }
           }
-        }
+        },
+        "required": [
+          "standards_validation"
+        ]
       }
     }
   ]

@@ -54,6 +54,34 @@ project:
     ENGINEERING_BASELINE:
       applicable: true
 
+standards_validation:
+  schema_version: "1.0.0"
+  required_ci_jobs:
+    unit_tests:
+      workflow_path: ".github/workflows/ci.yml"
+      job_name: "Unit Tests"
+      command: "python -m unittest discover -s tests -v"
+    integration_tests:
+      workflow_path: ".github/workflows/ci.yml"
+      job_name: "Integration Tests"
+      command: "python -m unittest discover -s tests -p '*integration*'"
+    release_gates:
+      workflow_path: ".github/workflows/ci.yml"
+      job_name: "Release Gates"
+      command: "python tools/validate_release.py"
+    security_scan:
+      workflow_path: ".github/workflows/security.yml"
+      job_name: "Secret and Dependency Scan"
+      command: "python tools/security_scan.py"
+    business_api:
+      workflow_path: ".github/workflows/ci.yml"
+      job_name: "Business API Regression"
+      command: "python -m pytest tests/business"
+    runtime_acceptance:
+      workflow_path: ".github/workflows/runtime-acceptance.yml"
+      job_name: "Runtime Acceptance"
+      command: "python tests/runtime/run_acceptance.py"
+
 services:
   - id: "service-unique-id"                 # 服务唯一标识，如 ai-kb-control, vtip
     name: "服务名称"
