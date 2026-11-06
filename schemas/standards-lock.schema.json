@@ -115,6 +115,20 @@
               "string",
               "null"
             ]
+          },
+          "ci_verification_status": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "NOT_VERIFIABLE"
+            ]
+          },
+          "ci_run_id": {
+            "type": [
+              "integer",
+              "string",
+              "null"
+            ]
           }
         }
       }
