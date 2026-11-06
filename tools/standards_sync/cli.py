@@ -114,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     # 6. validate-upgrade
     p_val = sub.add_parser("validate-upgrade", help="Execute compatibility validation against target Standards")
     p_val.add_argument("--project-root", default=".", help="Target consumer project root directory")
+    p_val.add_argument("--target-tag", default=None, help="Select the prepared candidate Tag when multiple candidates exist")
+    p_val.add_argument("--evidence-file", default=None, help="Consumer CI evidence JSON (default: candidate directory/consumer-validation-evidence.json)")
 
     # 7. promote
     p_prom = sub.add_parser("promote", help="Controlled promotion of standards.lock.json with CI and approval gate")
@@ -203,6 +205,8 @@ def main(argv: list[str] | None = None) -> int:
         res = validate_upgrade_candidate(
             project_root=Path(args.project_root),
             standards_root=std_root,
+            target_tag=args.target_tag,
+            evidence_file=Path(args.evidence_file) if args.evidence_file else None,
         )
         print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "PASS" else 1

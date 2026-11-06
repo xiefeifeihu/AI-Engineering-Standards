@@ -1481,35 +1481,121 @@ def prepare_upgrade_candidate(
     }
 
 
+def verify_consumer_ci_gate(
+    repository: str,
+    gate: Dict[str, Any],
+    expected_commit: str,
+    timeout: int = 12,
+) -> Tuple[str, List[str]]:
+    """Verify a consumer GitHub Actions run and named job against the exact consumer commit."""
+    if repository != str(repository).strip() or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+        return "FAILED", ["INVALID_CONSUMER_REPOSITORY"]
+    run_id = gate.get("run_id")
+    if not isinstance(run_id, int) or run_id <= 0:
+        return "FAILED", ["INVALID_CONSUMER_CI_RUN_ID"]
+    if gate.get("head_sha") != expected_commit:
+        return "FAILED", ["CONSUMER_CI_EVIDENCE_COMMIT_MISMATCH"]
+    expected_url = f"https://github.com/{repository}/actions/runs/{run_id}"
+    if gate.get("evidence_ref") != expected_url:
+        return "FAILED", ["CONSUMER_CI_EVIDENCE_REFERENCE_MISMATCH"]
+
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "AI-Engineering-Standards-Consumer-Evidence/3.0.0",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    def get_json(url: str) -> Dict[str, Any]:
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    try:
+        run = get_json(f"https://api.github.com/repos/{repository}/actions/runs/{run_id}")
+        run_repo = str((run.get("repository") or {}).get("full_name") or "")
+        if run_repo.lower() != repository.lower():
+            return "FAILED", ["CONSUMER_CI_RUN_REPOSITORY_MISMATCH"]
+        if run.get("head_sha") != expected_commit:
+            return "FAILED", ["CONSUMER_CI_RUN_COMMIT_MISMATCH"]
+        if run.get("path") != gate.get("workflow_path"):
+            return "FAILED", ["CONSUMER_CI_RUN_WORKFLOW_MISMATCH"]
+        if run.get("status") != "completed" or run.get("conclusion") != "success":
+            return "FAILED", [f"CONSUMER_CI_RUN_NOT_SUCCESS: status={run.get('status')} conclusion={run.get('conclusion')}"]
+
+        jobs_data = get_json(
+            f"https://api.github.com/repos/{repository}/actions/runs/{run_id}/jobs?per_page=100"
+        )
+        matching = [
+            job for job in (jobs_data.get("jobs") or [])
+            if job.get("name") == gate.get("job_name")
+        ]
+        if len(matching) != 1:
+            return "FAILED", [f"CONSUMER_CI_JOB_NOT_UNIQUE_OR_MISSING: {gate.get('job_name')}"]
+        job = matching[0]
+        if job.get("status") != "completed" or job.get("conclusion") != "success":
+            return "FAILED", [f"CONSUMER_CI_JOB_NOT_SUCCESS: {gate.get('job_name')}"]
+        return "VERIFIED", []
+    except Exception as exc:
+        return "NOT_VERIFIABLE", [f"CONSUMER_CI_API_NOT_VERIFIABLE: {exc}"]
+
+
 def validate_upgrade_candidate(
     project_root: Path,
     standards_root: Optional[Path] = None,
+    target_tag: Optional[str] = None,
+    evidence_file: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """Run available checks and fail closed for consumer gates not actually executed."""
+    """Validate local contracts and independently verify commit-bound consumer CI evidence."""
     project_root = project_root.resolve()
     std_root = resolve_standards_root(standards_root)
     errors: List[str] = []
 
     manifest_path = project_root / "engineering-manifest.yaml"
     manifest_schema_path = std_root / "schemas" / "engineering-manifest.schema.json"
+    manifest_data: Dict[str, Any] = {}
     if manifest_path.exists() and manifest_schema_path.exists():
         try:
             manifest_data = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-            m_schema = json.loads(manifest_schema_path.read_text(encoding="utf-8"))
-            jsonschema.validate(instance=manifest_data, schema=m_schema)
+            manifest_schema = json.loads(manifest_schema_path.read_text(encoding="utf-8"))
+            jsonschema.validate(instance=manifest_data, schema=manifest_schema)
         except Exception as exc:
             errors.append(f"MANIFEST_INCOMPATIBLE: {exc}")
     else:
-        errors.append("MISSING_MANIFEST: engineering-manifest.yaml not found")
+        errors.append("MISSING_MANIFEST_OR_SCHEMA: engineering-manifest.yaml or its Standards schema is missing")
 
     doc_schema_path = std_root / "schemas" / "documentation-metadata.schema.json"
     doc_ok, doc_errors = run_collection_validation(
         project_root=project_root,
         schema_path=doc_schema_path,
         standards_root=std_root,
+        check_templates=True,
+        verify_source_paths=True,
     )
     if not doc_ok:
         errors.extend(doc_errors)
+
+    baseline_script = std_root / "tools" / "generate_engineering_baseline.py"
+    if not baseline_script.exists():
+        errors.append("MISSING_BASELINE_GENERATOR: tools/generate_engineering_baseline.py")
+    else:
+        try:
+            baseline_result = subprocess.run(
+                [
+                    sys.executable, str(baseline_script),
+                    "--project-root", str(project_root),
+                    "--standards-root", str(std_root),
+                    "--verify-only",
+                ],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+            )
+            if baseline_result.returncode != 0:
+                errors.append(
+                    "BASELINE_VERIFY_FAILED: " + ((baseline_result.stdout or "") + (baseline_result.stderr or ""))[-4000:]
+                )
+        except Exception as exc:
+            errors.append(f"BASELINE_VERIFY_NOT_VERIFIABLE: {exc}")
 
     if errors:
         return {
@@ -1519,13 +1605,185 @@ def validate_upgrade_candidate(
             "errors": errors,
         }
 
+    # Exactly one candidate is selected; ambiguous candidate directories must be named explicitly.
+    upgrade_root = project_root / ".artifacts" / "standards_upgrade"
+    if target_tag:
+        candidate_dir = upgrade_root / target_tag
+        candidate_lock_path = candidate_dir / "standards.lock.candidate.json"
+    else:
+        candidates = sorted(upgrade_root.glob("*/standards.lock.candidate.json")) if upgrade_root.exists() else []
+        if len(candidates) != 1:
+            return {
+                "status": "UPGRADE_BLOCKED",
+                "compatible": False,
+                "analysis_status": "FAILED",
+                "errors": [f"STANDARDS_CANDIDATE_SELECTION_AMBIGUOUS: found {len(candidates)} candidate locks; specify --target-tag"],
+            }
+        candidate_lock_path = candidates[0]
+        candidate_dir = candidate_lock_path.parent
+        target_tag = candidate_dir.name
+
+    if not candidate_lock_path.exists():
+        return {
+            "status": "UPGRADE_BLOCKED",
+            "compatible": False,
+            "analysis_status": "FAILED",
+            "errors": [f"MISSING_STANDARDS_CANDIDATE_LOCK: {candidate_lock_path}"],
+        }
+    try:
+        candidate_lock = json.loads(candidate_lock_path.read_text(encoding="utf-8"))
+        lock_schema = json.loads((std_root / "schemas" / "standards-lock.schema.json").read_text(encoding="utf-8"))
+        jsonschema.validate(instance=candidate_lock, schema=lock_schema)
+    except Exception as exc:
+        return {
+            "status": "UPGRADE_BLOCKED",
+            "compatible": False,
+            "analysis_status": "FAILED",
+            "errors": [f"INVALID_STANDARDS_CANDIDATE_LOCK: {exc}"],
+        }
+
+    evidence_path = Path(evidence_file).resolve() if evidence_file else (candidate_dir / "consumer-validation-evidence.json").resolve()
+    try:
+        evidence_path.relative_to(project_root)
+    except ValueError:
+        return {
+            "status": "UPGRADE_BLOCKED",
+            "compatible": False,
+            "analysis_status": "FAILED",
+            "errors": ["CONSUMER_EVIDENCE_PATH_OUTSIDE_PROJECT_ROOT"],
+        }
+    if not evidence_path.exists():
+        return {
+            "status": "NOT_VERIFIABLE",
+            "compatible": None,
+            "analysis_status": "PARTIAL",
+            "errors": [f"CONSUMER_VALIDATION_EVIDENCE_MISSING: {evidence_path.relative_to(project_root).as_posix()}"],
+        }
+
+    evidence_schema_path = std_root / "schemas" / "consumer-validation-evidence.schema.json"
+    if not evidence_schema_path.exists():
+        return {
+            "status": "NOT_VERIFIABLE",
+            "compatible": None,
+            "analysis_status": "PARTIAL",
+            "errors": ["CONSUMER_VALIDATION_EVIDENCE_SCHEMA_NOT_AVAILABLE"],
+        }
+    try:
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        evidence_schema = json.loads(evidence_schema_path.read_text(encoding="utf-8"))
+        jsonschema.validate(instance=evidence, schema=evidence_schema)
+    except Exception as exc:
+        return {
+            "status": "UPGRADE_BLOCKED",
+            "compatible": False,
+            "analysis_status": "FAILED",
+            "errors": [f"CONSUMER_VALIDATION_EVIDENCE_INVALID: {exc}"],
+        }
+
+    rc_head, consumer_head, _ = run_git(project_root, ["rev-parse", "HEAD"])
+    rc_status, worktree_status, _ = run_git(project_root, ["status", "--porcelain"])
+    if rc_head != 0 or not re.fullmatch(r"[0-9a-f]{40}", consumer_head):
+        return {
+            "status": "NOT_VERIFIABLE",
+            "compatible": None,
+            "analysis_status": "PARTIAL",
+            "errors": ["CONSUMER_GIT_HEAD_NOT_VERIFIABLE"],
+        }
+    if rc_status != 0 or worktree_status.strip():
+        return {
+            "status": "UPGRADE_BLOCKED",
+            "compatible": False,
+            "analysis_status": "FAILED",
+            "errors": ["CONSUMER_WORKTREE_NOT_CLEAN: CI evidence must bind to an immutable clean commit"],
+        }
+
+    project = manifest_data.get("project") or {}
+    expected_repository = str(project.get("repository") or "")
+    expected_project_id = str(project.get("id") or "")
+    if not expected_repository or evidence.get("repository") != expected_repository:
+        errors.append("CONSUMER_EVIDENCE_REPOSITORY_MISMATCH")
+    if not expected_project_id or evidence.get("project_id") != expected_project_id:
+        errors.append("CONSUMER_EVIDENCE_PROJECT_ID_MISMATCH")
+    if evidence.get("consumer_commit") != consumer_head:
+        errors.append("CONSUMER_EVIDENCE_COMMIT_MISMATCH")
+
+    lock_binding = evidence.get("standards_lock") or {}
+    for field in ("repository", "version", "tag", "tag_object_sha", "peeled_commit"):
+        if lock_binding.get(field) != candidate_lock.get(field):
+            errors.append(f"CONSUMER_EVIDENCE_STANDARDS_LOCK_MISMATCH: {field}")
+
+    deployment_kind = str(project.get("deployment_kind") or "")
+    if evidence.get("deployment_kind") != deployment_kind:
+        errors.append("CONSUMER_EVIDENCE_DEPLOYMENT_KIND_MISMATCH")
+    if errors:
+        return {
+            "status": "UPGRADE_BLOCKED",
+            "compatible": False,
+            "analysis_status": "FAILED",
+            "errors": errors,
+        }
+
+    dimensions = evidence.get("dimensions") or {}
+    verification_results: Dict[str, Any] = {}
+    for dimension in ("unit_tests", "integration_tests", "release_gates", "security_scan", "business_api"):
+        gate = dimensions.get(dimension) or {}
+        gate_status, gate_errors = verify_consumer_ci_gate(
+            repository=expected_repository,
+            gate=gate,
+            expected_commit=consumer_head,
+        )
+        verification_results[dimension] = {"status": gate_status, "errors": gate_errors}
+    runtime_gate = dimensions.get("runtime_acceptance") or {}
+    if deployment_kind == "NON_RUNTIME_ARTIFACT":
+        verification_results["runtime_acceptance"] = {
+            "status": "NOT_APPLICABLE" if runtime_gate.get("status") == "NOT_APPLICABLE" else "FAILED",
+            "errors": [] if runtime_gate.get("status") == "NOT_APPLICABLE" else ["RUNTIME_ACCEPTANCE_MUST_BE_NOT_APPLICABLE_FOR_NON_RUNTIME_ARTIFACT"],
+        }
+    else:
+        gate_status, gate_errors = verify_consumer_ci_gate(
+            repository=expected_repository,
+            gate=runtime_gate,
+            expected_commit=consumer_head,
+        )
+        verification_results["runtime_acceptance"] = {"status": gate_status, "errors": gate_errors}
+
+    failed = {
+        name: result for name, result in verification_results.items()
+        if result["status"] == "FAILED"
+    }
+    unverifiable = {
+        name: result for name, result in verification_results.items()
+        if result["status"] == "NOT_VERIFIABLE"
+    }
+    if failed:
+        return {
+            "status": "UPGRADE_BLOCKED",
+            "compatible": False,
+            "analysis_status": "FAILED",
+            "errors": [f"{name}: {error}" for name, result in failed.items() for error in result["errors"]],
+            "verification_results": verification_results,
+        }
+    if unverifiable:
+        return {
+            "status": "NOT_VERIFIABLE",
+            "compatible": None,
+            "analysis_status": "PARTIAL",
+            "errors": [f"{name}: {error}" for name, result in unverifiable.items() for error in result["errors"]],
+            "verification_results": verification_results,
+        }
+
     return {
-        "status": "NOT_VERIFIABLE",
-        "compatible": None,
-        "analysis_status": "PARTIAL",
-        "errors": [
-            "REQUIRED_CONSUMER_VALIDATION_NOT_EXECUTED: Manifest and documentation checks passed, but consumer tests, release gates, security, and business/runtime validation have not been executed with commit-bound evidence"
-        ],
+        "status": "PASS",
+        "compatible": True,
+        "analysis_status": "COMPLETED",
+        "consumer_commit": consumer_head,
+        "standards_candidate": {
+            "tag": candidate_lock.get("tag"),
+            "tag_object_sha": candidate_lock.get("tag_object_sha"),
+            "peeled_commit": candidate_lock.get("peeled_commit"),
+        },
+        "verification_results": verification_results,
+        "errors": [],
     }
 
 def promote_upgrade(
@@ -1659,7 +1917,7 @@ def promote_upgrade(
                 }
 
     # 4. Validate compatibility
-    compat = validate_upgrade_candidate(project_root=project_root, standards_root=std_root)
+    compat = validate_upgrade_candidate(project_root=project_root, standards_root=std_root, target_tag=target_tag)
     if compat["status"] != "PASS":
         return {
             "status": "UPGRADE_BLOCKED",
