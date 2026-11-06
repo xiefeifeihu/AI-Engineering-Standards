@@ -88,8 +88,11 @@ SCHEMA_REF=schemas/standards-lock.schema.json, schemas/documentation-approval.sc
 7. `promote`：核验审批契约（`AI_APPROVED` 或 `OWNER_APPROVED`）与测试通过证据后，保留历史锁定并原子更新 `standards.lock.json` 与 `engineering-manifest.yaml`。
 8. `rollback`：从 `previous_locks` 历史锁定记录安全回滚至上一已验证版本。
 
-### 4.3 下游工程任务启动 11 步自动升级契约
-其他受管工程在每次任务启动及定期巡检时，**MUST** 遵循以下受控升级状态机：
+### 4.3 消费端接入与受控升级（Consumer Adoption & Controlled Upgrade）
+
+1. **接入采用显式授权**：Standards 提供统一发现、比较、兼容性分析和受控升级能力，但不代表所有受管工程自动加入升级计划。每个消费工程 **MUST** 由其 Owner 在本工程 compatibility matrix 或正式决策中明确是否接入、适用版本、巡检频率和审批范围。未作出接入决定的工程 **MAY** 继续使用当前已验证 Lock，不得被标记为兼容或被自动升级。
+2. **首个消费端试点**：v3.0.0 首个试点为 `AI-Engineering-Hub`。AI-KB、VTIP、SideCar 不属于本轮迁移范围；其后续接入由各工程 Owner 独立决定。不得从 AI-Hub 的试点结果推导其他工程兼容性或升级批准。
+3. **已批准接入的工程**：仅对已明确选择接入的工程，在其约定的任务启动/巡检触发点执行以下受控升级状态机：
 ```text
 DISCOVER ──► VERIFY ──► COMPARE ──► IMPACT_ANALYSIS ──► GENERATE_CANDIDATE ──► RUN_COMPATIBILITY_TESTS ──► CHATGPT_REVIEW ──► OWNER_APPROVAL_IF_REQUIRED ──► PROMOTE ──► LOCK ──► EXECUTE
 ```

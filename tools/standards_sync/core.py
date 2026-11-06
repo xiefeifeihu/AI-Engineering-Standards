@@ -1120,7 +1120,7 @@ def analyze_consumer_impact(
             "python tools/standards_sync/cli.py verify-lock --project-root <PROJECT_ROOT>",
         ],
         "MIGRATION_PLAN": migration_tasks,
-        "ROLLBACK_PLAN": "Run `python tools/standards_sync/cli.py rollback --project-root <PROJECT_ROOT>` to restore previous verified lock from standards.lock.json#previous_locks and git checkout -- docs/ engineering-manifest.yaml",
+        "ROLLBACK_PLAN": "Run `python tools/standards_sync/cli.py rollback --project-root <PROJECT_ROOT>` to restore the previous verified Standards lock and matching Manifest fields from standards.lock.json#previous_locks. This command does not revert docs/, source code, or unrelated worktree changes; review and revert any migration artifacts separately using a commit-bound, explicitly approved rollback plan.",
     }
 
 

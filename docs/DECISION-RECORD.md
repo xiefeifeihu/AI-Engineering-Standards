@@ -28,7 +28,7 @@ content_sha256: null
 | **`D2`** | 双层文档治理与审批防伪造契约 | 建立“编程智能体维护 -> ChatGPT 跨文档及事实审核 -> 按策略判断 Owner 批准 -> Git 固化 -> Project Sources 同步”闭环。严格分离 `chatgpt_review` 与 `owner_approval` 记录，绑定文档版本、Commit 与 SHA-256；编程智能体严禁自行伪造 `AI_APPROVED`、`OWNER_APPROVED`、`HUMAN_ACCEPTED`；不确定时默认要求 Owner 批准。 | `OWNER_APPROVED` | `v3.0.0` |
 | **`D3`** | 官方 `main` 唯一主干与四元组精确锁定 | `AI-Engineering-Standards` 官方 `main` 是唯一规范维护主干，正式 Tag 必须来自通过 `main` CI 的 Commit。各工程必须通过 `standards.lock.json` 精确锁定 `VERSION`、`TAG`、`TAG_OBJECT_SHA`、`PEELED_COMMIT`，禁止使用浮动 `main` 或在 `AGENTS.md`/`README.md` 手工硬编码版本号。 | `OWNER_APPROVED` | `v3.0.0` |
 | **`D4`** | 规范与共享工具独立自治维护 | `AI-Engineering-Standards` 独立设计、实现和维护全部官方规范与共享工具（`tools/standards_sync/`），不将 `AI-KB` 或 `AI-Engineering-Hub` 作为工具属主或运行依赖。 | `OWNER_APPROVED` | `v3.0.0` |
-| **`D5`** | 下游工程自动发现与受控升级策略 | 其他工程编码智能体在任务启动及巡检时自动发现最新正式发布规范；兼容性通过且满足审批策略后自动更新锁定，不兼容时强制 `BLOCK`（`UPGRADE_BLOCKED`），禁止静默跳过或降级。 | `OWNER_APPROVED` | `v3.0.0` |
+| **`D5`** | 消费端显式接入与受控升级策略 | Standards 提供统一发现与受控升级能力，但不强制所有工程自动接入。首个消费端试点为 AI-Engineering-Hub；AI-KB、VTIP、SideCar 是否接入由各工程 Owner 后续独立决定。只有明确批准接入的工程才执行其 compatibility matrix/正式决策规定的巡检、兼容性门禁和升级状态机。 | `OWNER_APPROVED` | `v3.0.0` |
 
 ## 2. 迁移与演进关联文档
 
