@@ -391,7 +391,21 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             standards_root=ROOT,
             remote_url=str(ROOT),
         )
-        self.assertEqual(res["status"], "PASS", f"Locally verified lock should remain usable: {res}")
+        self.assertIn(res["status"], ("PASS", "NOT_VERIFIABLE"), f"Unexpected lock result: {res}")
+        if res["status"] == "NOT_VERIFIABLE":
+            self.assertTrue(res.get("offline_verified_lock"), f"Offline lock was not verified locally: {res}")
+            self.assertEqual(res.get("remote_latest_status"), "NOT_VERIFIABLE")
+
+    def test_c2b_offline_latest_release_must_not_report_pass(self) -> None:
+        result = verify_project_lock(
+            project_root=ROOT,
+            standards_root=ROOT,
+            remote_url=str(ROOT),
+            simulate_offline=True,
+        )
+        self.assertEqual(result.get("status"), "NOT_VERIFIABLE")
+        self.assertEqual(result.get("remote_latest_status"), "NOT_VERIFIABLE")
+        self.assertTrue(result.get("offline_verified_lock"))
 
     def test_c3_version_file_consistency_verification(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

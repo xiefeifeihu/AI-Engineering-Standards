@@ -585,8 +585,21 @@ def verify_project_lock(
         }
 
     remote_tag_refs = remote_info.get("tag_refs") or {}
-    remote_tag_object = remote_tag_refs.get(f"refs/tags/{tag}")
-    remote_peeled = remote_tag_refs.get(f"refs/tags/{tag}^{{}}")
+    if remote_info.get("tag") == tag:
+        remote_tag_object = remote_info.get("tag_object_sha")
+        remote_peeled = remote_info.get("peeled_commit")
+    else:
+        remote_tag_object = remote_tag_refs.get(f"refs/tags/{tag}")
+        remote_peeled = remote_tag_refs.get(f"refs/tags/{tag}^{{}}")
+    if not remote_tag_object or not remote_peeled:
+        return {
+            "status": "NOT_VERIFIABLE",
+            "remote_latest_status": "NOT_VERIFIABLE",
+            "offline_verified_lock": True,
+            "lock": lock,
+            "errors": [],
+            "note": f"Local exact lock verified, but remote historical Tag {tag} could not be independently resolved.",
+        }
     if remote_tag_object != tag_obj_sha or remote_peeled != peeled_commit:
         return {
             "status": "BLOCK",
@@ -686,7 +699,7 @@ def deep_diff_schema(
         old_types = set(old_type if isinstance(old_type, list) else ([old_type] if old_type else []))
         new_types = set(new_type if isinstance(new_type, list) else ([new_type] if new_type else []))
         details["type_change"] = {"old": old_type, "new": new_type}
-        if old_types and (not new_types or not old_types.issubset(new_types)):
+        if (not old_types and new_types) or (old_types and (not new_types or not old_types.issubset(new_types))):
             breaking.append(f"[{path or 'root'}]: type changed from '{old_type}' to '{new_type}'")
 
     # Required fields: additions narrow accepted instances; removals are compatible.
