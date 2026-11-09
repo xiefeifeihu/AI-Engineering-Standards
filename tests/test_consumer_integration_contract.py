@@ -1265,5 +1265,296 @@ standards_validation:
             self.assertTrue(any("APPROVAL_COMMIT_MISMATCH" in e for e in res.get("errors", [])), res)
 
 
+
+    def test_consumer_ci_gate_real_artifact_success_path(self) -> None:
+        import io
+        import zipfile
+        import hashlib
+        from unittest.mock import patch
+        commit = "a" * 40
+        repository = "example/consumer"
+
+        report_content = json.dumps({
+            "repository": repository,
+            "commit": commit,
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "summary": {
+                "tests_collected": 10,
+                "tests_passed": 8,
+                "tests_failed": 0,
+                "tests_skipped": 2,
+                "test_errors": 0,
+            },
+            "exit_code": 0,
+        }).encode("utf-8")
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("test-report.json", report_content)
+        zip_bytes = buf.getvalue()
+        zip_sha = hashlib.sha256(zip_bytes).hexdigest()
+
+        gate = {
+            "status": "PASS",
+            "command": "python -m pytest --json-report",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": {
+                "repository": repository,
+                "head_sha": commit,
+                "run_id": 12345,
+                "job_name": "Unit Tests",
+                "tests_collected": 10,
+                "tests_passed": 8,
+                "tests_failed": 0,
+                "tests_skipped": 2,
+            },
+            "test_execution": {
+                "tests_collected": 10,
+                "tests_passed": 8,
+                "tests_failed": 0,
+                "tests_skipped": 2,
+                "exit_code": 0,
+                "evidence_log_ref": f"https://github.com/{repository}/actions/runs/12345",
+            },
+            "artifact_info": {
+                "artifact_name": "test-report",
+                "artifact_id": 202,
+                "run_id": 12345,
+                "head_sha": commit,
+                "artifact_sha256": f"sha256:{zip_sha}",
+                "report_file": "test-report.json",
+            },
+        }
+        run_payload = {
+            "repository": {"full_name": repository},
+            "head_sha": commit,
+            "path": ".github/workflows/ci.yml",
+            "status": "completed",
+            "conclusion": "success",
+        }
+        jobs_payload = {
+            "jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]
+        }
+        artifacts_payload = {
+            "artifacts": [{"id": 202, "name": "test-report", "workflow_run": {"id": 12345}, "expired": False}]
+        }
+        with patch("urllib.request.urlopen", side_effect=[
+            FakeResponse(run_payload),
+            FakeResponse(jobs_payload),
+            FakeResponse(artifacts_payload),
+            FakeResponse(zip_bytes),
+        ]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "VERIFIED", errors)
+        self.assertEqual(errors, [])
+
+    def test_consumer_ci_gate_rejects_artifact_path_traversal(self) -> None:
+        import io
+        import zipfile
+        import hashlib
+        from unittest.mock import patch
+        commit = "a" * 40
+        repository = "example/consumer"
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("../../evil.json", b"{}")
+        zip_bytes = buf.getvalue()
+        zip_sha = hashlib.sha256(zip_bytes).hexdigest()
+
+        gate = {
+            "status": "PASS",
+            "command": "python -m pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": {"tests_collected": 1, "tests_passed": 1, "tests_failed": 0, "tests_skipped": 0},
+            "test_execution": {"tests_collected": 1, "tests_passed": 1, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0, "evidence_log_ref": "ref"},
+            "artifact_info": {
+                "artifact_name": "test-report",
+                "artifact_id": 202,
+                "run_id": 12345,
+                "head_sha": commit,
+                "artifact_sha256": zip_sha,
+            },
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        artifacts_payload = {"artifacts": [{"id": 202, "name": "test-report", "workflow_run": {"id": 12345}}]}
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(artifacts_payload), FakeResponse(zip_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_ARTIFACT_PATH_TRAVERSAL_DETECTED" in e for e in errors), errors)
+
+    def test_pytest_parsing_5_passed_2_failed(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        repository = "example/consumer"
+        log_bytes = b"= 5 passed, 2 failed in 0.12s ="
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": log_bytes.decode("utf-8"),
+            "test_execution": {"tests_collected": 7, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 2, "exit_code": 0, "evidence_log_ref": "ref"},
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_HAS_FAILED_TESTS" in e for e in errors), errors)
+
+    def test_pytest_parsing_5_passed_2_skipped_success_and_count_mismatch(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        repository = "example/consumer"
+        log_bytes = b"= 5 passed, 2 skipped in 0.15s ="
+        gate_matched = {
+            "status": "PASS", "command": "pytest", "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345, "job_name": "Unit Tests", "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": log_bytes.decode("utf-8"),
+            "test_execution": {"tests_collected": 7, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 2, "exit_code": 0, "evidence_log_ref": "ref"},
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate_matched, commit)
+        self.assertEqual(status, "VERIFIED", errors)
+
+        # Mismatch in claimed counts fails
+        gate_mismatch = dict(gate_matched, test_execution={"tests_collected": 7, "tests_passed": 7, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0, "evidence_log_ref": "ref"})
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate_mismatch, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_TEST_COUNT_MISMATCH" in e for e in errors), errors)
+
+    def test_pytest_parsing_0_passed(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        repository = "example/consumer"
+        log_bytes = b"= 0 passed, 3 skipped in 0.05s ="
+        gate = {
+            "status": "PASS", "command": "pytest", "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345, "job_name": "Unit Tests", "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": log_bytes.decode("utf-8"),
+            "test_execution": {"tests_collected": 3, "tests_passed": 3, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0, "evidence_log_ref": "ref"},
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_NO_TESTS_PASSED" in e for e in errors), errors)
+
+    def test_pytest_parsing_collected_count_inconsistent(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        repository = "example/consumer"
+        log_bytes = b"collected 10 items\n\n= 5 passed, 2 skipped in 0.12s ="
+        gate = {
+            "status": "PASS", "command": "pytest", "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345, "job_name": "Unit Tests", "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": log_bytes.decode("utf-8"),
+            "test_execution": {"tests_collected": 10, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 5, "exit_code": 0, "evidence_log_ref": "ref"},
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_TEST_COUNTS_INCONSISTENT" in e for e in errors), errors)
+
+    def test_pytest_parsing_job_success_but_log_has_failure(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        repository = "example/consumer"
+        log_bytes = b"= FAILURES =\n___ test_broken ___\nassert 1 == 0\n= 10 passed in 0.5s ="
+        gate = {
+            "status": "PASS", "command": "pytest", "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345, "job_name": "Unit Tests", "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": log_bytes.decode("utf-8"),
+            "test_execution": {"tests_collected": 10, "tests_passed": 10, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0, "evidence_log_ref": "ref"},
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_RAW_LOG_CONTAINS_FAILURE" in e for e in errors), errors)
+
+    def test_pytest_parsing_continue_on_error_masks_failure(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        repository = "example/consumer"
+        log_bytes = b"##[error]Process completed with exit code 1.\ncontinue-on-error: true\n= 5 passed in 0.12s ="
+        gate = {
+            "status": "PASS", "command": "pytest", "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345, "job_name": "Unit Tests", "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": log_bytes.decode("utf-8"),
+            "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0, "evidence_log_ref": "ref"},
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_RAW_LOG_CONTAINS_FAILURE" in e for e in errors), errors)
+
+    def test_pytest_parsing_incomplete_log_no_summary_returns_not_verifiable(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        repository = "example/consumer"
+        gate = {
+            "status": "PASS", "command": "pytest", "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345, "job_name": "Unit Tests", "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": "Ran 5 tests in 0.05s\n\nOK",
+            "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0, "evidence_log_ref": "ref"},
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        log_bytes = b"pytest running...\ntest_one.py .\ntest_two.py .\n"
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "NOT_VERIFIABLE")
+        self.assertTrue(any("CONSUMER_CI_RAW_REPORT_UNPARSEABLE" in e for e in errors), errors)
+
+    def test_pytest_parsing_unrelated_ok_string_returns_not_verifiable(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        repository = "example/consumer"
+        gate = {
+            "status": "PASS", "command": "pytest", "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345, "job_name": "Unit Tests", "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": "Ran 5 tests in 0.05s\n\nOK",
+            "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0, "evidence_log_ref": "ref"},
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        log_bytes = b"Docker image build OK\nSystem setup OK\n"
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "NOT_VERIFIABLE")
+        self.assertTrue(any("CONSUMER_CI_RAW_REPORT_UNPARSEABLE" in e for e in errors), errors)
+
+
 if __name__ == "__main__":
     unittest.main()

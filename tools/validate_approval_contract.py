@@ -156,18 +156,35 @@ def verify_approval_event_provenance(record: Dict[str, Any]) -> Tuple[str, List[
 
     expected_owner = repository.split("/", 1)[0].lower()
     actual_actor = str((review.get("user") or {}).get("login") or "")
-    if actual_actor.lower() != expected_owner or actual_actor.lower() != str(actor.get("identity_id") or "").lower():
+    identity_id = str(actor.get("identity_id") or "")
+
+    # Anti-agent check on review actor
+    if actual_actor.upper() in FORBIDDEN_SELF_APPROVAL_ROLES or identity_id.upper() in FORBIDDEN_SELF_APPROVAL_ROLES or "AGENT" in actual_actor.upper():
+        return "FAILED", [f"AGENT_SELF_APPROVAL_FORBIDDEN: Coding agent ({actual_actor or identity_id}) cannot issue OWNER approval"]
+
+    if actual_actor.lower() != expected_owner or actual_actor.lower() != identity_id.lower():
         return "FAILED", ["APPROVAL_ACTOR_MISMATCH: Review actor is not the repository owner"]
     if int(review.get("id") or 0) != int(review_id):
         return "FAILED", ["APPROVAL_REVIEW_ID_MISMATCH"]
-    if str(review.get("state") or "").upper() != "APPROVED":
-        return "FAILED", ["APPROVAL_REVIEW_NOT_APPROVED"]
+    review_state = str(review.get("state") or "").upper()
+    if review_state != "APPROVED":
+        return "FAILED", [f"APPROVAL_REVIEW_NOT_APPROVED: Review state is '{review_state}', expected 'APPROVED'"]
     if review.get("commit_id") != record.get("candidate_commit"):
         return "FAILED", ["APPROVAL_REVIEW_COMMIT_MISMATCH"]
 
     digest = normalize_sha256(record.get("content_sha256"))
+    raw_digest = digest[7:] if digest.startswith("sha256:") else digest
     body = str(review.get("body") or "")
-    if f"CONTENT_SHA256={digest}" not in body:
+    has_digest_binding = any(
+        marker in body
+        for marker in (
+            f"CONTENT_SHA256={digest}",
+            f"CONTENT_SHA256={raw_digest}",
+            f"MAPPING_DIGEST={digest}",
+            f"MAPPING_DIGEST={raw_digest}",
+        )
+    )
+    if not has_digest_binding:
         return "FAILED", ["APPROVAL_REVIEW_CONTENT_BINDING_MISSING"]
     approved_ids = (record.get("owner_approval") or {}).get("approved_decision_ids") or []
     expected_ids = ",".join(sorted(str(value) for value in approved_ids))
@@ -177,8 +194,22 @@ def verify_approval_event_provenance(record: Dict[str, Any]) -> Tuple[str, List[
         return "FAILED", ["EVENT_COMMIT_MISMATCH"]
     if normalize_sha256(event.get("content_sha256")) != digest:
         return "FAILED", ["EVENT_CONTENT_HASH_MISMATCH"]
-    if event.get("approval_scope") != record.get("decision_scope"):
-        return "FAILED", ["EVENT_SCOPE_MISMATCH"]
+
+    record_scope = record.get("approval_scope") or record.get("decision_scope")
+    event_scope = event.get("approval_scope")
+    if event_scope != record_scope:
+        return "FAILED", [f"EVENT_SCOPE_MISMATCH: event.approval_scope '{event_scope}' != '{record_scope}'"]
+    if f"APPROVAL_SCOPE={record_scope}" not in body and f"APPROVAL_SCOPE={event_scope}" not in body:
+        return "FAILED", ["APPROVAL_REVIEW_SCOPE_BINDING_MISSING: Review body must bind APPROVAL_SCOPE"]
+
+    # Verify review submitted_at against approved_at
+    review_submitted_at = str(review.get("submitted_at") or "").strip()
+    record_approved_at = str(record.get("approved_at") or (record.get("owner_approval") or {}).get("approved_at") or "").strip()
+    norm_sub = review_submitted_at.replace("Z", "+00:00")
+    norm_appr = record_approved_at.replace("Z", "+00:00")
+    if not norm_sub or not norm_appr or norm_sub != norm_appr:
+        return "FAILED", [f"APPROVAL_TIME_MISMATCH: approved_at '{record_approved_at}' does not match GitHub review submitted_at '{review_submitted_at}'"]
+
     return "VERIFIED", []
 
 def validate_approval_record(

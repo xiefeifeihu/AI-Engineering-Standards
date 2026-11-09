@@ -237,6 +237,10 @@
                 "artifact_sha256": {
                   "type": "string",
                   "pattern": "^(sha256:)?[0-9a-f]{64}$"
+                },
+                "report_file": {
+                  "type": "string",
+                  "minLength": 1
                 }
               }
             },

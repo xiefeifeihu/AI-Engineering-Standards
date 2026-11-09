@@ -52,6 +52,7 @@ from tools.validate_approval_contract import (
     compute_canonical_document_sha256,
     compute_markdown_body_sha256,
     validate_approval_record,
+    verify_approval_event_provenance,
 )
 from tools.validate_documentation_collection_bridge import (
     run_collection_validation,
@@ -118,6 +119,17 @@ def _copy_minimal_valid_project(dst: Path) -> str:
     subprocess.run(["git", "-C", str(dst), "commit", "-m", "update docs source commit"], capture_output=True, check=True)
     return head
 
+
+
+class FakeResponse:
+    def __init__(self, data: dict):
+        self.data = json.dumps(data).encode("utf-8")
+    def read(self):
+        return self.data
+    def __enter__(self):
+        return self
+    def __exit__(self, *args):
+        pass
 
 class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
     # =========================================================================
@@ -1609,6 +1621,467 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
 
             self.assertEqual(lock_path.read_text(encoding="utf-8"), pre_lock)
             self.assertEqual(manifest_path.read_text(encoding="utf-8"), pre_manifest)
+
+
+    # =========================================================================
+    # Owner GitHub Review Provenance Tests (P1-C Remediation)
+    # =========================================================================
+    def test_owner_github_review_provenance_success_path(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-09T10:00:00Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "owner_approval": {
+                "approved_decision_ids": ["D-001"],
+                "approved_at": "2026-11-09T10:00:00Z",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+            },
+            "approval_event": {
+                "event_type": "GITHUB_PR_REVIEW_EVENT",
+                "provenance_type": "GITHUB_PR_REVIEW",
+                "event_id": "123456",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8/reviews/123456",
+                },
+            },
+        }
+        review_data = {
+            "id": 123456,
+            "user": {"login": "xiefeifeihu"},
+            "state": "APPROVED",
+            "commit_id": commit,
+            "body": f"MAPPING_DIGEST={digest}\nAPPROVED_DECISION_IDS=D-001\nAPPROVAL_SCOPE=GATE_MAPPING",
+            "submitted_at": "2026-11-09T10:00:00Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(review_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "VERIFIED", errors)
+        self.assertEqual(errors, [])
+
+    def test_owner_review_agent_self_approval_fails(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-09T10:00:00Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "owner_approval": {
+                "approved_decision_ids": ["D-001"],
+                "approved_at": "2026-11-09T10:00:00Z",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+            },
+            "approval_event": {
+                "event_type": "GITHUB_PR_REVIEW_EVENT",
+                "provenance_type": "GITHUB_PR_REVIEW",
+                "event_id": "123456",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8/reviews/123456",
+                },
+            },
+        }
+        review_data = {
+            "id": 123456,
+            "user": {"login": "CODING_AGENT"},
+            "state": "APPROVED",
+            "commit_id": commit,
+            "body": f"MAPPING_DIGEST={digest}\nAPPROVED_DECISION_IDS=D-001\nAPPROVAL_SCOPE=GATE_MAPPING",
+            "submitted_at": "2026-11-09T10:00:00Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(review_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("AGENT_SELF_APPROVAL_FORBIDDEN" in e for e in errors), errors)
+
+    def test_owner_review_mapping_digest_change_fails(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-09T10:00:00Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "owner_approval": {
+                "approved_decision_ids": ["D-001"],
+                "approved_at": "2026-11-09T10:00:00Z",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+            },
+            "approval_event": {
+                "event_type": "GITHUB_PR_REVIEW_EVENT",
+                "provenance_type": "GITHUB_PR_REVIEW",
+                "event_id": "123456",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8/reviews/123456",
+                },
+            },
+        }
+        review_data = {
+            "id": 123456,
+            "user": {"login": "xiefeifeihu"},
+            "state": "APPROVED",
+            "commit_id": commit,
+            "body": f"MAPPING_DIGEST={'f' * 64}\nAPPROVED_DECISION_IDS=D-001\nAPPROVAL_SCOPE=GATE_MAPPING",
+            "submitted_at": "2026-11-09T10:00:00Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(review_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("APPROVAL_REVIEW_CONTENT_BINDING_MISSING" in e for e in errors), errors)
+
+    def test_owner_review_commit_mismatch_fails(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-09T10:00:00Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "owner_approval": {
+                "approved_decision_ids": ["D-001"],
+                "approved_at": "2026-11-09T10:00:00Z",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+            },
+            "approval_event": {
+                "event_type": "GITHUB_PR_REVIEW_EVENT",
+                "provenance_type": "GITHUB_PR_REVIEW",
+                "event_id": "123456",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8/reviews/123456",
+                },
+            },
+        }
+        review_data = {
+            "id": 123456,
+            "user": {"login": "xiefeifeihu"},
+            "state": "APPROVED",
+            "commit_id": "b" * 40,
+            "body": f"MAPPING_DIGEST={digest}\nAPPROVED_DECISION_IDS=D-001\nAPPROVAL_SCOPE=GATE_MAPPING",
+            "submitted_at": "2026-11-09T10:00:00Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(review_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("APPROVAL_REVIEW_COMMIT_MISMATCH" in e for e in errors), errors)
+
+    def test_owner_review_revoked_dismissed_fails(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-09T10:00:00Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "owner_approval": {
+                "approved_decision_ids": ["D-001"],
+                "approved_at": "2026-11-09T10:00:00Z",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+            },
+            "approval_event": {
+                "event_type": "GITHUB_PR_REVIEW_EVENT",
+                "provenance_type": "GITHUB_PR_REVIEW",
+                "event_id": "123456",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8/reviews/123456",
+                },
+            },
+        }
+        review_data = {
+            "id": 123456,
+            "user": {"login": "xiefeifeihu"},
+            "state": "DISMISSED",
+            "commit_id": commit,
+            "body": f"MAPPING_DIGEST={digest}\nAPPROVED_DECISION_IDS=D-001\nAPPROVAL_SCOPE=GATE_MAPPING",
+            "submitted_at": "2026-11-09T10:00:00Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(review_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("APPROVAL_REVIEW_NOT_APPROVED" in e for e in errors), errors)
+
+    def test_owner_review_scope_mismatch_fails(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-09T10:00:00Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "owner_approval": {
+                "approved_decision_ids": ["D-001"],
+                "approved_at": "2026-11-09T10:00:00Z",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+            },
+            "approval_event": {
+                "event_type": "GITHUB_PR_REVIEW_EVENT",
+                "provenance_type": "GITHUB_PR_REVIEW",
+                "event_id": "123456",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "ENGINEERING_BASELINE",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8/reviews/123456",
+                },
+            },
+        }
+        review_data = {
+            "id": 123456,
+            "user": {"login": "xiefeifeihu"},
+            "state": "APPROVED",
+            "commit_id": commit,
+            "body": f"MAPPING_DIGEST={digest}\nAPPROVED_DECISION_IDS=D-001\nAPPROVAL_SCOPE=GATE_MAPPING",
+            "submitted_at": "2026-11-09T10:00:00Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(review_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("EVENT_SCOPE_MISMATCH" in e for e in errors), errors)
+
+    def test_owner_review_time_mismatch_fails(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-09T10:00:00Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "owner_approval": {
+                "approved_decision_ids": ["D-001"],
+                "approved_at": "2026-11-09T10:00:00Z",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+            },
+            "approval_event": {
+                "event_type": "GITHUB_PR_REVIEW_EVENT",
+                "provenance_type": "GITHUB_PR_REVIEW",
+                "event_id": "123456",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8/reviews/123456",
+                },
+            },
+        }
+        review_data = {
+            "id": 123456,
+            "user": {"login": "xiefeifeihu"},
+            "state": "APPROVED",
+            "commit_id": commit,
+            "body": f"MAPPING_DIGEST={digest}\nAPPROVED_DECISION_IDS=D-001\nAPPROVAL_SCOPE=GATE_MAPPING",
+            "submitted_at": "2026-11-09T12:00:00Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(review_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("APPROVAL_TIME_MISMATCH" in e for e in errors), errors)
+
+    # =========================================================================
+    # G16-G21: Concurrency and Cleanup Robustness (P1-D Remediation)
+    # =========================================================================
+    def test_g16_concurrent_upgrade_processes_blocked_by_mutex(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            (dst / "standards.lock.json").write_text("{}", encoding="utf-8")
+            (dst / "engineering-manifest.yaml").write_text("standards: {}", encoding="utf-8")
+            lock_file = dst / ".standards_sync.lock"
+            lock_file.write_text(json.dumps({"pid": 999999, "tx_id": "other-process"}), encoding="utf-8")
+
+            ok, err = execute_transactional_two_file_update(
+                project_root=dst,
+                new_lock={"version": "3.0.0"},
+                new_manifest_standards={"version": "3.0.0"},
+            )
+            self.assertFalse(ok)
+            self.assertIn("TRANSACTION_CONCURRENCY_BLOCKED", str(err))
+
+    def test_g17_upgrade_and_recover_concurrent_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            lock_file = dst / ".standards_sync.lock"
+            lock_file.write_text(json.dumps({"pid": 999999, "tx_id": "other-process"}), encoding="utf-8")
+
+            ok, err = recover_interrupted_transaction(dst)
+            self.assertFalse(ok)
+            self.assertIn("TRANSACTION_CONCURRENCY_BLOCKED", str(err))
+
+    def test_g18_backup_deletion_failure_preserves_committed_cleanup_pending(self) -> None:
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            (dst / "standards.lock.json").write_text(json.dumps({"version": "2.11.0", "tag": "v2.11.0", "peeled_commit": "abc"}), encoding="utf-8")
+            (dst / "engineering-manifest.yaml").write_text("standards:\n  version: '2.11.0'\n  tag: 'v2.11.0'\n  peeled_commit: 'abc'\n", encoding="utf-8")
+
+            new_lock = {"version": "3.0.0", "tag": "v3.0.0", "peeled_commit": "xyz"}
+            new_manifest = {"version": "3.0.0", "tag": "v3.0.0", "peeled_commit": "xyz"}
+
+            orig_unlink = Path.unlink
+            def failing_unlink(path_self, *args, **kwargs):
+                if path_self.name.endswith(".bak"):
+                    raise PermissionError(f"Mocked unlink failure on {path_self.name}")
+                return orig_unlink(path_self, *args, **kwargs)
+
+            with patch.object(Path, "unlink", side_effect=failing_unlink, autospec=True):
+                ok, err = execute_transactional_two_file_update(dst, new_lock, new_manifest)
+
+            self.assertFalse(ok)
+            self.assertIn("TRANSACTION_CLEANUP_PENDING", str(err))
+            journal_path = dst / ".standards_sync_tx.json"
+            self.assertTrue(journal_path.exists())
+            jdata = json.loads(journal_path.read_text(encoding="utf-8"))
+            self.assertEqual(jdata.get("status"), "CLEANUP_PENDING")
+            self.assertEqual(jdata.get("phase"), "COMMITTED")
+            curr_lock = json.loads((dst / "standards.lock.json").read_text(encoding="utf-8"))
+            self.assertEqual(curr_lock.get("version"), "3.0.0")
+
+    def test_g19_journal_deletion_failure_preserves_committed_cleanup_pending(self) -> None:
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            (dst / "standards.lock.json").write_text(json.dumps({"version": "2.11.0", "tag": "v2.11.0", "peeled_commit": "abc"}), encoding="utf-8")
+            (dst / "engineering-manifest.yaml").write_text("standards:\n  version: '2.11.0'\n  tag: 'v2.11.0'\n  peeled_commit: 'abc'\n", encoding="utf-8")
+
+            new_lock = {"version": "3.0.0", "tag": "v3.0.0", "peeled_commit": "xyz"}
+            new_manifest = {"version": "3.0.0", "tag": "v3.0.0", "peeled_commit": "xyz"}
+
+            orig_unlink = Path.unlink
+            def failing_unlink(path_self, *args, **kwargs):
+                if path_self.name == ".standards_sync_tx.json":
+                    raise PermissionError("Mocked unlink failure on journal")
+                return orig_unlink(path_self, *args, **kwargs)
+
+            with patch.object(Path, "unlink", side_effect=failing_unlink, autospec=True):
+                ok, err = execute_transactional_two_file_update(dst, new_lock, new_manifest)
+
+            self.assertFalse(ok)
+            self.assertIn("TRANSACTION_CLEANUP_PENDING", str(err))
+            journal_path = dst / ".standards_sync_tx.json"
+            self.assertTrue(journal_path.exists())
+            jdata = json.loads(journal_path.read_text(encoding="utf-8"))
+            self.assertEqual(jdata.get("status"), "CLEANUP_PENDING")
+            self.assertEqual(jdata.get("phase"), "COMMITTED")
+
+    def test_g20_crash_after_committed_phase_recovers_via_cleanup_not_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            (dst / "standards.lock.json").write_text(json.dumps({"version": "3.0.0"}), encoding="utf-8")
+            (dst / "engineering-manifest.yaml").write_text("standards:\n  version: '3.0.0'\n", encoding="utf-8")
+            (dst / "standards.lock.json.bak").write_text(json.dumps({"version": "2.11.0"}), encoding="utf-8")
+            (dst / "engineering-manifest.yaml.bak").write_text("standards:\n  version: '2.11.0'\n", encoding="utf-8")
+
+            journal_data = {
+                "tx_id": "tx-123",
+                "phase": "COMMITTED",
+                "operation_type": "UPDATE",
+                "status": "CLEANUP_PENDING",
+                "has_orig_lock": True,
+                "has_orig_manifest": True,
+                "targets": {
+                    "lock_path": "standards.lock.json",
+                    "manifest_path": "engineering-manifest.yaml",
+                    "lock_bak": "standards.lock.json.bak",
+                    "manifest_bak": "engineering-manifest.yaml.bak",
+                },
+            }
+            (dst / ".standards_sync_tx.json").write_text(json.dumps(journal_data), encoding="utf-8")
+
+            ok, err = recover_interrupted_transaction(dst)
+            self.assertTrue(ok, err)
+            self.assertFalse((dst / ".standards_sync_tx.json").exists())
+            self.assertFalse((dst / "standards.lock.json.bak").exists())
+            self.assertFalse((dst / "engineering-manifest.yaml.bak").exists())
+            curr_lock = json.loads((dst / "standards.lock.json").read_text(encoding="utf-8"))
+            self.assertEqual(curr_lock.get("version"), "3.0.0")
+
+    def test_g21_cleanup_retry_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            ok, err = recover_interrupted_transaction(dst)
+            self.assertTrue(ok)
+            self.assertIsNone(err)
+
+            ok2, err2 = recover_interrupted_transaction(dst)
+            self.assertTrue(ok2)
+            self.assertIsNone(err2)
 
 if __name__ == "__main__":
     unittest.main()

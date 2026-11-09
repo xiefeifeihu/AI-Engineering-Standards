@@ -7,25 +7,25 @@ status: "IN_REVIEW"
 applies_to_release: "v3.0.0"
 last_updated: "2026-11-09"
 supersedes: null
-change_summary: "自动采集生成任务 Std-006-PR8-THIRD-REVIEW-FINAL-REMEDIATION 跨会话交接文档 (STD-020 v2.0.0)"
+change_summary: "自动采集生成任务 Std-007-PR8-FOURTH-REVIEW-CLOSURE 跨会话交接文档 (STD-020 v2.0.0)"
 history_reference: null
 primary_entrypoint: true
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:fd4561fa0ed93c6a214f6c9536bc02cbf5e0c08f4a78114e8a3f6829c3c3c74a"
+content_sha256: "sha256:3641bea053d19958733a9de7bb2927e704f47614ef33f84f340cef8b6695844e"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
 
-# 跨会话工作交接 (Std-006-PR8-THIRD-REVIEW-FINAL-REMEDIATION)
+# 跨会话工作交接 (Std-007-PR8-FOURTH-REVIEW-CLOSURE)
 
 ```text
-TASK_ID=Std-006-PR8-THIRD-REVIEW-FINAL-REMEDIATION
+TASK_ID=Std-007-PR8-FOURTH-REVIEW-CLOSURE
 VERSION=v3.0.0
 HANDOFF_TYPE=DURABLE
-STATUS=IN_PROGRESS
+STATUS=COMPLETED
 COMMIT_HASH=9687f961b22df612c4311961e06fc1c1fd508c37
-CAPTURED_AT=2026-11-09T02:48:46Z
-CONTENT_SHA256=sha256:cb39d9ad93164491f15404225afd6cd2a62b56f2ff76b8a0110e28bb030514ce
+CAPTURED_AT=2026-11-09T06:02:26Z
+CONTENT_SHA256=sha256:cf66e2faad7d2fb6d2c23aa443607c46e5d906eb01889d9c356e30507aa150d5
 ```
 
 > **强制重核验约束 (`STD-020` §3)**：新会话接手时必须重新核验实时工程事实（Git、Standards 锁定、CI 与 Runtime），严禁仅凭旧聊天摘要推断当前状态。

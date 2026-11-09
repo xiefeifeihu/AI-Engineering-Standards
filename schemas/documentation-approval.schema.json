@@ -56,6 +56,7 @@
         "AI_APPROVABLE",
         "OWNER_MANDATORY",
         "OWNER_APPROVAL_REQUIRED",
+        "GATE_MAPPING",
         "UNCERTAIN"
       ],
       "description": "UNCERTAIN defaults to requiring OWNER_APPROVED"
@@ -66,6 +67,7 @@
         "AI_APPROVABLE",
         "OWNER_MANDATORY",
         "OWNER_APPROVAL_REQUIRED",
+        "GATE_MAPPING",
         "UNCERTAIN"
       ]
     },
@@ -337,6 +339,7 @@
             "AI_APPROVABLE",
             "OWNER_MANDATORY",
             "OWNER_APPROVAL_REQUIRED",
+            "GATE_MAPPING",
             "UNCERTAIN"
           ]
         },
