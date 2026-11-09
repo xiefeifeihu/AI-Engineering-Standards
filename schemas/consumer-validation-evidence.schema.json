@@ -198,13 +198,47 @@
               "description": "Raw execution report (dict or string log) from GitHub Actions runner",
               "oneOf": [
                 {
-                  "type": "object"
+                  "type": "object",
+                  "minProperties": 1
                 },
                 {
                   "type": "string",
                   "minLength": 1
                 }
               ]
+            },
+            "artifact_info": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "artifact_name",
+                "artifact_id",
+                "run_id",
+                "head_sha",
+                "artifact_sha256"
+              ],
+              "properties": {
+                "artifact_name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "artifact_id": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "run_id": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "head_sha": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "artifact_sha256": {
+                  "type": "string",
+                  "pattern": "^(sha256:)?[0-9a-f]{64}$"
+                }
+              }
             },
             "scan_execution": {
               "type": "object",

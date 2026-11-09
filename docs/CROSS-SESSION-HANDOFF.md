@@ -5,27 +5,27 @@ project_id: "ai-engineering-standards"
 document_type: "CROSS_SESSION_HANDOFF"
 status: "IN_REVIEW"
 applies_to_release: "v3.0.0"
-last_updated: "2026-11-06"
+last_updated: "2026-11-09"
 supersedes: null
-change_summary: "自动采集生成任务 STANDARDS-PR8-INDEPENDENT-REVIEW-REMEDIATION-003 跨会话交接文档 (STD-020 v2.0.0)"
+change_summary: "自动采集生成任务 Std-006-PR8-THIRD-REVIEW-FINAL-REMEDIATION 跨会话交接文档 (STD-020 v2.0.0)"
 history_reference: null
 primary_entrypoint: true
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:457c838ca5d14dca70362ffecf18811e3beb0597614406725f4bcdae346e0602"
+content_sha256: "sha256:fd4561fa0ed93c6a214f6c9536bc02cbf5e0c08f4a78114e8a3f6829c3c3c74a"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
 
-# 跨会话工作交接 (STANDARDS-PR8-INDEPENDENT-REVIEW-REMEDIATION-003)
+# 跨会话工作交接 (Std-006-PR8-THIRD-REVIEW-FINAL-REMEDIATION)
 
 ```text
-TASK_ID=STANDARDS-PR8-INDEPENDENT-REVIEW-REMEDIATION-003
+TASK_ID=Std-006-PR8-THIRD-REVIEW-FINAL-REMEDIATION
 VERSION=v3.0.0
 HANDOFF_TYPE=DURABLE
 STATUS=IN_PROGRESS
 COMMIT_HASH=9687f961b22df612c4311961e06fc1c1fd508c37
-CAPTURED_AT=2026-11-06T06:51:18Z
-CONTENT_SHA256=sha256:7a94117dfb1830a46e1e08882ec16ca300c31fac9c3ea8f4cf601f502871ee01
+CAPTURED_AT=2026-11-09T02:48:46Z
+CONTENT_SHA256=sha256:cb39d9ad93164491f15404225afd6cd2a62b56f2ff76b8a0110e28bb030514ce
 ```
 
 > **强制重核验约束 (`STD-020` §3)**：新会话接手时必须重新核验实时工程事实（Git、Standards 锁定、CI 与 Runtime），严禁仅凭旧聊天摘要推断当前状态。
@@ -57,6 +57,14 @@ CONTENT_SHA256=sha256:7a94117dfb1830a46e1e08882ec16ca300c31fac9c3ea8f4cf601f5028
 - **关联 Commit (`commit`)**：`9687f961b22df612c4311961e06fc1c1fd508c37`
 - **核验状态 (`verification_status`)**：`NOT_RUN`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
+
+### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)
+- **1. 基线源 Commit**：`9687f961b22df612c4311961e06fc1c1fd508c37`
+- **2. Git 快照观测时间**：`None`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
+- **3. 最近一次已验证 CI Commit**：`9687f961b22df612c4311961e06fc1c1fd508c37`（Run 42177850321 / 42177858136 双平台全绿）
+- **4. 当前候选 Commit**：`9687f961b22df612c4311961e06fc1c1fd508c37`
+- **5. 当前待验证事项**：远端 GitHub Actions CI 双平台实测；严禁在推送前或运行完成前伪造 CI PASS
+- **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136（避免每次记录 CI 无限触发基线变更）
 
 ## 5. 已完成事项 (`completed_items`)
 - 暂无

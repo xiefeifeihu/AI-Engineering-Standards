@@ -13,6 +13,7 @@ Covers Section 12 test requirements:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -1218,37 +1219,67 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         detect_interrupted_transaction flags the pending state, and recover_interrupted_transaction
         restores the original snapshot and removes residual backups and journals.
         """
+        import hashlib
         with tempfile.TemporaryDirectory() as tmp:
             dst = Path(tmp)
             _copy_minimal_valid_project(dst)
             lock_path = dst / "standards.lock.json"
             manifest_path = dst / "engineering-manifest.yaml"
             lock_bak = dst / "standards.lock.json.bak"
+            manifest_bak = dst / "engineering-manifest.yaml.bak"
             journal_path = dst / ".standards_sync_tx.json"
 
-            orig_lock = lock_path.read_text(encoding="utf-8")
-            orig_manifest = manifest_path.read_text(encoding="utf-8")
+            orig_lock_bytes = lock_path.read_bytes()
+            orig_manifest_bytes = manifest_path.read_bytes()
+            orig_lock = orig_lock_bytes.decode("utf-8")
+            orig_manifest = orig_manifest_bytes.decode("utf-8")
 
-            # Simulate interrupted state: lock replaced, manifest not replaced, backup and journal remain
-            lock_bak.write_text(orig_lock, encoding="utf-8")
+            # Simulate interrupted state: backups written, lock replaced, manifest not replaced
+            lock_bak.write_bytes(orig_lock_bytes)
+            manifest_bak.write_bytes(orig_manifest_bytes)
             lock_path.write_text("{\"version\": \"partially-written\"}\n", encoding="utf-8")
-            journal_path.write_text(json.dumps({"status": "IN_PROGRESS", "tx_id": "tx-123"}), encoding="utf-8")
+
+            lock_sha = hashlib.sha256(orig_lock_bytes).hexdigest()
+            manifest_sha = hashlib.sha256(orig_manifest_bytes).hexdigest()
+            journal_data = {
+                "tx_id": "tx-123",
+                "phase": "LOCK_REPLACED",
+                "operation_type": "UPDATE",
+                "status": "IN_PROGRESS",
+                "has_orig_lock": True,
+                "has_orig_manifest": True,
+                "orig_lock_sha256": lock_sha,
+                "orig_manifest_sha256": manifest_sha,
+                "backup_lock_sha256": lock_sha,
+                "backup_manifest_sha256": manifest_sha,
+                "targets": {
+                    "lock_path": "standards.lock.json",
+                    "manifest_path": "engineering-manifest.yaml",
+                    "lock_tmp": "standards.lock.json.tmp",
+                    "manifest_tmp": "engineering-manifest.yaml.tmp",
+                    "lock_bak": "standards.lock.json.bak",
+                    "manifest_bak": "engineering-manifest.yaml.bak",
+                },
+            }
+            journal_path.write_text(json.dumps(journal_data, indent=2), encoding="utf-8")
 
             # 1. Detect interrupted state
             status = detect_interrupted_transaction(dst)
             self.assertTrue(status.get("interrupted"))
             self.assertIn("standards.lock.json.bak", status.get("backup_files", []))
+            self.assertIn("engineering-manifest.yaml.bak", status.get("backup_files", []))
 
             # 2. Recover from interrupted state
             ok, err = recover_interrupted_transaction(dst)
             self.assertTrue(ok, err)
-            self.assertEqual(lock_path.read_text(encoding="utf-8"), orig_lock)
-            self.assertEqual(manifest_path.read_text(encoding="utf-8"), orig_manifest)
+            self.assertEqual(lock_path.read_bytes(), orig_lock_bytes)
+            self.assertEqual(manifest_path.read_bytes(), orig_manifest_bytes)
 
             # 3. Verify clean state after recovery
             status_after = detect_interrupted_transaction(dst)
             self.assertFalse(status_after.get("interrupted"))
             self.assertFalse(lock_bak.exists())
+            self.assertFalse(manifest_bak.exists())
             self.assertFalse(journal_path.exists())
 
     def test_g8_interrupted_transaction_detected_in_verify_lock_and_blocks(self) -> None:
@@ -1264,6 +1295,278 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             res = verify_project_lock(project_root=dst, standards_root=ROOT)
             self.assertEqual(res.get("status"), "BLOCK")
             self.assertTrue(any("INTERRUPTED_TRANSACTION_PENDING" in e for e in res.get("errors", [])), res)
+
+    def test_g9_original_lock_backup_missing_fails(self) -> None:
+        """P0 Fault Injection G9: When original lock backup is missing, recovery blocks and preserves journal."""
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_path = dst / "standards.lock.json"
+            manifest_path = dst / "engineering-manifest.yaml"
+            manifest_bak = dst / "engineering-manifest.yaml.bak"
+            journal_path = dst / ".standards_sync_tx.json"
+
+            orig_man_bytes = manifest_path.read_bytes()
+            manifest_bak.write_bytes(orig_man_bytes)
+
+            journal_data = {
+                "tx_id": "tx-g9",
+                "phase": "LOCK_REPLACED",
+                "operation_type": "UPDATE",
+                "status": "IN_PROGRESS",
+                "has_orig_lock": True,
+                "has_orig_manifest": True,
+                "orig_lock_sha256": hashlib.sha256(lock_path.read_bytes()).hexdigest(),
+                "orig_manifest_sha256": hashlib.sha256(orig_man_bytes).hexdigest(),
+                "backup_lock_sha256": hashlib.sha256(lock_path.read_bytes()).hexdigest(),
+                "backup_manifest_sha256": hashlib.sha256(orig_man_bytes).hexdigest(),
+                "targets": {"lock_path": "standards.lock.json"},
+            }
+            journal_path.write_text(json.dumps(journal_data, indent=2), encoding="utf-8")
+
+            ok, err = recover_interrupted_transaction(dst)
+            self.assertFalse(ok)
+            self.assertIn("MISSING_REQUIRED_BACKUP", str(err))
+            self.assertTrue(journal_path.exists())
+
+            # verify_project_lock must also block
+            res = verify_project_lock(dst, standards_root=ROOT, allow_offline=True)
+            self.assertEqual(res.get("status"), "BLOCK")
+
+    def test_g10_original_manifest_backup_missing_fails(self) -> None:
+        """P0 Fault Injection G10: When original manifest backup is missing, recovery blocks and preserves journal."""
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_path = dst / "standards.lock.json"
+            lock_bak = dst / "standards.lock.json.bak"
+            manifest_path = dst / "engineering-manifest.yaml"
+            journal_path = dst / ".standards_sync_tx.json"
+
+            orig_lock_bytes = lock_path.read_bytes()
+            lock_bak.write_bytes(orig_lock_bytes)
+
+            journal_data = {
+                "tx_id": "tx-g10",
+                "phase": "LOCK_REPLACED",
+                "operation_type": "UPDATE",
+                "status": "IN_PROGRESS",
+                "has_orig_lock": True,
+                "has_orig_manifest": True,
+                "orig_lock_sha256": hashlib.sha256(orig_lock_bytes).hexdigest(),
+                "orig_manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                "backup_lock_sha256": hashlib.sha256(orig_lock_bytes).hexdigest(),
+                "backup_manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                "targets": {"manifest_path": "engineering-manifest.yaml"},
+            }
+            journal_path.write_text(json.dumps(journal_data, indent=2), encoding="utf-8")
+
+            ok, err = recover_interrupted_transaction(dst)
+            self.assertFalse(ok)
+            self.assertIn("MISSING_REQUIRED_BACKUP", str(err))
+            self.assertTrue(journal_path.exists())
+            self.assertTrue(lock_bak.exists())
+
+            res = verify_project_lock(dst, standards_root=ROOT, allow_offline=True)
+            self.assertEqual(res.get("status"), "BLOCK")
+
+    def test_g11_backup_sha256_tampered_fails(self) -> None:
+        """P0 Fault Injection G11: When backup file SHA256 has been tampered, recovery blocks and preserves evidence."""
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_path = dst / "standards.lock.json"
+            manifest_path = dst / "engineering-manifest.yaml"
+            lock_bak = dst / "standards.lock.json.bak"
+            manifest_bak = dst / "engineering-manifest.yaml.bak"
+            journal_path = dst / ".standards_sync_tx.json"
+
+            orig_lock_bytes = lock_path.read_bytes()
+            orig_man_bytes = manifest_path.read_bytes()
+            lock_bak.write_bytes(orig_lock_bytes)
+            # Tamper manifest backup
+            manifest_bak.write_bytes(b"tampered content\n")
+
+            journal_data = {
+                "tx_id": "tx-g11",
+                "phase": "LOCK_REPLACED",
+                "operation_type": "UPDATE",
+                "status": "IN_PROGRESS",
+                "has_orig_lock": True,
+                "has_orig_manifest": True,
+                "orig_lock_sha256": hashlib.sha256(orig_lock_bytes).hexdigest(),
+                "orig_manifest_sha256": hashlib.sha256(orig_man_bytes).hexdigest(),
+                "backup_lock_sha256": hashlib.sha256(orig_lock_bytes).hexdigest(),
+                "backup_manifest_sha256": hashlib.sha256(orig_man_bytes).hexdigest(),
+                "targets": {},
+            }
+            journal_path.write_text(json.dumps(journal_data, indent=2), encoding="utf-8")
+
+            ok, err = recover_interrupted_transaction(dst)
+            self.assertFalse(ok)
+            self.assertIn("BACKUP_SHA256_MISMATCH", str(err))
+            # Evidence must be preserved
+            self.assertTrue(journal_path.exists())
+            self.assertTrue(manifest_bak.exists())
+            self.assertEqual(manifest_bak.read_bytes(), b"tampered content\n")
+
+            res = verify_project_lock(dst, standards_root=ROOT, allow_offline=True)
+            self.assertEqual(res.get("status"), "BLOCK")
+
+    def test_g12_initialization_mode_crash_recovers_cleanly(self) -> None:
+        """P0 Fault Injection G12: When initialization crashes, recovery removes newly created files only,
+        never deleting unrelated historical files, and restores clean state.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            # Historical unrelated file
+            history_file = dst / "README.md"
+            history_file.write_text("# Historical Project\n", encoding="utf-8")
+
+            # In initialization, lock and manifest did NOT exist beforehand
+            lock_path = dst / "standards.lock.json"
+            lock_tmp = dst / "standards.lock.json.tmp"
+            manifest_path = dst / "engineering-manifest.yaml"
+            journal_path = dst / ".standards_sync_tx.json"
+
+            lock_path.write_text("{\"created\": \"in-initialization\"}\n", encoding="utf-8")
+            lock_tmp.write_text("{\"tmp\": true}\n", encoding="utf-8")
+
+            journal_data = {
+                "tx_id": "tx-g12",
+                "phase": "LOCK_REPLACED",
+                "operation_type": "INITIALIZATION",
+                "status": "IN_PROGRESS",
+                "has_orig_lock": False,
+                "has_orig_manifest": False,
+                "created_new_lock": True,
+                "created_new_manifest": True,
+                "orig_lock_sha256": None,
+                "orig_manifest_sha256": None,
+                "backup_lock_sha256": None,
+                "backup_manifest_sha256": None,
+                "targets": {
+                    "lock_path": "standards.lock.json",
+                    "manifest_path": "engineering-manifest.yaml",
+                },
+            }
+            journal_path.write_text(json.dumps(journal_data, indent=2), encoding="utf-8")
+
+            ok, err = recover_interrupted_transaction(dst)
+            self.assertTrue(ok, err)
+
+            # Verified: newly created lock was deleted
+            self.assertFalse(lock_path.exists())
+            self.assertFalse(lock_tmp.exists())
+            self.assertFalse(manifest_path.exists())
+            self.assertFalse(journal_path.exists())
+
+            # Verified: historical unrelated file strictly preserved
+            self.assertTrue(history_file.exists())
+            self.assertEqual(history_file.read_text(encoding="utf-8"), "# Historical Project\n")
+
+    def test_g13_recovery_process_secondary_failure_preserves_evidence(self) -> None:
+        """P0 Fault Injection G13: When a secondary failure occurs during restoration,
+        backups and journal are preserved, and status is recorded as RECOVERY_FAILED.
+        """
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_path = dst / "standards.lock.json"
+            manifest_path = dst / "engineering-manifest.yaml"
+            lock_bak = dst / "standards.lock.json.bak"
+            manifest_bak = dst / "engineering-manifest.yaml.bak"
+            journal_path = dst / ".standards_sync_tx.json"
+
+            orig_lock_bytes = lock_path.read_bytes()
+            orig_man_bytes = manifest_path.read_bytes()
+            lock_bak.write_bytes(orig_lock_bytes)
+            manifest_bak.write_bytes(orig_man_bytes)
+
+            journal_data = {
+                "tx_id": "tx-g13",
+                "phase": "LOCK_REPLACED",
+                "operation_type": "UPDATE",
+                "status": "IN_PROGRESS",
+                "has_orig_lock": True,
+                "has_orig_manifest": True,
+                "orig_lock_sha256": hashlib.sha256(orig_lock_bytes).hexdigest(),
+                "orig_manifest_sha256": hashlib.sha256(orig_man_bytes).hexdigest(),
+                "backup_lock_sha256": hashlib.sha256(orig_lock_bytes).hexdigest(),
+                "backup_manifest_sha256": hashlib.sha256(orig_man_bytes).hexdigest(),
+                "targets": {},
+            }
+            journal_path.write_text(json.dumps(journal_data, indent=2), encoding="utf-8")
+
+            def broken_restore(src: Path, target: Path) -> None:
+                raise PermissionError("Injected secondary disk restore failure")
+
+            ok, err = recover_interrupted_transaction(dst, restore_fn=broken_restore)
+            self.assertFalse(ok)
+            self.assertIn("RECOVERY_FAILED", str(err))
+
+            # Both backups and journal must remain preserved
+            self.assertTrue(lock_bak.exists())
+            self.assertTrue(manifest_bak.exists())
+            self.assertTrue(journal_path.exists())
+            j_after = json.loads(journal_path.read_text(encoding="utf-8"))
+            self.assertEqual(j_after.get("status"), "RECOVERY_FAILED")
+
+    def test_g14_recovery_idempotency_subsequent_call_succeeds(self) -> None:
+        """P0 Fault Injection G14: Executing recovery again after successful completion is idempotent and succeeds cleanly."""
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_path = dst / "standards.lock.json"
+            manifest_path = dst / "engineering-manifest.yaml"
+            orig_lock = lock_path.read_text(encoding="utf-8")
+            orig_manifest = manifest_path.read_text(encoding="utf-8")
+
+            # Clean state without pending transaction
+            ok1, err1 = recover_interrupted_transaction(dst)
+            self.assertTrue(ok1, err1)
+            self.assertIsNone(err1)
+
+            # Second call
+            ok2, err2 = recover_interrupted_transaction(dst)
+            self.assertTrue(ok2, err2)
+            self.assertIsNone(err2)
+
+            # File contents intact
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), orig_lock)
+            self.assertEqual(manifest_path.read_text(encoding="utf-8"), orig_manifest)
+
+    def test_g15_corrupt_journal_blocks_recovery_and_preserves_backups(self) -> None:
+        """P0 Fault Injection G15: Corrupt or malformed journal blocks recovery with CORRUPT_TRANSACTION_JOURNAL
+        and preserves backup files.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_bak = dst / "standards.lock.json.bak"
+            manifest_bak = dst / "engineering-manifest.yaml.bak"
+            journal_path = dst / ".standards_sync_tx.json"
+
+            lock_bak.write_text("{\"backup\": true}\n", encoding="utf-8")
+            manifest_bak.write_text("backup: true\n", encoding="utf-8")
+            journal_path.write_text("{invalid-json-content", encoding="utf-8")
+
+            ok, err = recover_interrupted_transaction(dst)
+            self.assertFalse(ok)
+            self.assertIn("CORRUPT_TRANSACTION_JOURNAL", str(err))
+
+            # Backup files must be preserved
+            self.assertTrue(lock_bak.exists())
+            self.assertTrue(manifest_bak.exists())
+            self.assertTrue(journal_path.exists())
+
+            # verify_project_lock must also block
+            res = verify_project_lock(dst, standards_root=ROOT, allow_offline=True)
+            self.assertEqual(res.get("status"), "BLOCK")
 
 
     # =========================================================================

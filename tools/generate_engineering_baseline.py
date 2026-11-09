@@ -128,7 +128,14 @@ def compute_deterministic_baseline_sha256(payload: Dict[str, Any]) -> str:
             return {
                 k: strip_time_fields(v)
                 for k, v in sorted(obj.items())
-                if k not in ("observed_at", "verified_at", "content_sha256")
+                if k not in (
+                    "observed_at",
+                    "verified_at",
+                    "content_sha256",
+                    "git_snapshot_observed_at",
+                    "observed_time",
+                    "snapshot_observed_at",
+                )
             }
         if isinstance(obj, list):
             return [strip_time_fields(x) for x in obj]
@@ -392,6 +399,22 @@ def build_engineering_baseline(
     adr_items = extract_adrs_from_decision_record(source_docs["DECISION_RECORD"][2], rel_doc("DECISION_RECORD"))
 
     # Dynamic facts with mandatory 6 provenance fields
+    ci_details: Dict[str, Any] = {
+        "source_commit": source_commit,
+        "git_snapshot_observed_at": now_iso,
+        "last_verified_ci_commit": "9687f961b22df612c4311961e06fc1c1fd508c37",
+        "candidate_commit": local_head or "NOT_VERIFIABLE",
+        "pending_verifications": "当前整改候选 Commit 待推送到 GitHub Actions 远端触发 Windows/Ubuntu 双平台真实 CI 完整运行；实测完成前严格保持 NOT_VERIFIABLE，严禁本地伪造 PASS",
+        "historical_ci_runs": [
+            "Run 42169418901 (Push @ 4041b1d, conclusion: success, Windows/Ubuntu PASS)",
+            "Run 42169424617 (PR #8 @ 4041b1d, conclusion: success, Windows/Ubuntu PASS)",
+            "Run 42177850321 (Push @ 9687f96, conclusion: success, Windows/Ubuntu PASS)",
+            "Run 42177858136 (PR #8 @ 9687f96, conclusion: success, Windows/Ubuntu PASS)",
+        ],
+        "snapshot_status": "FRESH",
+        "snapshot_validity_hours": 24,
+        "workflow": "standards-ci.yml",
+    }
     ci_fact: Dict[str, Any] = ci_fact_override or {
         "repository": repository,
         "source_path": ".github/workflows/standards-ci.yml",
@@ -400,7 +423,7 @@ def build_engineering_baseline(
         "observed_at": now_iso,
         "verification_status": "NOT_VERIFIABLE",
         "summary": "当前分支远端 GitHub Actions CI 待推送后由远端 Runner 实测（执行前保持 NOT_VERIFIABLE；历史已通过 Run: 42169418901, 42169424617, 42177850321, 42177858136）",
-        "details": {"run_id": None, "workflow": "standards-ci.yml"},
+        "details": ci_details,
     }
 
     if deployment_kind == "NON_RUNTIME_ARTIFACT":
@@ -714,7 +737,16 @@ def build_engineering_baseline(
         "## 9. 最近 CI 事实 (`recent_ci_facts`)",
         f"- **核验状态 (`verification_status`)**：`{ci_fact['verification_status']}`",
         f"- **工作流路径 (`source_path`)**：`{ci_fact['source_path']}`",
-        f"- **来源 Commit (`source_commit`)**：`{ci_fact['source_commit']}`",
+        f"- **1. 基线生成源 Commit (`source_commit`)**：`{ci_fact['source_commit']}`",
+        f"- **2. Git 快照观测时间 (`git_snapshot_observed_at`)**：`{ci_fact['observed_at']}`（有效时效：24 小时；快照状态：`FRESH`）",
+        f"- **3. 最近一次已验证 CI Commit (`last_verified_ci_commit`)**：`{ci_fact['details'].get('last_verified_ci_commit', '9687f961b22df612c4311961e06fc1c1fd508c37')}`",
+        f"- **4. 当前候选 Commit (`candidate_commit`)**：`{local_head}`",
+        f"- **5. 当前待验证事项 (`pending_verifications`)**：{ci_fact['details'].get('pending_verifications')}",
+        "- **6. 历史 CI 记录 (`historical_ci_runs`)**：",
+        "  - Run 42169418901 (Push @ `4041b1d`, conclusion: `success`, Windows/Ubuntu PASS)",
+        "  - Run 42169424617 (PR #8 @ `4041b1d`, conclusion: `success`, Windows/Ubuntu PASS)",
+        "  - Run 42177850321 (Push @ `9687f96`, conclusion: `success`, Windows/Ubuntu PASS)",
+        "  - Run 42177858136 (PR #8 @ `9687f96`, conclusion: `success`, Windows/Ubuntu PASS)",
         f"- **证据引用 (`evidence_ref`)**：`{ci_fact['evidence_ref']}`",
         f"- **观测时间 (`observed_at`)**：`{ci_fact['observed_at']}`",
         f"- **事实说明**：{ci_fact['summary']}",
@@ -777,7 +809,13 @@ def build_engineering_baseline(
         "",
         f"- 当前候选版本：`{version_str}`；PR #8 尚未合入官方 main，尚未创建正式 v{version_str} Tag。",
         "- 正式发布版本必须以官方 main 上的 Annotated Tag、Tag Object SHA、Peeled Commit 与 main CI 为准；严禁依赖 GitHub /releases/latest REST API 对象。",
-        "- 区分历史 CI 快照与当前 CI 实测：历史候选 Commit `4041b1d` 的 Run 42169418901 (Push) 与 Run 42169424617 (PR #8) 均已在 Windows 与 Ubuntu 通过；整改候选 Commit `a7a0177` 的 Run 42177850321 (Push) 与 Run 42177858136 (PR #8) 亦在两系统实测通过（133 tests OK）；当前分支最新整改 Commit 待推送后由远端 GitHub Actions 实测，远端完成前保持 `NOT_VERIFIABLE`，严禁本地伪造 PASS。",
+        "- 区分六项 CI 与快照核心概念（STD-034 / STD-035）：",
+        f"  1. **基线生成时的源 Commit**：`{ci_fact['source_commit']}`（基准比对基线）。",
+        f"  2. **Git 快照观测时间**：`{ci_fact['observed_at']}`（快照有效时间 24 小时；过期事实标记 STALE 或 NOT_VERIFIABLE）。",
+        f"  3. **最近一次已经验证的 CI Commit**：`{ci_fact['details'].get('last_verified_ci_commit', '9687f961b22df612c4311961e06fc1c1fd508c37')}`（Windows & Ubuntu 双平台全绿）。",
+        f"  4. **当前候选 Commit**：`{local_head}`（整改与测试候选 HEAD）。",
+        "  5. **当前待验证事项**：远端 GitHub Actions CI 实测；严禁在推送前或运行完成前伪造 CI PASS。",
+        "  6. **历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136（避免每次记录 CI 又无限触发基线提交的循环）。",
         "- 首个消费端试点为 AI-Engineering-Hub；AI-KB、VTIP、SideCar 不在本轮试点范围，是否接入由各工程 Owner 后续决定。",
         "- 审批状态：保持 `IN_REVIEW`，严禁智能体自批或伪造 `OWNER_APPROVED`。",
     ])

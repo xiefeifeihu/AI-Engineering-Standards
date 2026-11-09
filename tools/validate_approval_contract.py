@@ -36,6 +36,10 @@ FORBIDDEN_SELF_APPROVAL_ROLES = {
     "CLAUDE-CODE",
     "CODEX",
     "ANTIGRAVITY",
+    "VIBECODING",
+    "VIBE_CODING",
+    "VIBE-CODING",
+    "CURSOR",
     "SELF",
 }
 

@@ -369,6 +369,10 @@
           "minLength": 3,
           "description": "Owner approval evidence reference approving these required CI job mappings"
         },
+        "approval_record": {
+          "type": "object",
+          "description": "Owner approval contract record approving these required CI job mappings"
+        },
         "required_ci_jobs": {
           "type": "object",
           "additionalProperties": false,

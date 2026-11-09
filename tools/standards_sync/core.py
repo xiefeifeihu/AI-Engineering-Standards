@@ -1620,6 +1620,9 @@ def verify_consumer_ci_gate(
         return "FAILED", ["CONSUMER_CI_GATE_RAW_REPORT_MISSING: Missing raw test/scan execution report or log from GitHub Actions runner"]
 
     if isinstance(raw_report, dict):
+        if len(raw_report) == 0:
+            return "FAILED", ["CONSUMER_CI_RAW_REPORT_EMPTY: raw_report is an empty object"]
+
         # Validate metadata binding if present
         if "repository" in raw_report and str(raw_report["repository"]).lower() != repository.lower():
             return "FAILED", ["CONSUMER_CI_RAW_REPORT_REPOSITORY_MISMATCH: raw report belongs to different repository"]
@@ -1632,6 +1635,10 @@ def verify_consumer_ci_gate(
             return "FAILED", ["CONSUMER_CI_RAW_REPORT_JOB_NAME_MISMATCH: raw report job_name mismatch"]
 
         if has_test:
+            has_test_metrics = any(k in raw_report for k in ("tests_collected", "collected")) and any(k in raw_report for k in ("tests_passed", "passed"))
+            if not has_test_metrics:
+                return "FAILED", ["CONSUMER_CI_RAW_REPORT_MISSING_REQUIRED_FIELDS: raw_report missing required test execution fields (tests_collected/tests_passed)"]
+
             raw_c = raw_report.get("tests_collected") if "tests_collected" in raw_report else raw_report.get("collected")
             raw_p = raw_report.get("tests_passed") if "tests_passed" in raw_report else raw_report.get("passed")
             raw_f = raw_report.get("tests_failed") if "tests_failed" in raw_report else raw_report.get("failed", 0)
@@ -1659,6 +1666,9 @@ def verify_consumer_ci_gate(
                 return "FAILED", [f"CONSUMER_CI_GATE_RELEASE_CHECKS_FAILED: raw report has {raw_fail} failed checks"]
 
     elif isinstance(raw_report, str):
+        if not raw_report.strip():
+            return "FAILED", ["CONSUMER_CI_RAW_REPORT_EMPTY: raw_report is an empty string"]
+
         # String runner log parsing
         commit_match = re.search(r"(?:commit|HEAD|head_sha)[:=\s]+([0-9a-f]{40})", raw_report, re.IGNORECASE)
         if commit_match and commit_match.group(1) != expected_commit:
@@ -1666,6 +1676,10 @@ def verify_consumer_ci_gate(
 
         if has_test:
             m_ut = re.search(r"Ran (\d+) tests? in [0-9.]+s", raw_report)
+            m_py = re.search(r"(\d+) passed", raw_report)
+            if not (m_ut or m_py):
+                return "FAILED", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: raw runner log is an arbitrary unparseable string"]
+
             if m_ut:
                 raw_c = int(m_ut.group(1))
                 if raw_c <= 0:
@@ -1677,16 +1691,16 @@ def verify_consumer_ci_gate(
                     return "FAILED", ["CONSUMER_CI_GATE_ALL_TESTS_SKIPPED: raw log indicates all tests were skipped"]
                 if raw_p != passed or raw_c != collected:
                     return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNT_MISMATCH: claimed passed={passed} collected={collected}, raw log has passed={raw_p} collected={raw_c}"]
-            else:
-                m_py = re.search(r"(\d+) passed", raw_report)
-                if m_py:
-                    raw_p = int(m_py.group(1))
-                    m_pyskip = re.search(r"(\d+) skipped", raw_report)
-                    raw_s = int(m_pyskip.group(1)) if m_pyskip else 0
-                    if raw_p <= 0:
-                        return "FAILED", ["CONSUMER_CI_GATE_ALL_TESTS_SKIPPED: raw log indicates 0 passed tests"]
-                    if raw_p != passed:
-                        return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNT_MISMATCH: claimed passed={passed}, raw log has passed={raw_p}"]
+            elif m_py:
+                raw_p = int(m_py.group(1))
+                m_pyskip = re.search(r"(\d+) skipped", raw_report)
+                raw_s = int(m_pyskip.group(1)) if m_pyskip else 0
+                if raw_p <= 0:
+                    return "FAILED", ["CONSUMER_CI_GATE_ALL_TESTS_SKIPPED: raw log indicates 0 passed tests"]
+                if raw_p != passed:
+                    return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNT_MISMATCH: claimed passed={passed}, raw log has passed={raw_p}"]
+    else:
+        return "FAILED", ["CONSUMER_CI_RAW_REPORT_INVALID_TYPE: raw_report must be an object or string"]
 
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     headers = {
@@ -1700,6 +1714,11 @@ def verify_consumer_ci_gate(
         request = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    def get_bytes(url: str) -> bytes:
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.read()
 
     try:
         run = get_json(f"https://api.github.com/repos/{repository}/actions/runs/{run_id}")
@@ -1725,9 +1744,211 @@ def verify_consumer_ci_gate(
         job = matching[0]
         if job.get("status") != "completed" or job.get("conclusion") != "success":
             return "FAILED", [f"CONSUMER_CI_JOB_NOT_SUCCESS: {gate.get('job_name')}"]
+
+        job_id = job.get("id")
+
+        # Independent raw execution evidence from GitHub Actions (Artifact or Job Log)
+        artifact_info = gate.get("artifact_info")
+        if artifact_info:
+            if artifact_info.get("run_id") != run_id:
+                return "FAILED", ["CONSUMER_CI_ARTIFACT_RUN_ID_MISMATCH: Artifact run_id does not match workflow run"]
+            if artifact_info.get("head_sha") != expected_commit:
+                return "FAILED", ["CONSUMER_CI_ARTIFACT_COMMIT_MISMATCH: Artifact commit does not match expected head_sha"]
+
+            artifacts_data = get_json(f"https://api.github.com/repos/{repository}/actions/runs/{run_id}/artifacts")
+            artifacts = artifacts_data.get("artifacts") or []
+            target_name = artifact_info.get("artifact_name")
+            target_id = artifact_info.get("artifact_id")
+            matching_art = [
+                a for a in artifacts
+                if (target_id and a.get("id") == target_id) or (target_name and a.get("name") == target_name)
+            ]
+            if not matching_art:
+                return "FAILED", ["CONSUMER_CI_ARTIFACT_NOT_FOUND: Artifact not found on GitHub Actions run"]
+            art = matching_art[0]
+            art_run_id = (art.get("workflow_run") or {}).get("id")
+            if art_run_id and art_run_id != run_id:
+                return "FAILED", ["CONSUMER_CI_ARTIFACT_RUN_ID_MISMATCH: Artifact workflow_run id does not match run_id"]
+
+            art_download_url = art.get("archive_download_url") or f"https://api.github.com/repos/{repository}/actions/artifacts/{art.get('id')}/zip"
+            art_content = get_bytes(art_download_url)
+            actual_art_sha = hashlib.sha256(art_content).hexdigest()
+            expected_art_sha = str(artifact_info.get("artifact_sha256") or "").lower().removeprefix("sha256:")
+            if expected_art_sha and actual_art_sha != expected_art_sha:
+                return "FAILED", [f"CONSUMER_CI_ARTIFACT_SHA256_MISMATCH: Artifact sha256 {actual_art_sha} != expected {expected_art_sha}"]
+
+        else:
+            job_log_url = f"https://api.github.com/repos/{repository}/actions/jobs/{job_id}/logs"
+            try:
+                log_bytes = get_bytes(job_log_url)
+                runner_log = log_bytes.decode("utf-8", errors="replace")
+            except Exception as log_exc:
+                return "NOT_VERIFIABLE", [f"CONSUMER_CI_API_NOT_VERIFIABLE: Cannot fetch raw job log from GitHub Actions: {log_exc}"]
+
+            if not runner_log.strip():
+                return "NOT_VERIFIABLE", ["CONSUMER_CI_RUNNER_LOG_UNREADABLE: Empty raw runner log from GitHub Actions"]
+
+            # Check if raw runner log contains FAILED / FAILURES
+            if "FAILURES!" in runner_log or re.search(r"FAILED \(failures=\d+", runner_log) or re.search(r"FAILED \(errors=\d+", runner_log):
+                return "FAILED", ["CONSUMER_CI_RAW_LOG_CONTAINS_FAILURE: raw runner log contains test failure"]
+
+            # Cross-check runner log commit if present
+            log_commit_match = re.search(r"(?:commit|HEAD|head_sha)[:=\s]+([0-9a-f]{40})", runner_log, re.IGNORECASE)
+            if log_commit_match and log_commit_match.group(1) != expected_commit:
+                return "FAILED", ["CONSUMER_CI_RAW_REPORT_COMMIT_MISMATCH: raw runner log references different commit"]
+
+            # Cross-check test counts if test_execution
+            if has_test:
+                m_ut_log = re.search(r"Ran (\d+) tests? in [0-9.]+s", runner_log)
+                if m_ut_log:
+                    log_c = int(m_ut_log.group(1))
+                    m_skip_log = re.search(r"OK \(skipped=(\d+)\)", runner_log)
+                    log_s = int(m_skip_log.group(1)) if m_skip_log else 0
+                    log_p = log_c - log_s
+                    if log_c <= 0:
+                        return "FAILED", ["CONSUMER_CI_GATE_ZERO_TESTS_COLLECTED: raw runner log has 0 collected tests"]
+                    if log_p <= 0 or log_s >= log_c:
+                        return "FAILED", ["CONSUMER_CI_GATE_ALL_TESTS_SKIPPED: raw runner log indicates all tests skipped"]
+                    if log_p != passed or log_c != collected:
+                        return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNT_MISMATCH: claimed passed={passed} collected={collected}, raw runner log has passed={log_p} collected={log_c}"]
+                else:
+                    m_py_log = re.search(r"(\d+) passed", runner_log)
+                    if m_py_log:
+                        log_p = int(m_py_log.group(1))
+                        if log_p != passed:
+                            return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNT_MISMATCH: claimed passed={passed}, raw runner log has passed={log_p}"]
+                    elif "OK" not in runner_log and "SUCCESS" not in runner_log:
+                        return "FAILED", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: raw runner log does not contain parseable test success indicators"]
+            elif has_scan:
+                m_vuln = re.search(r"(\d+)\s+vulnerabilit(?:y|ies)\s+found", runner_log, re.IGNORECASE)
+                if m_vuln and int(m_vuln.group(1)) > 0:
+                    return "FAILED", [f"CONSUMER_CI_GATE_SCAN_VULNERABILITIES_FOUND: raw runner log indicates {m_vuln.group(1)} vulnerabilities"]
+                if "SUCCESS" not in runner_log.upper() and "OK" not in runner_log.upper() and "PASSED" not in runner_log.upper():
+                    return "FAILED", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: raw runner log does not contain scan success indicators"]
+            elif has_release:
+                if "RELEASE FAILED" in runner_log.upper() or "CHECK FAILED" in runner_log.upper():
+                    return "FAILED", ["CONSUMER_CI_GATE_RELEASE_CHECKS_FAILED: raw runner log indicates release check failure"]
+                if "SUCCESS" not in runner_log.upper() and "OK" not in runner_log.upper() and "PASSED" not in runner_log.upper():
+                    return "FAILED", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: raw runner log does not contain release success indicators"]
+
         return "VERIFIED", []
     except Exception as exc:
         return "NOT_VERIFIABLE", [f"CONSUMER_CI_API_NOT_VERIFIABLE: {exc}"]
+
+
+def verify_manifest_ci_gate_approval(
+    manifest_data: Dict[str, Any],
+    project_root: Path,
+    standards_root: Path,
+    expected_commit: Optional[str] = None,
+) -> Tuple[bool, List[str]]:
+    """Verify that consumer CI gate mappings in engineering-manifest.yaml have valid Owner approval."""
+    v_cfg = manifest_data.get("standards_validation") or {}
+    required_ci_jobs = v_cfg.get("required_ci_jobs") or {}
+    mapping_approval_ref = v_cfg.get("approval_evidence_ref")
+    inline_approval = v_cfg.get("approval_record")
+
+    if not (mapping_approval_ref or inline_approval):
+        return False, ["MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: standards_validation requires approval_evidence_ref or approval_record to trace Owner approval of gate mappings"]
+
+    approval_record: Optional[Dict[str, Any]] = None
+    errors: List[str] = []
+
+    if inline_approval and isinstance(inline_approval, dict):
+        approval_record = inline_approval
+    elif mapping_approval_ref:
+        ref_file = mapping_approval_ref.split("#")[0]
+        ref_path = (project_root / ref_file).resolve()
+        if not ref_path.exists():
+            return False, [f"MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: approval_evidence_ref target file '{ref_file}' does not exist"]
+        if ref_path.suffix.lower() == ".json":
+            try:
+                approval_record = json.loads(ref_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                return False, [f"MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: failed to parse approval json: {exc}"]
+        else:
+            try:
+                text = ref_path.read_text(encoding="utf-8")
+                if text.startswith("---"):
+                    parts = text.split("---", 2)
+                    if len(parts) >= 3:
+                        fm = yaml.safe_load(parts[1]) or {}
+                        if isinstance(fm, dict) and "approval_record" in fm:
+                            approval_record = fm.get("approval_record")
+                if approval_record is None:
+                    y = yaml.safe_load(text)
+                    if isinstance(y, dict):
+                        approval_record = y.get("approval_record", y)
+            except Exception as exc:
+                return False, [f"MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: failed to read approval record: {exc}"]
+
+    if approval_record is None or not isinstance(approval_record, dict):
+        return False, ["MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: No approval record found at reference"]
+
+    # 1. Anti-self-approval (STD-034 / STD-035)
+    actor_role = str(approval_record.get("actor_role") or "").strip().upper()
+    reviewer_type = str(approval_record.get("reviewer_type") or "").strip().upper()
+    approval_status = str(approval_record.get("approval_status") or "").strip().upper()
+    from tools.validate_approval_contract import FORBIDDEN_SELF_APPROVAL_ROLES, verify_approval_event_provenance
+    if actor_role in FORBIDDEN_SELF_APPROVAL_ROLES or reviewer_type in FORBIDDEN_SELF_APPROVAL_ROLES:
+        errors.append(f"AGENT_SELF_APPROVAL_FORBIDDEN: Coding agent ({actor_role or reviewer_type}) cannot set OWNER_APPROVED for gate mapping")
+
+    # 2. Schema validation
+    approval_schema_path = standards_root / "schemas" / "documentation-approval.schema.json"
+    if approval_schema_path.exists():
+        try:
+            appr_schema = json.loads(approval_schema_path.read_text(encoding="utf-8"))
+            for s_err in jsonschema.Draft202012Validator(appr_schema).iter_errors(approval_record):
+                errors.append(f"APPROVAL_RECORD_SCHEMA_VIOLATION: {s_err.message}")
+        except Exception as exc:
+            errors.append(f"APPROVAL_RECORD_SCHEMA_ERROR: {exc}")
+
+    # 3. Check binding: repository
+    project = manifest_data.get("project") or {}
+    expected_repository = str(project.get("repository") or "")
+    appr_repo = str(approval_record.get("repository") or "")
+    if expected_repository and appr_repo.lower() != expected_repository.lower():
+        errors.append(f"APPROVAL_REPOSITORY_MISMATCH: approval repository '{appr_repo}' != '{expected_repository}'")
+
+    # 4. Check binding: candidate commit
+    rc_h, head_out, _ = run_git(project_root, ["rev-parse", "HEAD"])
+    eff_commit = expected_commit or (head_out if rc_h == 0 and re.fullmatch(r"[0-9a-f]{40}", head_out) else None)
+    appr_commit = approval_record.get("candidate_commit")
+    if eff_commit and appr_commit != eff_commit:
+        errors.append(f"APPROVAL_COMMIT_MISMATCH: approval candidate_commit '{appr_commit}' != consumer HEAD '{eff_commit}'")
+    elif not eff_commit and appr_commit:
+        errors.append(f"APPROVAL_COMMIT_MISMATCH: no valid git HEAD found to verify candidate_commit '{appr_commit}'")
+
+    # 5. Check binding: gate mapping content digest
+    mapping_canonical = json.dumps(required_ci_jobs, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    mapping_digest = "sha256:" + hashlib.sha256(mapping_canonical.encode("utf-8")).hexdigest()
+    appr_digest = str(approval_record.get("content_sha256") or "").lower()
+    if not appr_digest.startswith("sha256:"):
+        appr_digest = f"sha256:{appr_digest}"
+    if appr_digest != mapping_digest.lower():
+        errors.append(f"MANIFEST_CI_JOB_MAPPING_DIGEST_MISMATCH: gate mapping content changed since Owner approval ({mapping_digest} != {appr_digest})")
+
+    # 6. Check binding: approval status
+    if approval_status != "OWNER_APPROVED":
+        errors.append(f"MANIFEST_CI_JOB_MAPPING_NOT_OWNER_APPROVED: approval_status is '{approval_status}', expected 'OWNER_APPROVED'")
+
+    # 7. Check binding: approved_at
+    if not approval_record.get("approved_at"):
+        errors.append("MANIFEST_CI_JOB_MAPPING_MISSING_APPROVED_AT: approval record missing approved_at timestamp")
+
+    # 8. Check binding: scope
+    appr_scope = str(approval_record.get("approval_scope") or approval_record.get("decision_scope") or "")
+    if appr_scope not in ("GATE_MAPPING", "OWNER_MANDATORY", "ALL", "CI_JOB_MAPPING"):
+        errors.append(f"MANIFEST_CI_JOB_MAPPING_INVALID_SCOPE: approval scope '{appr_scope}' does not cover gate mapping")
+
+    # 9. Provenance verification
+    prov_status, prov_errors = verify_approval_event_provenance(approval_record)
+    if prov_status == "NOT_VERIFIABLE":
+        errors.extend(prov_errors)
+    elif prov_status == "FAILED":
+        errors.extend(prov_errors)
+
+    return len(errors) == 0, errors
 
 
 def validate_upgrade_candidate(
@@ -1757,8 +1978,14 @@ def validate_upgrade_candidate(
             manifest_schema = json.loads(manifest_schema_path.read_text(encoding="utf-8"))
             jsonschema.validate(instance=manifest_data, schema=manifest_schema)
             v_cfg = manifest_data.get("standards_validation") or {}
-            if "required_ci_jobs" in v_cfg and not v_cfg.get("approval_evidence_ref"):
-                errors.append("MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: standards_validation.approval_evidence_ref is required to trace Owner approval of gate mappings")
+            if "required_ci_jobs" in v_cfg:
+                appr_ok, appr_errs = verify_manifest_ci_gate_approval(
+                    manifest_data=manifest_data,
+                    project_root=project_root,
+                    standards_root=std_root,
+                )
+                if not appr_ok:
+                    errors.extend(appr_errs)
         except Exception as exc:
             errors.append(f"MANIFEST_INCOMPATIBLE: {exc}")
     else:
@@ -1941,13 +2168,101 @@ def validate_upgrade_candidate(
     # always-green workflow and calling it the required test gate.
     validation_config = manifest_data.get("standards_validation") or {}
     mapping_approval_ref = validation_config.get("approval_evidence_ref")
-    if not mapping_approval_ref:
+    inline_approval = validation_config.get("approval_record")
+    required_ci_jobs = validation_config.get("required_ci_jobs") or {}
+
+    mapping_canonical = json.dumps(required_ci_jobs, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    mapping_digest = "sha256:" + hashlib.sha256(mapping_canonical.encode("utf-8")).hexdigest()
+
+    mapping_approval_unverifiable: List[str] = []
+    approval_record: Optional[Dict[str, Any]] = None
+
+    if inline_approval and isinstance(inline_approval, dict):
+        approval_record = inline_approval
+    elif not mapping_approval_ref:
         errors.append("MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: standards_validation.approval_evidence_ref is required to trace Owner approval of gate mappings")
     else:
         ref_file = mapping_approval_ref.split("#")[0]
         ref_path = (project_root / ref_file).resolve()
         if not ref_path.exists():
             errors.append(f"MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: approval_evidence_ref target file '{ref_file}' does not exist")
+        else:
+            if ref_path.suffix.lower() == ".json":
+                try:
+                    approval_record = json.loads(ref_path.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    errors.append(f"MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: failed to parse approval json: {exc}")
+            else:
+                try:
+                    text = ref_path.read_text(encoding="utf-8")
+                    if text.startswith("---"):
+                        parts = text.split("---", 2)
+                        if len(parts) >= 3:
+                            fm = yaml.safe_load(parts[1]) or {}
+                            if isinstance(fm, dict) and "approval_record" in fm:
+                                approval_record = fm.get("approval_record")
+                    if approval_record is None:
+                        y = yaml.safe_load(text)
+                        if isinstance(y, dict):
+                            approval_record = y.get("approval_record", y)
+                except Exception as exc:
+                    errors.append(f"MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: failed to read approval record: {exc}")
+
+    if mapping_approval_ref and not errors and approval_record is None:
+        errors.append("MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: No approval record found at reference")
+
+    if approval_record is not None and isinstance(approval_record, dict):
+        # 1. Anti-self-approval
+        actor_role = str(approval_record.get("actor_role") or "").strip().upper()
+        reviewer_type = str(approval_record.get("reviewer_type") or "").strip().upper()
+        approval_status = str(approval_record.get("approval_status") or "").strip().upper()
+        from tools.validate_approval_contract import FORBIDDEN_SELF_APPROVAL_ROLES, verify_approval_event_provenance
+        if actor_role in FORBIDDEN_SELF_APPROVAL_ROLES or reviewer_type in FORBIDDEN_SELF_APPROVAL_ROLES:
+            errors.append(f"AGENT_SELF_APPROVAL_FORBIDDEN: Coding agent ({actor_role or reviewer_type}) cannot set OWNER_APPROVED for gate mapping")
+
+        # 2. Schema validation
+        approval_schema_path = std_root / "schemas" / "documentation-approval.schema.json"
+        if approval_schema_path.exists():
+            appr_schema = json.loads(approval_schema_path.read_text(encoding="utf-8"))
+            for s_err in jsonschema.Draft202012Validator(appr_schema).iter_errors(approval_record):
+                errors.append(f"APPROVAL_RECORD_SCHEMA_VIOLATION: {s_err.message}")
+
+        # 3. Check binding: repository
+        appr_repo = str(approval_record.get("repository") or "")
+        if appr_repo.lower() != expected_repository.lower():
+            errors.append(f"APPROVAL_REPOSITORY_MISMATCH: approval repository '{appr_repo}' != '{expected_repository}'")
+
+        # 4. Check binding: candidate commit
+        appr_commit = approval_record.get("candidate_commit")
+        if appr_commit != consumer_head:
+            errors.append(f"APPROVAL_COMMIT_MISMATCH: approval candidate_commit '{appr_commit}' != consumer HEAD '{consumer_head}'")
+
+        # 5. Check binding: gate mapping content digest
+        appr_digest = str(approval_record.get("content_sha256") or "").lower()
+        if not appr_digest.startswith("sha256:"):
+            appr_digest = f"sha256:{appr_digest}"
+        if appr_digest != mapping_digest.lower():
+            errors.append(f"MANIFEST_CI_JOB_MAPPING_DIGEST_MISMATCH: gate mapping content changed since Owner approval ({mapping_digest} != {appr_digest})")
+
+        # 6. Check binding: approval status
+        if approval_status != "OWNER_APPROVED":
+            errors.append(f"MANIFEST_CI_JOB_MAPPING_NOT_OWNER_APPROVED: approval_status is '{approval_status}', expected 'OWNER_APPROVED'")
+
+        # 7. Check binding: approved_at
+        if not approval_record.get("approved_at"):
+            errors.append("MANIFEST_CI_JOB_MAPPING_MISSING_APPROVED_AT: approval record missing approved_at timestamp")
+
+        # 8. Check binding: scope
+        appr_scope = str(approval_record.get("approval_scope") or approval_record.get("decision_scope") or "")
+        if appr_scope not in ("GATE_MAPPING", "OWNER_MANDATORY", "ALL", "CI_JOB_MAPPING"):
+            errors.append(f"MANIFEST_CI_JOB_MAPPING_INVALID_SCOPE: approval scope '{appr_scope}' does not cover gate mapping")
+
+        # 9. Provenance verification
+        prov_status, prov_errors = verify_approval_event_provenance(approval_record)
+        if prov_status == "NOT_VERIFIABLE":
+            mapping_approval_unverifiable.extend(prov_errors)
+        elif prov_status == "FAILED":
+            errors.extend(prov_errors)
     required_ci_jobs = validation_config.get("required_ci_jobs") or {}
     required_dimensions = ["unit_tests", "integration_tests", "release_gates", "security_scan", "business_api"]
     if deployment_kind == "SERVICE":
@@ -2006,6 +2321,11 @@ def validate_upgrade_candidate(
         name: result for name, result in verification_results.items()
         if result["status"] == "NOT_VERIFIABLE"
     }
+    if mapping_approval_unverifiable:
+        unverifiable["ci_job_mapping_approval"] = {
+            "status": "NOT_VERIFIABLE",
+            "errors": mapping_approval_unverifiable,
+        }
     if failed:
         return {
             "status": "UPGRADE_BLOCKED",
@@ -2037,6 +2357,16 @@ def validate_upgrade_candidate(
         "errors": [],
     }
 
+def compute_file_sha256(path: Path) -> Optional[str]:
+    """Compute hex SHA-256 digest of a file; returns None if file does not exist or unreadable."""
+    if not path.exists():
+        return None
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except Exception:
+        return None
+
+
 def detect_interrupted_transaction(project_root: Path) -> Dict[str, Any]:
     """Detect if a prior standards sync two-file update was interrupted before completion."""
     project_root = project_root.resolve()
@@ -2054,25 +2384,45 @@ def detect_interrupted_transaction(project_root: Path) -> Dict[str, Any]:
         return {"interrupted": False, "backup_files": [], "tmp_files": []}
 
     journal_data: Dict[str, Any] = {}
+    journal_corrupt = False
     if has_journal:
         try:
             journal_data = json.loads(journal_path.read_text(encoding="utf-8"))
-        except Exception:
-            journal_data = {"corrupt": True}
+            if not isinstance(journal_data, dict):
+                journal_corrupt = True
+                journal_data = {"corrupt": True, "error": "Journal is not a JSON object"}
+            else:
+                required_fields = ["tx_id", "phase", "operation_type", "has_orig_lock", "has_orig_manifest", "status"]
+                missing = [f for f in required_fields if f not in journal_data]
+                if missing:
+                    journal_corrupt = True
+                    journal_data["corrupt"] = True
+                    journal_data["error"] = f"Missing required fields: {missing}"
+        except Exception as exc:
+            journal_corrupt = True
+            journal_data = {"corrupt": True, "error": str(exc)}
+    elif has_backups or has_tmps:
+        journal_corrupt = True
 
     return {
         "interrupted": True,
         "journal_exists": has_journal,
+        "journal_corrupt": journal_corrupt,
         "journal": journal_data,
         "backup_files": [p.name for p in (lock_bak, manifest_bak) if p.exists()],
         "tmp_files": [p.name for p in (lock_tmp, manifest_tmp) if p.exists()],
     }
 
 
-def recover_interrupted_transaction(project_root: Path) -> Tuple[bool, Optional[str]]:
+def recover_interrupted_transaction(
+    project_root: Path,
+    restore_fn: Optional[Callable[[Path, Path], None]] = None,
+) -> Tuple[bool, Optional[str]]:
     """Recover from an interrupted two-file update using preserved backup files.
-    Preserves backup files if recovery fails, ensuring no loss of valid original data.
+    Preserves backup files and journal if recovery fails, ensuring no loss of valid original data.
+    Guarantees idempotency: if no interrupted transaction is pending, returns (True, None).
     """
+    actual_restore = restore_fn if restore_fn is not None else shutil.copy2
     project_root = project_root.resolve()
     journal_path = project_root / ".standards_sync_tx.json"
     lock_path = project_root / "standards.lock.json"
@@ -2082,39 +2432,164 @@ def recover_interrupted_transaction(project_root: Path) -> Tuple[bool, Optional[
     lock_tmp = project_root / "standards.lock.json.tmp"
     manifest_tmp = project_root / "engineering-manifest.yaml.tmp"
 
+    has_journal = journal_path.exists()
+    has_backups = lock_bak.exists() or manifest_bak.exists()
+    has_tmps = lock_tmp.exists() or manifest_tmp.exists()
+
+    if not (has_journal or has_backups or has_tmps):
+        # Idempotent: already clean
+        return True, None
+
+    # 1. Validate Journal structure
+    if not has_journal:
+        msg = f"CORRUPT_TRANSACTION_JOURNAL: Missing .standards_sync_tx.json while backup/tmp files exist: {[p.name for p in (lock_bak, manifest_bak, lock_tmp, manifest_tmp) if p.exists()]}"
+        return False, msg
+
+    try:
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        msg = f"CORRUPT_TRANSACTION_JOURNAL: Failed to parse .standards_sync_tx.json: {exc}"
+        return False, msg
+
+    if not isinstance(journal, dict):
+        return False, "CORRUPT_TRANSACTION_JOURNAL: Journal is not a JSON object"
+
+    required_journal_fields = ["tx_id", "phase", "operation_type", "has_orig_lock", "has_orig_manifest", "status"]
+    missing_fields = [f for f in required_journal_fields if f not in journal]
+    if missing_fields:
+        return False, f"CORRUPT_TRANSACTION_JOURNAL: Missing required fields in journal: {missing_fields}"
+
+    has_orig_lock = bool(journal.get("has_orig_lock"))
+    has_orig_manifest = bool(journal.get("has_orig_manifest"))
+    orig_lock_sha = journal.get("orig_lock_sha256")
+    orig_man_sha = journal.get("orig_manifest_sha256")
+    backup_lock_sha = journal.get("backup_lock_sha256")
+    backup_man_sha = journal.get("backup_manifest_sha256")
+
+    # 2. Verify all required backups exist and SHA256 matches
+    if has_orig_lock:
+        if not lock_bak.exists():
+            return False, "MISSING_REQUIRED_BACKUP: standards.lock.json.bak is missing but has_orig_lock is True"
+        actual_lock_bak_sha = compute_file_sha256(lock_bak)
+        expected_lock_sha = orig_lock_sha or backup_lock_sha
+        if actual_lock_bak_sha != expected_lock_sha:
+            return False, f"BACKUP_SHA256_MISMATCH: standards.lock.json.bak sha256 ({actual_lock_bak_sha}) != recorded ({expected_lock_sha})"
+    else:
+        # Original lock did not exist; lock_bak must not exist
+        if lock_bak.exists():
+            return False, "UNATTRIBUTED_FILE_STATE: standards.lock.json.bak exists when journal recorded has_orig_lock=False"
+
+    if has_orig_manifest:
+        if not manifest_bak.exists():
+            return False, "MISSING_REQUIRED_BACKUP: engineering-manifest.yaml.bak is missing but has_orig_manifest is True"
+        actual_man_bak_sha = compute_file_sha256(manifest_bak)
+        expected_man_sha = orig_man_sha or backup_man_sha
+        if actual_man_bak_sha != expected_man_sha:
+            return False, f"BACKUP_SHA256_MISMATCH: engineering-manifest.yaml.bak sha256 ({actual_man_bak_sha}) != recorded ({expected_man_sha})"
+    else:
+        # Original manifest did not exist; manifest_bak must not exist
+        if manifest_bak.exists():
+            return False, "UNATTRIBUTED_FILE_STATE: engineering-manifest.yaml.bak exists when journal recorded has_orig_manifest=False"
+
+    # Update journal to indicate recovery in progress
+    try:
+        journal["phase"] = "RECOVERY_IN_PROGRESS"
+        journal["status"] = "RECOVERING"
+        journal_path.write_text(json.dumps(journal, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
     recovery_errors: List[str] = []
 
-    # Restore standards.lock.json from backup if available
-    if lock_bak.exists():
+    # 3. Perform restoration
+    # Restore lock file
+    if has_orig_lock:
         try:
-            shutil.copy2(lock_bak, lock_path)
+            actual_restore(lock_bak, lock_path)
         except Exception as exc:
             recovery_errors.append(f"Failed to restore standards.lock.json from {lock_bak.name}: {exc}")
+    else:
+        # Original lock did not exist: delete newly created lock if created by this transaction
+        if journal.get("created_new_lock", True) and lock_path.exists():
+            try:
+                lock_path.unlink()
+            except Exception as exc:
+                recovery_errors.append(f"Failed to remove newly created standards.lock.json: {exc}")
 
-    # Restore engineering-manifest.yaml from backup if available
-    if manifest_bak.exists():
+    # Restore manifest file
+    if has_orig_manifest:
         try:
-            shutil.copy2(manifest_bak, manifest_path)
+            actual_restore(manifest_bak, manifest_path)
         except Exception as exc:
             recovery_errors.append(f"Failed to restore engineering-manifest.yaml from {manifest_bak.name}: {exc}")
-
-    if recovery_errors:
-        if journal_path.exists():
+    else:
+        # Original manifest did not exist: delete newly created manifest if created by this transaction
+        if journal.get("created_new_manifest", True) and manifest_path.exists():
             try:
-                journal_data = json.loads(journal_path.read_text(encoding="utf-8"))
-                journal_data["status"] = "RECOVERY_FAILED"
-                journal_data["recovery_errors"] = recovery_errors
-                journal_path.write_text(json.dumps(journal_data, indent=2), encoding="utf-8")
-            except Exception:
-                pass
-        return False, f"RECOVERY_FAILED: {recovery_errors}; preserved backup files {[p.name for p in (lock_bak, manifest_bak) if p.exists()]}"
+                manifest_path.unlink()
+            except Exception as exc:
+                recovery_errors.append(f"Failed to remove newly created engineering-manifest.yaml: {exc}")
 
+    # If restoration raised errors, preserve backups and journal
+    if recovery_errors:
+        try:
+            journal["phase"] = "RECOVERY_FAILED"
+            journal["status"] = "RECOVERY_FAILED"
+            journal["recovery_errors"] = recovery_errors
+            journal_path.write_text(json.dumps(journal, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+        preserved = [p.name for p in (lock_bak, manifest_bak) if p.exists()]
+        return False, f"RECOVERY_FAILED: {recovery_errors}; preserved backup files {preserved}"
+
+    # 4. Post-recovery verification
+    # Re-read files and verify SHA256 or non-existence
+    if has_orig_lock:
+        if not lock_path.exists():
+            return False, "POST_RECOVERY_VERIFICATION_FAILED: standards.lock.json missing after restoration"
+        cur_lock_sha = compute_file_sha256(lock_path)
+        if cur_lock_sha != orig_lock_sha:
+            return False, f"POST_RECOVERY_VERIFICATION_FAILED: standards.lock.json SHA256 ({cur_lock_sha}) != original snapshot ({orig_lock_sha})"
+    else:
+        if lock_path.exists():
+            return False, "POST_RECOVERY_VERIFICATION_FAILED: standards.lock.json should not exist after initialization recovery"
+
+    if has_orig_manifest:
+        if not manifest_path.exists():
+            return False, "POST_RECOVERY_VERIFICATION_FAILED: engineering-manifest.yaml missing after restoration"
+        cur_man_sha = compute_file_sha256(manifest_path)
+        if cur_man_sha != orig_man_sha:
+            return False, f"POST_RECOVERY_VERIFICATION_FAILED: engineering-manifest.yaml SHA256 ({cur_man_sha}) != original snapshot ({orig_man_sha})"
+    else:
+        if manifest_path.exists():
+            return False, "POST_RECOVERY_VERIFICATION_FAILED: engineering-manifest.yaml should not exist after initialization recovery"
+
+    # If both files exist, check mutual consistency
+    if has_orig_lock and has_orig_manifest and lock_path.exists() and manifest_path.exists():
+        try:
+            rec_lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            rec_man = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            m_std = rec_man.get("standards") or {}
+            m_ver = str(m_std.get("version") or m_std.get("standard_version") or "").lstrip("v")
+            m_tag = str(m_std.get("tag") or m_std.get("release_tag") or "")
+            m_commit = str(m_std.get("peeled_commit") or m_std.get("standard_commit") or "")
+            if (
+                rec_lock.get("version") != m_ver
+                or rec_lock.get("tag") != m_tag
+                or rec_lock.get("peeled_commit") != m_commit
+            ):
+                return False, "POST_RECOVERY_VERIFICATION_FAILED: Recovered standards.lock.json and engineering-manifest.yaml have inconsistent version/tag/commit"
+        except Exception as exc:
+            return False, f"POST_RECOVERY_VERIFICATION_FAILED: Failed to parse restored files: {exc}"
+
+    # 5. Clean up backups and temporary files only after full verification passes
     for p in (lock_bak, manifest_bak, lock_tmp, manifest_tmp, journal_path):
         if p.exists():
             try:
                 p.unlink()
             except Exception:
                 pass
+
     return True, None
 
 
@@ -2173,10 +2648,12 @@ def execute_transactional_two_file_update(
         return False, "MISSING_MANIFEST_STANDARDS_UPDATE: new_manifest_standards is required for two-file update"
 
     orig_manifest_content: Optional[str] = None
+    orig_manifest_bytes: Optional[bytes] = None
     manifest_data: Dict[str, Any] = {}
     if manifest_path.exists():
         try:
-            orig_manifest_content = manifest_path.read_text(encoding="utf-8")
+            orig_manifest_bytes = manifest_path.read_bytes()
+            orig_manifest_content = orig_manifest_bytes.decode("utf-8")
             manifest_data = yaml.safe_load(orig_manifest_content) or {}
         except Exception as exc:
             return False, f"INVALID_MANIFEST_YAML: failed to parse engineering-manifest.yaml: {exc}"
@@ -2190,25 +2667,53 @@ def execute_transactional_two_file_update(
         manifest_data = {"schema_version": "1.3.0", "standards": {}}
 
     orig_lock_content: Optional[str] = None
+    orig_lock_bytes: Optional[bytes] = None
     if lock_path.exists():
-        orig_lock_content = lock_path.read_text(encoding="utf-8")
+        try:
+            orig_lock_bytes = lock_path.read_bytes()
+            orig_lock_content = orig_lock_bytes.decode("utf-8")
+        except Exception as exc:
+            return False, f"INVALID_LOCK_FILE: {exc}"
+
+    orig_lock_sha = hashlib.sha256(orig_lock_bytes).hexdigest() if orig_lock_bytes is not None else None
+    orig_man_sha = hashlib.sha256(orig_manifest_bytes).hexdigest() if orig_manifest_bytes is not None else None
 
     # 2. Write backups (.bak) and journal (.standards_sync_tx.json)
     try:
-        if orig_lock_content is not None:
-            lock_bak.write_text(orig_lock_content, encoding="utf-8")
-        if orig_manifest_content is not None:
-            manifest_bak.write_text(orig_manifest_content, encoding="utf-8")
+        backup_lock_sha: Optional[str] = None
+        backup_man_sha: Optional[str] = None
+        if orig_lock_bytes is not None:
+            lock_bak.write_bytes(orig_lock_bytes)
+            backup_lock_sha = compute_file_sha256(lock_bak)
+        if orig_manifest_bytes is not None:
+            manifest_bak.write_bytes(orig_manifest_bytes)
+            backup_man_sha = compute_file_sha256(manifest_bak)
 
+        tx_id = f"tx-{int(datetime.now(timezone.utc).timestamp())}"
         tx_journal_data = {
-            "tx_id": f"tx-{int(datetime.now(timezone.utc).timestamp())}",
+            "tx_id": tx_id,
             "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "phase": "PREPARED",
+            "operation_type": "INITIALIZATION" if is_initialization else "UPDATE",
             "status": "IN_PROGRESS",
-            "targets": ["standards.lock.json", "engineering-manifest.yaml"],
             "has_orig_lock": orig_lock_content is not None,
             "has_orig_manifest": orig_manifest_content is not None,
+            "orig_lock_sha256": orig_lock_sha,
+            "orig_manifest_sha256": orig_man_sha,
+            "backup_lock_sha256": backup_lock_sha,
+            "backup_manifest_sha256": backup_man_sha,
+            "created_new_lock": (orig_lock_content is None),
+            "created_new_manifest": (orig_manifest_content is None),
+            "targets": {
+                "lock_path": "standards.lock.json",
+                "manifest_path": "engineering-manifest.yaml",
+                "lock_tmp": "standards.lock.json.tmp",
+                "manifest_tmp": "engineering-manifest.yaml.tmp",
+                "lock_bak": "standards.lock.json.bak",
+                "manifest_bak": "engineering-manifest.yaml.bak",
+            },
         }
-        journal_path.write_text(json.dumps(tx_journal_data, indent=2), encoding="utf-8")
+        journal_path.write_text(json.dumps(tx_journal_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
         # 3. Stage changes in .tmp files
         lock_tmp.write_text(json.dumps(new_lock, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -2219,6 +2724,8 @@ def execute_transactional_two_file_update(
                 yaml.safe_dump(manifest_data, sort_keys=False, allow_unicode=True),
                 encoding="utf-8",
             )
+        tx_journal_data["phase"] = "STAGED"
+        journal_path.write_text(json.dumps(tx_journal_data, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception as exc:
         for p in (lock_tmp, lock_bak, manifest_tmp, manifest_bak, journal_path):
             if p.exists():
@@ -2228,16 +2735,17 @@ def execute_transactional_two_file_update(
                     pass
         return False, f"FAILED_STAGING_TRANSACTION: {exc}"
 
-    replaced_files: List[Tuple[Path, Path, Optional[str]]] = []
     try:
         # Step 1: Replace lock file
         actual_replace(lock_tmp, lock_path)
-        replaced_files.append((lock_path, lock_bak, orig_lock_content))
+        tx_journal_data["phase"] = "LOCK_REPLACED"
+        journal_path.write_text(json.dumps(tx_journal_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
         # Step 2: Replace manifest file
         if manifest_tmp.exists():
             actual_replace(manifest_tmp, manifest_path)
-            replaced_files.append((manifest_path, manifest_bak, orig_manifest_content))
+            tx_journal_data["phase"] = "MANIFEST_REPLACED"
+            journal_path.write_text(json.dumps(tx_journal_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
         # Step 3: Verify on-disk mutual consistency between lock and manifest
         disk_lock = json.loads(lock_path.read_text(encoding="utf-8"))
@@ -2254,49 +2762,9 @@ def execute_transactional_two_file_update(
             raise ValueError("POST_REPLACE_INCONSISTENCY: disk manifest standards block does not match lock")
 
     except Exception as exc:
-        recovery_errors: List[str] = []
-        for target, bak, orig_content in reversed(replaced_files):
-            try:
-                if bak.exists():
-                    shutil.copy2(bak, target)
-                elif orig_content is not None:
-                    target.write_text(orig_content, encoding="utf-8")
-                elif target.exists():
-                    target.unlink()
-            except Exception as rec_err:
-                recovery_errors.append(f"Failed to restore {target.name}: {rec_err}")
-
-        pre_restored = True
-        if orig_lock_content is not None and lock_path.exists():
-            if lock_path.read_text(encoding="utf-8") != orig_lock_content:
-                pre_restored = False
-        if orig_manifest_content is not None and manifest_path.exists():
-            if manifest_path.read_text(encoding="utf-8") != orig_manifest_content:
-                pre_restored = False
-
-        if recovery_errors or not pre_restored:
-            try:
-                journal_path.write_text(
-                    json.dumps({
-                        "status": "RECOVERY_FAILED",
-                        "error": str(exc),
-                        "recovery_errors": recovery_errors,
-                        "preserved_backups": [p.name for p in (lock_bak, manifest_bak) if p.exists()],
-                    }, indent=2),
-                    encoding="utf-8",
-                )
-            except Exception:
-                pass
-            msg = f"TRANSACTION_FAILED: {exc}. RECOVERY_FAILED: {recovery_errors}; preserved backup files {[p.name for p in (lock_bak, manifest_bak) if p.exists()]}"
-            return False, msg
-
-        for p in (lock_tmp, lock_bak, manifest_tmp, manifest_bak, journal_path):
-            if p.exists():
-                try:
-                    p.unlink()
-                except Exception:
-                    pass
-
+        rec_ok, rec_err = recover_interrupted_transaction(project_root)
+        if not rec_ok:
+            return False, f"TRANSACTION_FAILED: {exc}. RECOVERY_FAILED: {rec_err}"
         return False, f"TRANSACTION_FAILED: {exc}. State successfully rolled back to pre-transaction snapshot; consistency verified."
 
     for p in (lock_tmp, lock_bak, manifest_tmp, manifest_bak, journal_path):
