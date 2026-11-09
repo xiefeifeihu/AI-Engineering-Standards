@@ -40,7 +40,9 @@ from tools.standards_sync.core import (
     parse_semver,
     prepare_upgrade_candidate,
     promote_upgrade,
+    detect_interrupted_transaction,
     execute_transactional_two_file_update,
+    recover_interrupted_transaction,
     rollback_lock,
     validate_upgrade_candidate,
     verify_project_lock,
@@ -1100,6 +1102,169 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             # Restored to pre-transaction state
             self.assertEqual(lock_path.read_text(encoding="utf-8"), orig_lock)
             self.assertEqual(manifest_path.read_text(encoding="utf-8"), orig_manifest)
+
+    def test_g4_transactional_two_file_update_fails_when_manifest_missing(self) -> None:
+        """P0-A Transaction Safety: When engineering-manifest.yaml is missing,
+        execute_transactional_two_file_update fails fast with MISSING_MANIFEST and
+        never modifies standards.lock.json or leaves temporary files.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_path = dst / "standards.lock.json"
+            manifest_path = dst / "engineering-manifest.yaml"
+            manifest_path.unlink()  # Remove manifest completely
+
+            orig_lock = lock_path.read_text(encoding="utf-8")
+            new_lock_obj = json.loads(orig_lock)
+            new_lock_obj["version"] = "3.0.0"
+
+            ok, err = execute_transactional_two_file_update(
+                project_root=dst,
+                new_lock=new_lock_obj,
+                new_manifest_standards={"version": "3.0.0"},
+            )
+            self.assertFalse(ok)
+            self.assertIn("MISSING_MANIFEST", str(err))
+
+            # Lock file must remain untouched
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), orig_lock)
+            self.assertFalse((dst / "standards.lock.json.tmp").exists())
+            self.assertFalse((dst / "standards.lock.json.bak").exists())
+            self.assertFalse((dst / ".standards_sync_tx.json").exists())
+
+    def test_g5_transactional_two_file_update_fails_when_manifest_standards_invalid(self) -> None:
+        """P0-A Transaction Safety: When engineering-manifest.yaml lacks a valid standards
+        mapping, execute_transactional_two_file_update blocks with INVALID_MANIFEST_STANDARDS
+        without modifying lock or creating orphaned files.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_path = dst / "standards.lock.json"
+            manifest_path = dst / "engineering-manifest.yaml"
+
+            # Corrupt standards block in manifest
+            manifest_data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+            del manifest_data["standards"]
+            manifest_path.write_text(yaml.safe_dump(manifest_data), encoding="utf-8")
+
+            orig_lock = lock_path.read_text(encoding="utf-8")
+            orig_manifest = manifest_path.read_text(encoding="utf-8")
+            new_lock_obj = json.loads(orig_lock)
+            new_lock_obj["version"] = "3.0.0"
+
+            ok, err = execute_transactional_two_file_update(
+                project_root=dst,
+                new_lock=new_lock_obj,
+                new_manifest_standards={"version": "3.0.0"},
+            )
+            self.assertFalse(ok)
+            self.assertIn("INVALID_MANIFEST_STANDARDS", str(err))
+
+            # Files must remain unchanged
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), orig_lock)
+            self.assertEqual(manifest_path.read_text(encoding="utf-8"), orig_manifest)
+            self.assertFalse((dst / "standards.lock.json.tmp").exists())
+            self.assertFalse((dst / "standards.lock.json.bak").exists())
+
+    def test_g6_transactional_recovery_failure_preserves_backup_files(self) -> None:
+        """P0-B Fault Injection: When recovery fails during rollback (e.g. disk failure during restore),
+        the .bak files are strictly preserved and NOT deleted, guaranteeing human recovery data is retained.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_path = dst / "standards.lock.json"
+            manifest_path = dst / "engineering-manifest.yaml"
+            lock_bak = dst / "standards.lock.json.bak"
+
+            orig_lock = lock_path.read_text(encoding="utf-8")
+            new_lock_obj = json.loads(orig_lock)
+            new_lock_obj["version"] = "3.0.0"
+
+            # Injected fault: fails on replace AND shutil.copy2 fails during recovery
+            import os
+            def fault_replace(src: Path, target: Path) -> None:
+                if "manifest" in str(target):
+                    raise OSError("Injected disk failure on manifest replace")
+                os.replace(src, target)
+
+            import shutil
+            orig_copy2 = shutil.copy2
+            def fault_copy2(src, target, *args, **kwargs):
+                if str(src).endswith(".bak"):
+                    raise PermissionError("Injected permission error preventing backup restoration")
+                return orig_copy2(src, target, *args, **kwargs)
+
+            from unittest.mock import patch
+            with patch("tools.standards_sync.core.shutil.copy2", side_effect=fault_copy2):
+                ok, err = execute_transactional_two_file_update(
+                    project_root=dst,
+                    new_lock=new_lock_obj,
+                    new_manifest_standards={"version": "3.0.0", "tag": "v3.0.0"},
+                    replace_fn=fault_replace,
+                )
+
+            self.assertFalse(ok)
+            self.assertIn("RECOVERY_FAILED", str(err))
+
+            # Backup file MUST BE PRESERVED on disk!
+            self.assertTrue(lock_bak.exists(), "Backup file must NOT be deleted when recovery failed!")
+            self.assertEqual(lock_bak.read_text(encoding="utf-8"), orig_lock)
+
+    def test_g7_interrupted_transaction_detection_and_recovery(self) -> None:
+        """P0-B Fault Injection: When an external process kill or crash interrupts an update mid-flight,
+        detect_interrupted_transaction flags the pending state, and recover_interrupted_transaction
+        restores the original snapshot and removes residual backups and journals.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_path = dst / "standards.lock.json"
+            manifest_path = dst / "engineering-manifest.yaml"
+            lock_bak = dst / "standards.lock.json.bak"
+            journal_path = dst / ".standards_sync_tx.json"
+
+            orig_lock = lock_path.read_text(encoding="utf-8")
+            orig_manifest = manifest_path.read_text(encoding="utf-8")
+
+            # Simulate interrupted state: lock replaced, manifest not replaced, backup and journal remain
+            lock_bak.write_text(orig_lock, encoding="utf-8")
+            lock_path.write_text("{\"version\": \"partially-written\"}\n", encoding="utf-8")
+            journal_path.write_text(json.dumps({"status": "IN_PROGRESS", "tx_id": "tx-123"}), encoding="utf-8")
+
+            # 1. Detect interrupted state
+            status = detect_interrupted_transaction(dst)
+            self.assertTrue(status.get("interrupted"))
+            self.assertIn("standards.lock.json.bak", status.get("backup_files", []))
+
+            # 2. Recover from interrupted state
+            ok, err = recover_interrupted_transaction(dst)
+            self.assertTrue(ok, err)
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), orig_lock)
+            self.assertEqual(manifest_path.read_text(encoding="utf-8"), orig_manifest)
+
+            # 3. Verify clean state after recovery
+            status_after = detect_interrupted_transaction(dst)
+            self.assertFalse(status_after.get("interrupted"))
+            self.assertFalse(lock_bak.exists())
+            self.assertFalse(journal_path.exists())
+
+    def test_g8_interrupted_transaction_detected_in_verify_lock_and_blocks(self) -> None:
+        """P0-B Governance Gate: verify_project_lock detects interrupted transaction backups
+        and blocks with INTERRUPTED_TRANSACTION_PENDING.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            lock_bak = dst / "standards.lock.json.bak"
+            lock_bak.write_text("{}", encoding="utf-8")
+
+            res = verify_project_lock(project_root=dst, standards_root=ROOT)
+            self.assertEqual(res.get("status"), "BLOCK")
+            self.assertTrue(any("INTERRUPTED_TRANSACTION_PENDING" in e for e in res.get("errors", [])), res)
+
 
     # =========================================================================
     # H. Release Discovery & Semantic Tests (P2 Remediation)

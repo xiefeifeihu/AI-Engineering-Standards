@@ -83,11 +83,24 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
             "job_name": "Unit Tests",
             "head_sha": commit,
             "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "raw_report": {
+                "repository": repository,
+                "head_sha": commit,
+                "run_id": 12345,
+                "job_name": "Unit Tests",
+                "tests_collected": 10,
+                "tests_passed": 10,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+                "exit_code": 0,
+            },
             "test_execution": {
                 "tests_collected": 10,
                 "tests_passed": 10,
                 "tests_failed": 0,
                 "tests_skipped": 0,
+                "exit_code": 0,
+                "evidence_log_ref": "https://github.com/example/consumer/actions/runs/12345/jobs/1/logs",
             },
         }
         run_payload = {
@@ -253,11 +266,24 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
             "job_name": "Unit Tests",
             "head_sha": "a" * 40,
             "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "raw_report": {
+                "repository": "example/consumer",
+                "head_sha": "a" * 40,
+                "run_id": 12345,
+                "job_name": "Unit Tests",
+                "tests_collected": 10,
+                "tests_passed": 10,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+                "exit_code": 0,
+            },
             "test_execution": {
                 "tests_collected": 10,
                 "tests_passed": 10,
                 "tests_failed": 0,
                 "tests_skipped": 0,
+                "exit_code": 0,
+                "evidence_log_ref": "https://github.com/example/consumer/actions/runs/12345/jobs/1/logs",
             },
         }
         with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Network unreachable")):
@@ -343,6 +369,301 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
         self.assertIn("OUT_OF_SCOPE", guide)
         self.assertIn("VTIP", guide)
         self.assertIn("SideCar", guide)
+
+
+    def test_consumer_ci_gate_rejects_job_success_with_zero_raw_tests(self) -> None:
+        commit = "a" * 40
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": commit,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "raw_report": {
+                "repository": "example/consumer",
+                "head_sha": commit,
+                "run_id": 12345,
+                "job_name": "Unit Tests",
+                "tests_collected": 0,
+                "tests_passed": 0,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+            },
+            "test_execution": {
+                "tests_collected": 10,
+                "tests_passed": 10,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+                "exit_code": 0,
+                "evidence_log_ref": "https://github.com/example/consumer/actions/runs/12345",
+            },
+        }
+        status, errors = verify_consumer_ci_gate("example/consumer", gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_ZERO_TESTS_COLLECTED" in e for e in errors), errors)
+
+    def test_consumer_ci_gate_rejects_job_success_with_all_tests_skipped_in_raw_report(self) -> None:
+        commit = "a" * 40
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": commit,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "raw_report": {
+                "repository": "example/consumer",
+                "head_sha": commit,
+                "run_id": 12345,
+                "job_name": "Unit Tests",
+                "tests_collected": 5,
+                "tests_passed": 0,
+                "tests_failed": 0,
+                "tests_skipped": 5,
+            },
+            "test_execution": {
+                "tests_collected": 5,
+                "tests_passed": 5,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+                "exit_code": 0,
+                "evidence_log_ref": "https://github.com/example/consumer/actions/runs/12345",
+            },
+        }
+        status, errors = verify_consumer_ci_gate("example/consumer", gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_ALL_TESTS_SKIPPED" in e for e in errors), errors)
+
+    def test_consumer_ci_gate_rejects_evidence_json_inflated_passed_count(self) -> None:
+        commit = "a" * 40
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": commit,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "raw_report": {
+                "repository": "example/consumer",
+                "head_sha": commit,
+                "run_id": 12345,
+                "job_name": "Unit Tests",
+                "tests_collected": 5,
+                "tests_passed": 5,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+            },
+            "test_execution": {
+                "tests_collected": 10,
+                "tests_passed": 10,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+                "exit_code": 0,
+                "evidence_log_ref": "https://github.com/example/consumer/actions/runs/12345",
+            },
+        }
+        status, errors = verify_consumer_ci_gate("example/consumer", gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_TEST_COUNT_MISMATCH" in e for e in errors), errors)
+
+    def test_consumer_ci_gate_rejects_raw_report_citing_different_commit(self) -> None:
+        commit_a = "a" * 40
+        commit_b = "b" * 40
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": commit_a,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "raw_report": {
+                "repository": "example/consumer",
+                "head_sha": commit_b,
+                "run_id": 12345,
+                "job_name": "Unit Tests",
+                "tests_collected": 10,
+                "tests_passed": 10,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+            },
+            "test_execution": {
+                "tests_collected": 10,
+                "tests_passed": 10,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+                "exit_code": 0,
+                "evidence_log_ref": "https://github.com/example/consumer/actions/runs/12345",
+            },
+        }
+        status, errors = verify_consumer_ci_gate("example/consumer", gate, commit_a)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_RAW_REPORT_COMMIT_MISMATCH" in e for e in errors), errors)
+
+    def test_consumer_ci_gate_rejects_missing_raw_report(self) -> None:
+        commit = "a" * 40
+        gate = {
+            "status": "PASS",
+            "command": "pytest",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Unit Tests",
+            "head_sha": commit,
+            "evidence_ref": "https://github.com/example/consumer/actions/runs/12345",
+            "test_execution": {
+                "tests_collected": 10,
+                "tests_passed": 10,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+                "exit_code": 0,
+                "evidence_log_ref": "https://github.com/example/consumer/actions/runs/12345",
+            },
+        }
+        status, errors = verify_consumer_ci_gate("example/consumer", gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_RAW_REPORT_MISSING" in e for e in errors), errors)
+
+    def test_consumer_ci_gate_supports_security_scan_and_release_gate_semantics(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        repository = "example/consumer"
+
+        # Security Scan gate
+        scan_gate = {
+            "status": "PASS",
+            "command": "pip-audit",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Security Scan",
+            "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": {
+                "repository": repository,
+                "head_sha": commit,
+                "run_id": 12345,
+                "job_name": "Security Scan",
+                "scanner": "pip-audit",
+                "targets_scanned": 15,
+                "vulnerabilities_found": 0,
+                "exit_code": 0,
+            },
+            "scan_execution": {
+                "scanner": "pip-audit",
+                "targets_scanned": 15,
+                "vulnerabilities_found": 0,
+                "exit_code": 0,
+                "evidence_log_ref": f"https://github.com/{repository}/actions/runs/12345",
+            },
+        }
+
+        # Release Gate
+        release_gate = {
+            "status": "PASS",
+            "command": "python tools/validate_release.py",
+            "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345,
+            "job_name": "Release Gate",
+            "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": {
+                "repository": repository,
+                "head_sha": commit,
+                "run_id": 12345,
+                "job_name": "Release Gate",
+                "gate_name": "release-validation",
+                "checks_passed": 5,
+                "checks_failed": 0,
+                "exit_code": 0,
+            },
+            "release_execution": {
+                "gate_name": "release-validation",
+                "checks_passed": 5,
+                "checks_failed": 0,
+                "exit_code": 0,
+                "evidence_log_ref": f"https://github.com/{repository}/actions/runs/12345",
+            },
+        }
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.payload = json.dumps(payload).encode("utf-8")
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self):
+                return self.payload
+
+        run_payload = {
+            "repository": {"full_name": repository},
+            "head_sha": commit,
+            "path": ".github/workflows/ci.yml",
+            "status": "completed",
+            "conclusion": "success",
+        }
+        jobs_scan = {"jobs": [{"name": "Security Scan", "status": "completed", "conclusion": "success"}]}
+        jobs_release = {"jobs": [{"name": "Release Gate", "status": "completed", "conclusion": "success"}]}
+
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_scan)]):
+            s1, err1 = verify_consumer_ci_gate(repository, scan_gate, commit)
+        self.assertEqual(s1, "VERIFIED", err1)
+
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_release)]):
+            s2, err2 = verify_consumer_ci_gate(repository, release_gate, commit)
+        self.assertEqual(s2, "VERIFIED", err2)
+
+    def test_validate_upgrade_candidate_rejects_unapproved_manifest_gate_mapping_change(self) -> None:
+        from tools.standards_sync.core import validate_upgrade_candidate
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            manifest_content = """schema_version: "1.3.0"
+standards:
+  repository: "xiefeifeihu/AI-Engineering-Standards"
+  version: "2.11.0"
+  tag: "v2.11.0"
+  tag_object_sha: "2f4b4b54348a5ac8891e5a0b33c04635a27213a0"
+  peeled_commit: "5e17c0ef560ab8abafe880b988d70f85f380a104"
+  lock_file: "standards.lock.json"
+project:
+  id: "ai-engineering-standards"
+  name: "AI Engineering Standards"
+  purpose: "Single source of truth"
+  repository: "xiefeifeihu/AI-Engineering-Standards"
+  deployment_kind: "NON_RUNTIME_ARTIFACT"
+  release_profile: "PERSONAL_LOCAL"
+services: []
+standards_validation:
+  schema_version: "1.0.0"
+  required_ci_jobs:
+    unit_tests:
+      workflow_path: ".github/workflows/ci.yml"
+      job_name: "Unit Tests"
+      command: "python -m unittest discover -s tests -v"
+    integration_tests:
+      workflow_path: ".github/workflows/ci.yml"
+      job_name: "Integration Tests"
+      command: "python -m unittest discover -s tests -p '*integration*'"
+    release_gates:
+      workflow_path: ".github/workflows/ci.yml"
+      job_name: "Release Gates"
+      command: "python tools/validate_release.py"
+    security_scan:
+      workflow_path: ".github/workflows/security.yml"
+      job_name: "Secret and Dependency Scan"
+      command: "python tools/security_scan.py"
+    business_api:
+      workflow_path: ".github/workflows/ci.yml"
+      job_name: "Business API Regression"
+      command: "python -m pytest tests/business"
+"""
+            (dst / "engineering-manifest.yaml").write_text(manifest_content, encoding="utf-8")
+            res = validate_upgrade_candidate(project_root=dst, standards_root=ROOT, target_tag="v3.0.0")
+            self.assertEqual(res.get("status"), "UPGRADE_BLOCKED")
+            self.assertTrue(any("MANIFEST_CI_JOB_MAPPING_NOT_APPROVED" in e for e in res.get("errors", [])), res)
 
 
 if __name__ == "__main__":

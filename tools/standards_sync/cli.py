@@ -27,6 +27,8 @@ if str(ROOT_DIR) not in sys.path:
 
 from tools.standards_sync.core import (
     DEFAULT_OFFICIAL_REPO,
+    detect_interrupted_transaction,
+    recover_interrupted_transaction,
     analyze_consumer_impact,
     compare_versions_and_artifacts,
     discover_latest_official_tag,
@@ -131,6 +133,10 @@ def main(argv: list[str] | None = None) -> int:
     p_rb = sub.add_parser("rollback", help="Rollback standards.lock.json to previous verified lock")
     p_rb.add_argument("--project-root", default=".", help="Target consumer project root directory")
 
+    # 9. recover-tx
+    p_rc = sub.add_parser("recover-tx", help="Detect and recover from an interrupted transaction")
+    p_rc.add_argument("--project-root", default=".", help="Target consumer project root directory")
+
     args = parser.parse_args(argv)
     std_root = Path(args.standards_root).resolve() if args.standards_root else None
 
@@ -229,6 +235,20 @@ def main(argv: list[str] | None = None) -> int:
         res = rollback_lock(project_root=Path(args.project_root))
         print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "ROLLED_BACK" else 1
+
+    if args.subcommand == "recover-tx":
+        project_root = Path(args.project_root).resolve()
+        status = detect_interrupted_transaction(project_root)
+        if not status.get("interrupted"):
+            print(json.dumps({"status": "CLEAN", "message": "No interrupted transaction detected"}, indent=2))
+            return 0
+        rec_ok, rec_err = recover_interrupted_transaction(project_root)
+        if rec_ok:
+            print(json.dumps({"status": "RECOVERED", "message": "Interrupted transaction cleanly rolled back from preserved backups"}, indent=2))
+            return 0
+        else:
+            print(json.dumps({"status": "RECOVERY_FAILED", "error": rec_err}, indent=2))
+            return 1
 
     return 1
 

@@ -56,6 +56,7 @@ project:
 
 standards_validation:
   schema_version: "1.0.0"
+  approval_evidence_ref: "docs/DECISION-RECORD.md#D-CI-GATES"
   required_ci_jobs:
     unit_tests:
       workflow_path: ".github/workflows/ci.yml"

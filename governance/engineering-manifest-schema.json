@@ -364,6 +364,11 @@
         "schema_version": {
           "const": "1.0.0"
         },
+        "approval_evidence_ref": {
+          "type": "string",
+          "minLength": 3,
+          "description": "Owner approval evidence reference approving these required CI job mappings"
+        },
         "required_ci_jobs": {
           "type": "object",
           "additionalProperties": false,

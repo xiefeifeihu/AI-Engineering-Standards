@@ -138,7 +138,7 @@ python .standards/tools/standards_sync/cli.py --standards-root .standards impact
 2. `compare` 分析标准正文、Schema 和规范性条款差异。
 3. `impact` 按消费工程实际 Lock 评估影响；未执行维度必须标记 `NOT_RUN` / `NOT_VERIFIABLE`。
 4. `prepare-upgrade` 只生成候选 Lock 和影响报告，输出到 `.artifacts/standards_upgrade/`；不修改正式 Lock。
-5. 消费工程先在 Owner 审核的 `engineering-manifest.yaml` → `standards_validation.required_ci_jobs` 中登记每个门禁的真实 Workflow 路径、Job 名称和命令；再在自身 CI 中执行单元、集成、发布、安全、业务 API 与 Runtime 回归，所有必需 Job 必须运行在同一个消费工程 Commit 上。
+5. 消费工程先在 Owner 审核的 `engineering-manifest.yaml` → `standards_validation.required_ci_jobs` 中登记每个门禁的真实 Workflow 路径、Job 名称和命令，并提供 `approval_evidence_ref` 追溯 Owner 审核批准；再在自身 CI 中执行单元、集成、发布、安全、业务 API 与 Runtime 回归，所有必需 Job 必须运行在同一个消费工程 Commit 上。
 6. 从 `templates/consumer-project/consumer-validation-evidence.template.json` 生成 `.artifacts/standards_upgrade/<TAG>/consumer-validation-evidence.json`，填写真实仓库、项目标识、消费 Commit、目标 Standards 四元组，以及每个 CI Job 的 Workflow 路径、Run ID、Job 名称、命令、Head SHA、GitHub Actions 证据链接及结构化测试执行证据（`test_execution` 包含 `tests_collected >= 1`、`tests_passed >= 1`、`tests_failed == 0`、`tests_skipped >= 0`）；严禁通过空测试、全跳过测试或未真实执行测试的绿色 Job 蒙混晋升。这些字段必须与 Owner 审核的 Manifest 门禁映射完全一致。
 7. 执行以下只读验证；工具先核对证据与 Owner 审核的 Manifest 门禁映射，再通过 GitHub Actions API 核验每个 Run 和 Job 的仓库、Workflow、Commit、完成状态及成功结论：
 
@@ -148,7 +148,7 @@ python .standards/tools/standards_sync/cli.py --standards-root .standards valida
 
 8. 只有 Manifest、文档集合、权威基线和全部必需消费端 CI Job 均通过，`validate-upgrade` 才能返回 `PASS`。缺少证据、网络不可用或 GitHub API 不可核验时返回 `NOT_VERIFIABLE`；任一证据失败、Commit 不一致或 Job 失败时返回 `UPGRADE_BLOCKED`。`NON_RUNTIME_ARTIFACT` 的 Runtime 维度必须明确标记 `NOT_APPLICABLE` 并说明原因；`SERVICE` 必须提供 Runtime CI 证据。
 9. ChatGPT 独立审核候选差异；属于 Owner 必批范围的变更，必须取得 Owner 明确批准。
-10. 所有必需门禁通过后，才可执行 `promote` 更新 Lock/Manifest。晋升与回滚采用双文件事务写入机制（`execute_transactional_two_file_update`），先写入临时文件与备份文件，在第二步替换或磁盘写入发生故障时自动触发回滚恢复，杜绝中途写入失败产生“Lock 与 Manifest 不一致”的半升级状态；随后重新运行 `verify-lock` 并记录远端 CI/Commit。
+10. 所有必需门禁通过后，才可执行 `promote` 更新 Lock/Manifest。晋升与回滚采用应用级协同双文件写入与恢复机制（`execute_transactional_two_file_update`），先写入临时文件与备份文件（`.bak`）并维护事务日志（`.standards_sync_tx.json`），在第二步替换或磁盘写入发生故障时自动触发回滚恢复；若恢复再次失败严格保留备份文件杜绝数据丢失；进程异常中断时支持通过 `recover-tx` 检测并恢复；明确多文件协作更新基于应用级协调与单文件原子替换，非断电级硬件原子事务；随后重新运行 `verify-lock` 并记录远端 CI/Commit。
 11. 任一门禁失败，保持旧 Lock 不变；不得通过修改测试断言或降低 Standards 要求使升级“变绿”。
 
 ## 7. 工具权限分级

@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 import urllib.error
@@ -485,6 +486,12 @@ def verify_project_lock(
         errors.append(f"LOCK_TAG_VERSION_MISMATCH: tag '{tag}' does not match version '{version}'")
     if tag_obj_sha and peeled_commit and tag_obj_sha == peeled_commit:
         errors.append("LOCK_LIGHTWEIGHT_TAG_FORBIDDEN: tag_object_sha cannot equal peeled_commit")
+
+    tx_check = detect_interrupted_transaction(project_root)
+    if tx_check.get("interrupted"):
+        errors.append(
+            f"INTERRUPTED_TRANSACTION_PENDING: Prior transaction was interrupted; backup files exist: {tx_check.get('backup_files')}"
+        )
 
     # Cross-check with engineering-manifest.yaml
     manifest_path = project_root / "engineering-manifest.yaml"
@@ -1507,7 +1514,18 @@ def verify_consumer_ci_gate(
     min_tests_passed: Optional[int] = None,
     timeout: int = 12,
 ) -> Tuple[str, List[str]]:
-    """Verify a consumer GitHub Actions run, named job, and actual test execution evidence."""
+    """Verify a consumer GitHub Actions run, named job, and actual test/scan/release execution evidence.
+
+    Authenticity & anti-forgery checks:
+    1. GitHub Actions Run & Job: repo, commit (head_sha), workflow path, completed + success.
+    2. Execution semantics: supports test_execution, scan_execution, or release_execution.
+    3. Test counts validation: tests_collected, tests_passed, tests_failed, tests_skipped, exit_code=0.
+    4. Raw Report Verification: extracts actual test/scan/release results from raw execution
+       evidence (runner log text or structured test artifact). Compares claimed counts against
+       raw execution evidence; blocks zero-test runs, all-skipped runs, fake passed counts,
+       and commit/repository mismatches.
+    5. Gate mapping: binds required job names and commands to Owner-reviewed policy.
+    """
     if repository != str(repository).strip() or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         return "FAILED", ["INVALID_CONSUMER_REPOSITORY"]
     run_id = gate.get("run_id")
@@ -1523,41 +1541,152 @@ def verify_consumer_ci_gate(
     if gate.get("evidence_ref") != expected_url:
         return "FAILED", ["CONSUMER_CI_EVIDENCE_REFERENCE_MISMATCH"]
 
-    # Test Execution verification (STD-014/STD-034): Job success != test execution.
-    # We require structured counts: tests_collected, tests_passed, tests_failed, tests_skipped.
-    execution = gate.get("test_execution")
-    if not isinstance(execution, dict):
+    has_test = "test_execution" in gate and isinstance(gate["test_execution"], dict)
+    has_scan = "scan_execution" in gate and isinstance(gate["scan_execution"], dict)
+    has_release = "release_execution" in gate and isinstance(gate["release_execution"], dict)
+
+    if not (has_test or has_scan or has_release):
         if any(k in gate for k in ("tests_collected", "tests_passed", "tests_failed", "tests_skipped")):
-            execution = {
+            gate["test_execution"] = {
                 "tests_collected": gate.get("tests_collected"),
                 "tests_passed": gate.get("tests_passed"),
                 "tests_failed": gate.get("tests_failed"),
                 "tests_skipped": gate.get("tests_skipped", 0),
+                "exit_code": gate.get("exit_code", 0),
+                "evidence_log_ref": gate.get("evidence_log_ref", expected_url),
             }
+            has_test = True
         else:
             return "FAILED", ["CONSUMER_CI_GATE_TEST_EXECUTION_MISSING: Missing test execution results (tests_collected, tests_passed, tests_failed, tests_skipped)"]
 
-    collected = execution.get("tests_collected")
-    passed = execution.get("tests_passed")
-    failed = execution.get("tests_failed")
-    skipped = execution.get("tests_skipped", 0)
+    collected: Optional[int] = None
+    passed: Optional[int] = None
+    failed: Optional[int] = None
+    skipped: Optional[int] = None
 
-    if not isinstance(collected, int) or collected <= 0:
-        return "FAILED", ["CONSUMER_CI_GATE_ZERO_TESTS_COLLECTED: Gate must execute at least one test"]
-    if not isinstance(passed, int) or passed <= 0:
-        return "FAILED", ["CONSUMER_CI_GATE_NO_TESTS_PASSED: Gate has zero passed tests"]
-    if not isinstance(failed, int) or failed > 0:
-        return "FAILED", [f"CONSUMER_CI_GATE_HAS_FAILED_TESTS: {failed} failed tests"]
-    if not isinstance(skipped, int) or skipped < 0:
-        return "FAILED", ["INVALID_CONSUMER_CI_SKIPPED_COUNT"]
-    if skipped >= collected:
-        return "FAILED", ["CONSUMER_CI_GATE_ALL_TESTS_SKIPPED: All collected tests were skipped"]
-    if passed + failed + skipped != collected:
-        return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNTS_INCONSISTENT: collected={collected} != passed({passed}) + failed({failed}) + skipped({skipped})"]
+    if has_test:
+        execution = gate["test_execution"]
+        collected = execution.get("tests_collected")
+        passed = execution.get("tests_passed")
+        failed = execution.get("tests_failed")
+        skipped = execution.get("tests_skipped", 0)
+        exit_code = execution.get("exit_code")
 
-    if min_tests_passed is not None and isinstance(min_tests_passed, int):
-        if passed < min_tests_passed:
-            return "FAILED", [f"CONSUMER_CI_GATE_TESTS_PASSED_BELOW_MINIMUM: passed={passed} < required={min_tests_passed}"]
+        if not isinstance(collected, int) or collected <= 0:
+            return "FAILED", ["CONSUMER_CI_GATE_ZERO_TESTS_COLLECTED: Gate must execute at least one test"]
+        if not isinstance(passed, int) or passed <= 0:
+            return "FAILED", ["CONSUMER_CI_GATE_NO_TESTS_PASSED: Gate has zero passed tests"]
+        if not isinstance(failed, int) or failed > 0:
+            return "FAILED", [f"CONSUMER_CI_GATE_HAS_FAILED_TESTS: {failed} failed tests"]
+        if not isinstance(skipped, int) or skipped < 0:
+            return "FAILED", ["INVALID_CONSUMER_CI_SKIPPED_COUNT"]
+        if skipped >= collected:
+            return "FAILED", ["CONSUMER_CI_GATE_ALL_TESTS_SKIPPED: All collected tests were skipped"]
+        if passed + failed + skipped != collected:
+            return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNTS_INCONSISTENT: collected={collected} != passed({passed}) + failed({failed}) + skipped({skipped})"]
+        if exit_code is not None and exit_code != 0:
+            return "FAILED", [f"CONSUMER_CI_GATE_NONZERO_EXIT_CODE: exit_code={exit_code}"]
+        if min_tests_passed is not None and isinstance(min_tests_passed, int):
+            if passed < min_tests_passed:
+                return "FAILED", [f"CONSUMER_CI_GATE_TESTS_PASSED_BELOW_MINIMUM: passed={passed} < required={min_tests_passed}"]
+
+    elif has_scan:
+        scan = gate["scan_execution"]
+        targets = scan.get("targets_scanned", 0)
+        vulns = scan.get("vulnerabilities_found", 0)
+        exit_code = scan.get("exit_code")
+        if not isinstance(targets, int) or targets <= 0:
+            return "FAILED", ["CONSUMER_CI_GATE_SCAN_ZERO_TARGETS: Must scan at least one target"]
+        if not isinstance(vulns, int) or vulns > 0:
+            return "FAILED", [f"CONSUMER_CI_GATE_SCAN_VULNERABILITIES_FOUND: {vulns} vulnerabilities found"]
+        if exit_code is not None and exit_code != 0:
+            return "FAILED", [f"CONSUMER_CI_GATE_NONZERO_EXIT_CODE: exit_code={exit_code}"]
+
+    elif has_release:
+        rel = gate["release_execution"]
+        checks_passed = rel.get("checks_passed", 0)
+        checks_failed = rel.get("checks_failed", 0)
+        exit_code = rel.get("exit_code")
+        if not isinstance(checks_passed, int) or checks_passed <= 0:
+            return "FAILED", ["CONSUMER_CI_GATE_RELEASE_ZERO_CHECKS: Must pass at least one release check"]
+        if not isinstance(checks_failed, int) or checks_failed > 0:
+            return "FAILED", [f"CONSUMER_CI_GATE_RELEASE_CHECKS_FAILED: {checks_failed} checks failed"]
+        if exit_code is not None and exit_code != 0:
+            return "FAILED", [f"CONSUMER_CI_GATE_NONZERO_EXIT_CODE: exit_code={exit_code}"]
+
+    # Raw Execution Report Verification (anti-forgery check)
+    raw_report = gate.get("raw_report")
+    if raw_report is None:
+        return "FAILED", ["CONSUMER_CI_GATE_RAW_REPORT_MISSING: Missing raw test/scan execution report or log from GitHub Actions runner"]
+
+    if isinstance(raw_report, dict):
+        # Validate metadata binding if present
+        if "repository" in raw_report and str(raw_report["repository"]).lower() != repository.lower():
+            return "FAILED", ["CONSUMER_CI_RAW_REPORT_REPOSITORY_MISMATCH: raw report belongs to different repository"]
+        raw_head = raw_report.get("head_sha") or raw_report.get("commit")
+        if raw_head and raw_head != expected_commit:
+            return "FAILED", ["CONSUMER_CI_RAW_REPORT_COMMIT_MISMATCH: raw report bound to a different commit"]
+        if "run_id" in raw_report and raw_report["run_id"] != run_id:
+            return "FAILED", ["CONSUMER_CI_RAW_REPORT_RUN_ID_MISMATCH: raw report run_id mismatch"]
+        if "job_name" in raw_report and raw_report["job_name"] != gate.get("job_name"):
+            return "FAILED", ["CONSUMER_CI_RAW_REPORT_JOB_NAME_MISMATCH: raw report job_name mismatch"]
+
+        if has_test:
+            raw_c = raw_report.get("tests_collected") if "tests_collected" in raw_report else raw_report.get("collected")
+            raw_p = raw_report.get("tests_passed") if "tests_passed" in raw_report else raw_report.get("passed")
+            raw_f = raw_report.get("tests_failed") if "tests_failed" in raw_report else raw_report.get("failed", 0)
+            raw_s = raw_report.get("tests_skipped") if "tests_skipped" in raw_report else raw_report.get("skipped", 0)
+
+            if raw_c is not None and raw_c <= 0:
+                return "FAILED", ["CONSUMER_CI_GATE_ZERO_TESTS_COLLECTED: raw report indicates 0 tests were collected"]
+            if raw_c is not None and (raw_p is None or raw_p <= 0 or (raw_s is not None and raw_s >= raw_c)):
+                return "FAILED", ["CONSUMER_CI_GATE_ALL_TESTS_SKIPPED: raw report indicates all tests were skipped"]
+            if raw_f is not None and raw_f > 0:
+                return "FAILED", [f"CONSUMER_CI_GATE_HAS_FAILED_TESTS: raw report indicates {raw_f} failed tests"]
+            if raw_p is not None and raw_p != passed:
+                return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNT_MISMATCH: claimed passed={passed}, but raw report has passed={raw_p}"]
+            if raw_c is not None and raw_c != collected:
+                return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNT_MISMATCH: claimed collected={collected}, but raw report has collected={raw_c}"]
+
+        elif has_scan:
+            raw_vulns = raw_report.get("vulnerabilities_found", 0)
+            if raw_vulns > 0:
+                return "FAILED", [f"CONSUMER_CI_GATE_SCAN_VULNERABILITIES_FOUND: raw report found {raw_vulns} vulnerabilities"]
+
+        elif has_release:
+            raw_fail = raw_report.get("checks_failed", 0)
+            if raw_fail > 0:
+                return "FAILED", [f"CONSUMER_CI_GATE_RELEASE_CHECKS_FAILED: raw report has {raw_fail} failed checks"]
+
+    elif isinstance(raw_report, str):
+        # String runner log parsing
+        commit_match = re.search(r"(?:commit|HEAD|head_sha)[:=\s]+([0-9a-f]{40})", raw_report, re.IGNORECASE)
+        if commit_match and commit_match.group(1) != expected_commit:
+            return "FAILED", ["CONSUMER_CI_RAW_REPORT_COMMIT_MISMATCH: raw runner log references different commit"]
+
+        if has_test:
+            m_ut = re.search(r"Ran (\d+) tests? in [0-9.]+s", raw_report)
+            if m_ut:
+                raw_c = int(m_ut.group(1))
+                if raw_c <= 0:
+                    return "FAILED", ["CONSUMER_CI_GATE_ZERO_TESTS_COLLECTED: raw log indicates 0 tests collected"]
+                m_skip = re.search(r"OK \(skipped=(\d+)\)", raw_report)
+                raw_s = int(m_skip.group(1)) if m_skip else 0
+                raw_p = raw_c - raw_s
+                if raw_p <= 0 or raw_s >= raw_c:
+                    return "FAILED", ["CONSUMER_CI_GATE_ALL_TESTS_SKIPPED: raw log indicates all tests were skipped"]
+                if raw_p != passed or raw_c != collected:
+                    return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNT_MISMATCH: claimed passed={passed} collected={collected}, raw log has passed={raw_p} collected={raw_c}"]
+            else:
+                m_py = re.search(r"(\d+) passed", raw_report)
+                if m_py:
+                    raw_p = int(m_py.group(1))
+                    m_pyskip = re.search(r"(\d+) skipped", raw_report)
+                    raw_s = int(m_pyskip.group(1)) if m_pyskip else 0
+                    if raw_p <= 0:
+                        return "FAILED", ["CONSUMER_CI_GATE_ALL_TESTS_SKIPPED: raw log indicates 0 passed tests"]
+                    if raw_p != passed:
+                        return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNT_MISMATCH: claimed passed={passed}, raw log has passed={raw_p}"]
 
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     headers = {
@@ -1627,6 +1756,9 @@ def validate_upgrade_candidate(
             manifest_data = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
             manifest_schema = json.loads(manifest_schema_path.read_text(encoding="utf-8"))
             jsonschema.validate(instance=manifest_data, schema=manifest_schema)
+            v_cfg = manifest_data.get("standards_validation") or {}
+            if "required_ci_jobs" in v_cfg and not v_cfg.get("approval_evidence_ref"):
+                errors.append("MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: standards_validation.approval_evidence_ref is required to trace Owner approval of gate mappings")
         except Exception as exc:
             errors.append(f"MANIFEST_INCOMPATIBLE: {exc}")
     else:
@@ -1808,6 +1940,14 @@ def validate_upgrade_candidate(
     # by the evidence producer. This prevents an agent from pointing at an arbitrary
     # always-green workflow and calling it the required test gate.
     validation_config = manifest_data.get("standards_validation") or {}
+    mapping_approval_ref = validation_config.get("approval_evidence_ref")
+    if not mapping_approval_ref:
+        errors.append("MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: standards_validation.approval_evidence_ref is required to trace Owner approval of gate mappings")
+    else:
+        ref_file = mapping_approval_ref.split("#")[0]
+        ref_path = (project_root / ref_file).resolve()
+        if not ref_path.exists():
+            errors.append(f"MANIFEST_CI_JOB_MAPPING_NOT_APPROVED: approval_evidence_ref target file '{ref_file}' does not exist")
     required_ci_jobs = validation_config.get("required_ci_jobs") or {}
     required_dimensions = ["unit_tests", "integration_tests", "release_gates", "security_scan", "business_api"]
     if deployment_kind == "SERVICE":
@@ -1897,64 +2037,196 @@ def validate_upgrade_candidate(
         "errors": [],
     }
 
+def detect_interrupted_transaction(project_root: Path) -> Dict[str, Any]:
+    """Detect if a prior standards sync two-file update was interrupted before completion."""
+    project_root = project_root.resolve()
+    journal_path = project_root / ".standards_sync_tx.json"
+    lock_bak = project_root / "standards.lock.json.bak"
+    manifest_bak = project_root / "engineering-manifest.yaml.bak"
+    lock_tmp = project_root / "standards.lock.json.tmp"
+    manifest_tmp = project_root / "engineering-manifest.yaml.tmp"
+
+    has_journal = journal_path.exists()
+    has_backups = lock_bak.exists() or manifest_bak.exists()
+    has_tmps = lock_tmp.exists() or manifest_tmp.exists()
+
+    if not (has_journal or has_backups or has_tmps):
+        return {"interrupted": False, "backup_files": [], "tmp_files": []}
+
+    journal_data: Dict[str, Any] = {}
+    if has_journal:
+        try:
+            journal_data = json.loads(journal_path.read_text(encoding="utf-8"))
+        except Exception:
+            journal_data = {"corrupt": True}
+
+    return {
+        "interrupted": True,
+        "journal_exists": has_journal,
+        "journal": journal_data,
+        "backup_files": [p.name for p in (lock_bak, manifest_bak) if p.exists()],
+        "tmp_files": [p.name for p in (lock_tmp, manifest_tmp) if p.exists()],
+    }
+
+
+def recover_interrupted_transaction(project_root: Path) -> Tuple[bool, Optional[str]]:
+    """Recover from an interrupted two-file update using preserved backup files.
+    Preserves backup files if recovery fails, ensuring no loss of valid original data.
+    """
+    project_root = project_root.resolve()
+    journal_path = project_root / ".standards_sync_tx.json"
+    lock_path = project_root / "standards.lock.json"
+    manifest_path = project_root / "engineering-manifest.yaml"
+    lock_bak = project_root / "standards.lock.json.bak"
+    manifest_bak = project_root / "engineering-manifest.yaml.bak"
+    lock_tmp = project_root / "standards.lock.json.tmp"
+    manifest_tmp = project_root / "engineering-manifest.yaml.tmp"
+
+    recovery_errors: List[str] = []
+
+    # Restore standards.lock.json from backup if available
+    if lock_bak.exists():
+        try:
+            shutil.copy2(lock_bak, lock_path)
+        except Exception as exc:
+            recovery_errors.append(f"Failed to restore standards.lock.json from {lock_bak.name}: {exc}")
+
+    # Restore engineering-manifest.yaml from backup if available
+    if manifest_bak.exists():
+        try:
+            shutil.copy2(manifest_bak, manifest_path)
+        except Exception as exc:
+            recovery_errors.append(f"Failed to restore engineering-manifest.yaml from {manifest_bak.name}: {exc}")
+
+    if recovery_errors:
+        if journal_path.exists():
+            try:
+                journal_data = json.loads(journal_path.read_text(encoding="utf-8"))
+                journal_data["status"] = "RECOVERY_FAILED"
+                journal_data["recovery_errors"] = recovery_errors
+                journal_path.write_text(json.dumps(journal_data, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+        return False, f"RECOVERY_FAILED: {recovery_errors}; preserved backup files {[p.name for p in (lock_bak, manifest_bak) if p.exists()]}"
+
+    for p in (lock_bak, manifest_bak, lock_tmp, manifest_tmp, journal_path):
+        if p.exists():
+            try:
+                p.unlink()
+            except Exception:
+                pass
+    return True, None
+
+
 def execute_transactional_two_file_update(
     project_root: Path,
     new_lock: Dict[str, Any],
     new_manifest_standards: Optional[Dict[str, Any]] = None,
     replace_fn: Optional[Callable[[Path, Path], None]] = None,
+    is_initialization: bool = False,
 ) -> Tuple[bool, Optional[str]]:
-    """Atomically apply updates to standards.lock.json and engineering-manifest.yaml.
+    """Coordinated two-file update for standards.lock.json and engineering-manifest.yaml.
 
-    Transactional safety properties:
-    1. Pre-transaction snapshot: Both files are read and backed up to .bak before modification.
-    2. Temp-write: Target contents are serialized to .tmp files before modifying original files.
-    3. Failure recovery: If any step fails (e.g. second file replace raises an exception,
-       or disk error occurs), all already-replaced files are rolled back from .bak,
-       temporary and backup files are cleaned up, and pre-transaction consistency is verified.
-    4. Post-replacement verification: On-disk cross-validation guarantees that both files
-       are strictly consistent (lock version/tag/commit match manifest standards mapping).
-       If an inconsistency is detected, changes are immediately rolled back.
-    5. Clean state: On completion (success or recovered failure), all .tmp and .bak files are deleted.
+    Transactional safety properties and actual guarantee level:
+    - Guarantee level: Application-level coordinated two-file update with pre-transaction
+      snapshotting, temporary-file staging, in-memory rollback recovery on exception,
+      and on-disk journal-based crash detection.
+    - Explicit limitation: This is NOT an OS-level or filesystem-level ACID atomic transaction
+      across hardware power loss. Because POSIX and Windows provide atomic rename (os.replace)
+      for individual single files only, an abrupt OS crash or power cut between Step 1 and Step 2
+      can leave the filesystem with the first file replaced and the second unreplaced.
+    - Crash resilience & recovery: If interrupted mid-flight by process termination or crash,
+      the journal file (.standards_sync_tx.json) and preserved .bak backups allow
+      detect_interrupted_transaction() and recover_interrupted_transaction() to detect
+      the incomplete state on subsequent execution, restore pre-transaction snapshots,
+      and block inconsistent execution without deleting valid backup files.
+    - Backup preservation: If an exception or recovery error occurs during rollback,
+      all remaining backup files (.bak) are strictly preserved and never unlinked.
+    - Mutual consistency: Requires both files to exist and be updated coherently;
+      if Manifest is missing or lacks a valid standards mapping, the transaction is
+      blocked before any files are modified.
     """
     actual_replace = replace_fn if replace_fn is not None else os.replace
+    project_root = project_root.resolve()
     lock_path = project_root / "standards.lock.json"
     manifest_path = project_root / "engineering-manifest.yaml"
 
+    journal_path = project_root / ".standards_sync_tx.json"
     lock_tmp = project_root / "standards.lock.json.tmp"
     lock_bak = project_root / "standards.lock.json.bak"
     manifest_tmp = project_root / "engineering-manifest.yaml.tmp"
     manifest_bak = project_root / "engineering-manifest.yaml.bak"
 
+    # Pre-transaction check: detect interrupted transaction from prior crash
+    prior_tx = detect_interrupted_transaction(project_root)
+    if prior_tx.get("interrupted"):
+        rec_ok, rec_err = recover_interrupted_transaction(project_root)
+        if not rec_ok:
+            return False, f"PREEXISTING_INTERRUPTED_TRANSACTION_RECOVERY_FAILED: {rec_err}"
+
+    # 1. Manifest existence and validity validation
+    if not manifest_path.exists():
+        if not is_initialization:
+            return False, "MISSING_MANIFEST: engineering-manifest.yaml does not exist; cannot perform transactional update without manifest"
+
+    if new_manifest_standards is None and not is_initialization:
+        return False, "MISSING_MANIFEST_STANDARDS_UPDATE: new_manifest_standards is required for two-file update"
+
+    orig_manifest_content: Optional[str] = None
+    manifest_data: Dict[str, Any] = {}
+    if manifest_path.exists():
+        try:
+            orig_manifest_content = manifest_path.read_text(encoding="utf-8")
+            manifest_data = yaml.safe_load(orig_manifest_content) or {}
+        except Exception as exc:
+            return False, f"INVALID_MANIFEST_YAML: failed to parse engineering-manifest.yaml: {exc}"
+
+        if not isinstance(manifest_data, dict):
+            return False, "INVALID_MANIFEST_STRUCTURE: engineering-manifest.yaml is not a YAML dictionary"
+
+        if "standards" not in manifest_data or not isinstance(manifest_data.get("standards"), dict):
+            return False, "INVALID_MANIFEST_STANDARDS: engineering-manifest.yaml missing valid 'standards' mapping"
+    elif is_initialization:
+        manifest_data = {"schema_version": "1.3.0", "standards": {}}
+
     orig_lock_content: Optional[str] = None
     if lock_path.exists():
         orig_lock_content = lock_path.read_text(encoding="utf-8")
-        lock_bak.write_text(orig_lock_content, encoding="utf-8")
 
-    orig_manifest_content: Optional[str] = None
-    has_manifest_update = False
-    if manifest_path.exists() and new_manifest_standards is not None:
-        try:
-            manifest_text = manifest_path.read_text(encoding="utf-8")
-            manifest_data = yaml.safe_load(manifest_text) or {}
-            if "standards" in manifest_data and isinstance(manifest_data["standards"], dict):
-                has_manifest_update = True
-                orig_manifest_content = manifest_text
-                manifest_bak.write_text(orig_manifest_content, encoding="utf-8")
-                manifest_data["standards"].update(new_manifest_standards)
-                manifest_tmp.write_text(
-                    yaml.safe_dump(manifest_data, sort_keys=False, allow_unicode=True),
-                    encoding="utf-8",
-                )
-        except Exception as exc:
-            for p in (lock_bak, manifest_bak, manifest_tmp):
-                if p.exists():
-                    try:
-                        p.unlink()
-                    except Exception:
-                        pass
-            return False, f"FAILED_PREPARING_MANIFEST_UPDATE: {exc}"
+    # 2. Write backups (.bak) and journal (.standards_sync_tx.json)
+    try:
+        if orig_lock_content is not None:
+            lock_bak.write_text(orig_lock_content, encoding="utf-8")
+        if orig_manifest_content is not None:
+            manifest_bak.write_text(orig_manifest_content, encoding="utf-8")
 
-    lock_tmp.write_text(json.dumps(new_lock, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        tx_journal_data = {
+            "tx_id": f"tx-{int(datetime.now(timezone.utc).timestamp())}",
+            "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "status": "IN_PROGRESS",
+            "targets": ["standards.lock.json", "engineering-manifest.yaml"],
+            "has_orig_lock": orig_lock_content is not None,
+            "has_orig_manifest": orig_manifest_content is not None,
+        }
+        journal_path.write_text(json.dumps(tx_journal_data, indent=2), encoding="utf-8")
+
+        # 3. Stage changes in .tmp files
+        lock_tmp.write_text(json.dumps(new_lock, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        if new_manifest_standards is not None:
+            manifest_data.setdefault("standards", {})
+            manifest_data["standards"].update(new_manifest_standards)
+            manifest_tmp.write_text(
+                yaml.safe_dump(manifest_data, sort_keys=False, allow_unicode=True),
+                encoding="utf-8",
+            )
+    except Exception as exc:
+        for p in (lock_tmp, lock_bak, manifest_tmp, manifest_bak, journal_path):
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+        return False, f"FAILED_STAGING_TRANSACTION: {exc}"
 
     replaced_files: List[Tuple[Path, Path, Optional[str]]] = []
     try:
@@ -1962,45 +2234,37 @@ def execute_transactional_two_file_update(
         actual_replace(lock_tmp, lock_path)
         replaced_files.append((lock_path, lock_bak, orig_lock_content))
 
-        # Step 2: Replace manifest file if applicable
-        if has_manifest_update and manifest_tmp.exists():
+        # Step 2: Replace manifest file
+        if manifest_tmp.exists():
             actual_replace(manifest_tmp, manifest_path)
             replaced_files.append((manifest_path, manifest_bak, orig_manifest_content))
 
         # Step 3: Verify on-disk mutual consistency between lock and manifest
-        if has_manifest_update and manifest_path.exists():
-            disk_lock = json.loads(lock_path.read_text(encoding="utf-8"))
-            disk_manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-            m_std = disk_manifest.get("standards") or {}
-            m_ver = str(m_std.get("version") or m_std.get("standard_version") or "").lstrip("v")
-            m_tag = str(m_std.get("tag") or m_std.get("release_tag") or "")
-            m_commit = str(m_std.get("peeled_commit") or m_std.get("standard_commit") or "")
-            if (
-                disk_lock.get("version") != m_ver
-                or disk_lock.get("tag") != m_tag
-                or disk_lock.get("peeled_commit") != m_commit
-            ):
-                raise ValueError("POST_REPLACE_INCONSISTENCY: disk manifest standards block does not match lock")
+        disk_lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        disk_manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        m_std = disk_manifest.get("standards") or {}
+        m_ver = str(m_std.get("version") or m_std.get("standard_version") or "").lstrip("v")
+        m_tag = str(m_std.get("tag") or m_std.get("release_tag") or "")
+        m_commit = str(m_std.get("peeled_commit") or m_std.get("standard_commit") or "")
+        if (
+            disk_lock.get("version") != m_ver
+            or disk_lock.get("tag") != m_tag
+            or disk_lock.get("peeled_commit") != m_commit
+        ):
+            raise ValueError("POST_REPLACE_INCONSISTENCY: disk manifest standards block does not match lock")
 
     except Exception as exc:
         recovery_errors: List[str] = []
         for target, bak, orig_content in reversed(replaced_files):
             try:
                 if bak.exists():
-                    os.replace(bak, target)
+                    shutil.copy2(bak, target)
                 elif orig_content is not None:
                     target.write_text(orig_content, encoding="utf-8")
                 elif target.exists():
                     target.unlink()
             except Exception as rec_err:
                 recovery_errors.append(f"Failed to restore {target.name}: {rec_err}")
-
-        for p in (lock_tmp, lock_bak, manifest_tmp, manifest_bak):
-            if p.exists():
-                try:
-                    p.unlink()
-                except Exception:
-                    pass
 
         pre_restored = True
         if orig_lock_content is not None and lock_path.exists():
@@ -2010,14 +2274,32 @@ def execute_transactional_two_file_update(
             if manifest_path.read_text(encoding="utf-8") != orig_manifest_content:
                 pre_restored = False
 
-        msg = f"TRANSACTION_FAILED: {exc}."
         if recovery_errors or not pre_restored:
-            msg += f" RECOVERY_FAILED: {recovery_errors}; inconsistent state detected"
-        else:
-            msg += " State successfully rolled back to pre-transaction snapshot; consistency verified."
-        return False, msg
+            try:
+                journal_path.write_text(
+                    json.dumps({
+                        "status": "RECOVERY_FAILED",
+                        "error": str(exc),
+                        "recovery_errors": recovery_errors,
+                        "preserved_backups": [p.name for p in (lock_bak, manifest_bak) if p.exists()],
+                    }, indent=2),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+            msg = f"TRANSACTION_FAILED: {exc}. RECOVERY_FAILED: {recovery_errors}; preserved backup files {[p.name for p in (lock_bak, manifest_bak) if p.exists()]}"
+            return False, msg
 
-    for p in (lock_tmp, lock_bak, manifest_tmp, manifest_bak):
+        for p in (lock_tmp, lock_bak, manifest_tmp, manifest_bak, journal_path):
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+
+        return False, f"TRANSACTION_FAILED: {exc}. State successfully rolled back to pre-transaction snapshot; consistency verified."
+
+    for p in (lock_tmp, lock_bak, manifest_tmp, manifest_bak, journal_path):
         if p.exists():
             try:
                 p.unlink()

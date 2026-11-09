@@ -38,13 +38,14 @@ Lock 模板中的 `0.0.0`、`v0.0.0` 和全零 SHA 是 `TEMPLATE_ONLY` 哨兵值
 
 ## 消费端 CI 门禁登记（Owner-reviewed Manifest Policy）
 
-消费工程必须在 `engineering-manifest.yaml` 的 `standards_validation.required_ci_jobs` 中登记每个门禁的真实 Workflow 路径、Job 名称和实际命令。该映射属于工程治理配置，必须经工程 Owner 审核；证据文件不得自行选择任意绿色 Workflow。
+消费工程必须在 `engineering-manifest.yaml` 的 `standards_validation.required_ci_jobs` 中登记每个门禁的真实 Workflow 路径、Job 名称和实际命令，并提供 `approval_evidence_ref` 追溯 Owner 审核批准。该映射属于工程治理受控配置，未经批准禁止随意更改门禁映射；证据文件不得自行选择任意绿色 Workflow。
 
 为防止空测试或全跳过测试被认定为有效通过，验证要求提供真实执行结果证据（`test_execution` 包含 `tests_collected >= 1`、`tests_passed >= 1`、`tests_failed == 0`、`tests_skipped >= 0`）。Owner 还可在 Manifest 中为关键门禁配置 `min_tests_passed` 阈值。
 
 ```yaml
 standards_validation:
   schema_version: "1.0.0"
+  approval_evidence_ref: "docs/DECISION-RECORD.md#D-CI-GATES"
   required_ci_jobs:
     unit_tests:
       workflow_path: ".github/workflows/ci.yml"

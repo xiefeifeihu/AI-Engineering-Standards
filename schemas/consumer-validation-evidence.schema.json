@@ -126,7 +126,7 @@
             "job_name",
             "head_sha",
             "evidence_ref",
-            "test_execution"
+            "raw_report"
           ],
           "properties": {
             "status": {
@@ -163,7 +163,9 @@
                 "tests_collected",
                 "tests_passed",
                 "tests_failed",
-                "tests_skipped"
+                "tests_skipped",
+                "exit_code",
+                "evidence_log_ref"
               ],
               "properties": {
                 "tests_collected": {
@@ -191,8 +193,103 @@
                   "type": "string"
                 }
               }
+            },
+            "raw_report": {
+              "description": "Raw execution report (dict or string log) from GitHub Actions runner",
+              "oneOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "string",
+                  "minLength": 1
+                }
+              ]
+            },
+            "scan_execution": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "scanner",
+                "targets_scanned",
+                "vulnerabilities_found",
+                "exit_code",
+                "evidence_log_ref"
+              ],
+              "properties": {
+                "scanner": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "targets_scanned": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "vulnerabilities_found": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 0
+                },
+                "exit_code": {
+                  "type": "integer",
+                  "const": 0
+                },
+                "evidence_log_ref": {
+                  "type": "string"
+                }
+              }
+            },
+            "release_execution": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "gate_name",
+                "checks_passed",
+                "checks_failed",
+                "exit_code",
+                "evidence_log_ref"
+              ],
+              "properties": {
+                "gate_name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "checks_passed": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "checks_failed": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 0
+                },
+                "exit_code": {
+                  "type": "integer",
+                  "const": 0
+                },
+                "evidence_log_ref": {
+                  "type": "string"
+                }
+              }
             }
-          }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "test_execution"
+              ]
+            },
+            {
+              "required": [
+                "scan_execution"
+              ]
+            },
+            {
+              "required": [
+                "release_execution"
+              ]
+            }
+          ]
         },
         {
           "type": "object",
