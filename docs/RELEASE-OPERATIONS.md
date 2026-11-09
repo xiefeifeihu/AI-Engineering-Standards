@@ -31,9 +31,10 @@ content_sha256: null
 3. **独立 ChatGPT 审核与 Owner 批准 (`D2=APPROVED`)**：
    - 将 Draft PR 审查包提交给 ChatGPT 进行跨文档及事实独立审核。
    - 涉及规范语义或破坏性 Schema 变更时，必须由仓库所有者（Owner）明确批准后方可合入 `main`。
-4. **合入 `main` 与正式 Annotated Tag 签发**：
-   - 经 Owner 批准并合入 `main` 后，等待 `main` 分支 CI 运行全绿。
-   - 基于通过 `main` CI 的 Commit 创建 Annotated Tag（`git tag -a vX.Y.Z -m "Release vX.Y.Z"`）并推送远端。
+4. **合入 `main` 与正式 Annotated Tag 自动化签发**：
+   - 经 Owner 批准并合入 `main` 后，由 `main` Push 触发 `.github/workflows/standards-ci.yml` 双平台 CI 全量验证。
+   - 双平台门禁全绿后，工作流中的 `publish-version-tag` 任务自动创建并推送附注标签（`git tag -a vX.Y.Z`）。
+   - **自动化一致性铁律**：正式 Tag 由 GitHub Actions 自动化流程唯一签发，任何用户或智能体不得在自动化成功前手动重复创建或推送同名 Tag，严禁抢跑或伪造发布。
 
 ## 2. 回滚与应急处置规程
 

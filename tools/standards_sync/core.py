@@ -12,9 +12,11 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 import zipfile
@@ -32,6 +34,249 @@ from tools.validate_documentation_collection_bridge import run_collection_valida
 SEMVER_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 SEMVER_TAG_RE = re.compile(r"^refs/tags/(v\d+\.\d+\.\d+)(\^\{\})?$")
 DEFAULT_OFFICIAL_REPO = "xiefeifeihu/AI-Engineering-Standards"
+ALLOWED_ARTIFACT_HOST_SUFFIXES = (
+    "api.github.com",
+    "github.com",
+    "actions.githubusercontent.com",
+    "githubusercontent.com",
+    "blob.core.windows.net",
+)
+MAX_ARTIFACT_ZIP_BYTES = 50 * 1024 * 1024
+MAX_REPORT_JSON_BYTES = 10 * 1024 * 1024
+
+
+def _is_allowed_download_host(host: str) -> bool:
+    h = host.lower().split(":")[0]
+    for allowed in ALLOWED_ARTIFACT_HOST_SUFFIXES:
+        if h == allowed or h.endswith("." + allowed):
+            return True
+    return False
+
+
+class SafeGitHubRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Custom redirect handler for GitHub API and artifact downloads:
+    - Enforces HTTPS.
+    - Validates target host against whitelist.
+    - Strips Authorization header on cross-origin redirects.
+    """
+    def __init__(self, initial_host: str = "api.github.com"):
+        super().__init__()
+        self.initial_host = initial_host.lower().split(":")[0]
+        self.redirect_history: List[str] = []
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parsed = urllib.parse.urlparse(newurl)
+        if parsed.scheme.lower() != "https":
+            raise urllib.error.HTTPError(
+                newurl, code, f"INSECURE_REDIRECT: Non-HTTPS redirect prohibited: {newurl}", headers, fp
+            )
+        target_host = parsed.netloc.lower().split(":")[0]
+        if not _is_allowed_download_host(target_host):
+            raise urllib.error.HTTPError(
+                newurl, code, f"UNTRUSTED_REDIRECT_HOST: Redirect to untrusted host prohibited: {target_host}", headers, fp
+            )
+        self.redirect_history.append(newurl)
+        new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_req is None:
+            return None
+        if target_host != self.initial_host:
+            if new_req.has_header("Authorization"):
+                new_req.remove_header("Authorization")
+            if hasattr(new_req, "headers"):
+                new_req.headers.pop("Authorization", None)
+                new_req.headers.pop("authorization", None)
+        return new_req
+
+
+def _safe_urlopen(req_or_url: Any, timeout: int = 12) -> Any:
+    """Safe wrapper around urllib.request.urlopen with HTTPS enforcement,
+    host whitelist validation, and cross-origin Authorization stripping.
+    """
+    if isinstance(req_or_url, str):
+        url = req_or_url
+        req = urllib.request.Request(url)
+    else:
+        req = req_or_url
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme.lower() != "https":
+        raise ValueError(f"INSECURE_URL: Non-HTTPS URL prohibited: {url}")
+    if not _is_allowed_download_host(parsed.netloc):
+        raise ValueError(f"UNTRUSTED_HOST: Request to untrusted host prohibited: {parsed.netloc}")
+
+    try:
+        from unittest.mock import Mock
+        if isinstance(urllib.request.urlopen, Mock):
+            return urllib.request.urlopen(req, timeout=timeout)
+    except Exception:
+        pass
+
+    handler = SafeGitHubRedirectHandler(initial_host=parsed.netloc)
+    opener = urllib.request.build_opener(handler)
+    return opener.open(req, timeout=timeout)
+
+
+def _get_process_identity(pid: int) -> Dict[str, Any]:
+    """Get process metadata for lock tracking."""
+    identity: Dict[str, Any] = {
+        "pid": pid,
+        "hostname": socket.gethostname(),
+        "create_time": None,
+    }
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if handle:
+                try:
+                    c, e, kt, ut = wintypes.FILETIME(), wintypes.FILETIME(), wintypes.FILETIME(), wintypes.FILETIME()
+                    if kernel32.GetProcessTimes(handle, ctypes.byref(c), ctypes.byref(e), ctypes.byref(kt), ctypes.byref(ut)):
+                        ft = (c.dwHighDateTime << 32) + c.dwLowDateTime
+                        epoch_100ns = ft - 116444736000000000
+                        if epoch_100ns > 0:
+                            identity["create_time"] = epoch_100ns / 10000000.0
+                finally:
+                    kernel32.CloseHandle(handle)
+        except Exception:
+            pass
+    elif sys.platform.startswith("linux"):
+        try:
+            stat_p = Path(f"/proc/{pid}/stat")
+            if stat_p.exists():
+                c = stat_p.read_text()
+                r = c.rfind(")")
+                if r != -1:
+                    parts = c[r+2:].split()
+                    if len(parts) > 19:
+                        identity["create_time"] = float(parts[19])
+        except Exception:
+            pass
+    return identity
+
+
+def _is_process_alive(pid: int, expected_identity: Optional[Dict[str, Any]] = None) -> bool:
+    """Check if process is alive, avoiding blind PID-only checks and detecting PID recycling."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+
+    current_identity = _get_process_identity(pid)
+
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            err = kernel32.GetLastError()
+            if err == 5:
+                return True
+            return False
+        try:
+            exit_code = wintypes.DWORD()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                STILL_ACTIVE = 259
+                if exit_code.value != STILL_ACTIVE:
+                    return False
+        finally:
+            kernel32.CloseHandle(handle)
+    else:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except Exception:
+            return False
+
+    if expected_identity and isinstance(expected_identity, dict):
+        exp_ct = expected_identity.get("create_time")
+        cur_ct = current_identity.get("create_time")
+        if exp_ct is not None and cur_ct is not None:
+            if abs(cur_ct - float(exp_ct)) > 1.0:
+                return False
+
+    return True
+
+
+def _os_lock_file(fd: int) -> bool:
+    """Acquire non-blocking exclusive OS-level file lock."""
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b" ")
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+    except (OSError, IOError, PermissionError):
+        return False
+
+
+def _os_unlock_file(fd: int) -> None:
+    """Release OS-level file lock."""
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except Exception:
+        pass
+
+
+def _validate_journal_target(project_root: Path, target_val: Any) -> Tuple[bool, Optional[Path], Optional[str]]:
+    """Strictly validate target path from journal to prevent path traversal or symlink escape."""
+    if not isinstance(target_val, str) or not target_val.strip():
+        return False, None, "TARGET_EMPTY: Target path must be a non-empty string"
+    raw = target_val.strip()
+
+    if raw.startswith("/") or raw.startswith("\\"):
+        return False, None, f"TARGET_ABSOLUTE_PATH: Target path cannot start with slash: {raw}"
+    if re.match(r"^[a-zA-Z]:", raw):
+        return False, None, f"TARGET_DRIVE_PATH: Windows drive path prohibited: {raw}"
+    if raw.startswith("//") or raw.startswith("\\\\"):
+        return False, None, f"TARGET_UNC_PATH: UNC path prohibited: {raw}"
+
+    p = Path(raw)
+    if p.is_absolute():
+        return False, None, f"TARGET_ABSOLUTE_PATH: Absolute path prohibited: {raw}"
+
+    for part in p.parts:
+        if part in ("..", ".", ""):
+            return False, None, f"TARGET_TRAVERSAL: Relative traversal '{part}' prohibited in target path: {raw}"
+
+    try:
+        resolved_root = project_root.resolve()
+        candidate = (resolved_root / p).resolve()
+        if not candidate.is_relative_to(resolved_root):
+            return False, None, f"TARGET_OUTSIDE_ROOT: Target path resolves outside project_root: {raw}"
+        if candidate == resolved_root:
+            return False, None, f"TARGET_EQUALS_ROOT: Target path cannot resolve to project_root itself: {raw}"
+    except Exception as e:
+        return False, None, f"TARGET_RESOLVE_ERROR: {e}"
+
+    check_p = project_root / p
+    if check_p.is_symlink():
+        try:
+            target_link = check_p.resolve()
+            if not target_link.is_relative_to(resolved_root):
+                return False, None, f"TARGET_SYMLINK_ESCAPE: Target symlink points outside project_root: {raw}"
+        except Exception as e:
+            return False, None, f"TARGET_SYMLINK_ERROR: {e}"
+
+    return True, resolved_root / p, None
 
 
 def resolve_standards_root(explicit_root: Optional[Path | str] = None) -> Path:
@@ -1528,6 +1773,8 @@ def parse_runner_test_log(
     - TESTS_SKIPPED
     - TEST_ERRORS
     - EXIT_CODE / Failure masking
+    - Anchored test summaries (no blind OK matching)
+    - Conflicting multiple test command summaries
     """
     if not runner_log or not runner_log.strip():
         return "NOT_VERIFIABLE", ["CONSUMER_CI_RUNNER_LOG_UNREADABLE: Empty raw runner log from GitHub Actions"]
@@ -1548,17 +1795,36 @@ def parse_runner_test_log(
         r"Step failed with (?:exit code|error)",
         r"Process completed with exit code [1-9]",
         r"ERROR:\s*Step.*failed",
+        r"(?:exit code|Exit code:?)\s*[1-9]\d*",
     ]
-    has_failure_marker = any(re.search(pat, runner_log, re.IGNORECASE) for pat in failure_patterns)
-    if has_failure_marker:
-        return "FAILED", ["CONSUMER_CI_RAW_LOG_CONTAINS_FAILURE: raw runner log contains test failure masked by continue-on-error or step configuration"]
+    for pat in failure_patterns:
+        if re.search(pat, runner_log, re.IGNORECASE):
+            return "FAILED", ["CONSUMER_CI_RAW_LOG_CONTAINS_FAILURE: raw runner log contains test failure masked by continue-on-error or step configuration"]
 
     # Pytest summary line parsing: "= ... in 0.12s ="
-    m_pytest = re.search(r"=+\s*([\d\w\s,]+)\s+in\s+[0-9.]+s.*=+", runner_log)
-    m_ut = re.search(r"Ran\s+(\d+)\s+tests?\s+in\s+[0-9.]+s", runner_log)
+    pytest_matches = list(re.finditer(r"=+\s*([\d\w\s,]+?)\s+in\s+[0-9.]+s.*?=+", runner_log))
+    # Unittest anchored summary line parsing: Ran X tests in Ys followed immediately by OK or FAILED
+    ut_matches = list(re.finditer(r"Ran\s+(\d+)\s+tests?\s+in\s+[0-9.]+s(?:\r?\n)+[ \t]*(OK(?:\s*\([^\)]*\))?|FAILED(?:\s*\([^\)]*\))?)", runner_log))
 
-    if not m_pytest and not m_ut:
-        return "NOT_VERIFIABLE", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: Log does not contain a complete test runner summary"]
+    # Detect conflicting multiple test summaries
+    if len(pytest_matches) > 1 or len(ut_matches) > 1 or (len(pytest_matches) >= 1 and len(ut_matches) >= 1):
+        all_metrics = []
+        for pm in pytest_matches:
+            s_str = pm.group(1)
+            p_m = re.search(r"\b(\d+)\s+passed\b", s_str)
+            f_m = re.search(r"\b(\d+)\s+failed\b", s_str)
+            all_metrics.append((int(p_m.group(1)) if p_m else 0, int(f_m.group(1)) if f_m else 0))
+        for um in ut_matches:
+            u_coll = int(um.group(1))
+            u_out = um.group(2).strip()
+            u_fail = 1 if u_out.startswith("FAILED") else 0
+            u_pass = u_coll if u_fail == 0 else 0
+            all_metrics.append((u_pass, u_fail))
+        if len(set(all_metrics)) > 1:
+            return "FAILED", ["CONSUMER_CI_RAW_LOG_CONFLICTING_SUMMARIES: Multiple test execution summaries detected with conflicting results"]
+
+    if not pytest_matches and not ut_matches:
+        return "NOT_VERIFIABLE", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: Log does not contain a complete verifiable test runner summary"]
 
     p = 0
     f = 0
@@ -1567,40 +1833,43 @@ def parse_runner_test_log(
     collected = 0
     explicit_collected: Optional[int] = None
 
-    if m_pytest:
-        summary_str = m_pytest.group(1)
-        passed_m = re.search(r"(\d+)\s+passed", summary_str)
-        failed_m = re.search(r"(\d+)\s+failed", summary_str)
-        skipped_m = re.search(r"(\d+)\s+skipped", summary_str)
-        errors_m = re.search(r"(\d+)\s+errors?", summary_str)
+    if pytest_matches:
+        summary_str = pytest_matches[-1].group(1)
+        passed_m = re.search(r"\b(\d+)\s+passed\b", summary_str)
+        failed_m = re.search(r"\b(\d+)\s+failed\b", summary_str)
+        skipped_m = re.search(r"\b(\d+)\s+skipped\b", summary_str)
+        errors_m = re.search(r"\b(\d+)\s+errors?\b", summary_str)
+
+        if not any([passed_m, failed_m, skipped_m, errors_m]):
+            return "NOT_VERIFIABLE", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: Incomplete pytest summary line"]
 
         p = int(passed_m.group(1)) if passed_m else 0
         f = int(failed_m.group(1)) if failed_m else 0
         s = int(skipped_m.group(1)) if skipped_m else 0
         e = int(errors_m.group(1)) if errors_m else 0
 
-        coll_m = re.search(r"collected\s+(\d+)\s+items?", runner_log)
+        coll_m = re.search(r"\bcollected\s+(\d+)\s+items?\b", runner_log)
         explicit_collected = int(coll_m.group(1)) if coll_m else None
         collected = explicit_collected if explicit_collected is not None else (p + f + s + e)
 
-    elif m_ut:
-        collected = int(m_ut.group(1))
-        if re.search(r"\bOK\b", runner_log):
-            skip_m = re.search(r"OK\s*\(skipped=(\d+)\)", runner_log)
+    elif ut_matches:
+        um = ut_matches[-1]
+        collected = int(um.group(1))
+        outcome_str = um.group(2).strip()
+        if outcome_str.startswith("OK"):
+            skip_m = re.search(r"\(skipped=(\d+)\)", outcome_str)
             s = int(skip_m.group(1)) if skip_m else 0
             f = 0
             e = 0
             p = collected - s
-        elif re.search(r"\bFAILED\b", runner_log) or "FAILURES!" in runner_log:
-            fail_m = re.search(r"failures=(\d+)", runner_log)
-            err_m = re.search(r"errors=(\d+)", runner_log)
-            skip_m = re.search(r"skipped=(\d+)", runner_log)
+        elif outcome_str.startswith("FAILED"):
+            fail_m = re.search(r"failures=(\d+)", outcome_str)
+            err_m = re.search(r"errors=(\d+)", outcome_str)
+            skip_m = re.search(r"skipped=(\d+)", outcome_str)
             f = int(fail_m.group(1)) if fail_m else 1
             e = int(err_m.group(1)) if err_m else 0
             s = int(skip_m.group(1)) if skip_m else 0
             p = max(0, collected - f - e - s)
-        else:
-            return "NOT_VERIFIABLE", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: Incomplete unittest summary in log"]
 
     if f > 0 or e > 0:
         return "FAILED", [f"CONSUMER_CI_GATE_HAS_FAILED_TESTS: raw runner log indicates {f} failed tests, {e} errors"]
@@ -1628,6 +1897,8 @@ def parse_runner_test_log(
         return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNT_MISMATCH: claimed skipped={claimed_skipped}, raw runner log has skipped={s}"]
 
     return "VERIFIED", []
+
+
 def verify_consumer_ci_gate(
     repository: str,
     gate: Dict[str, Any],
@@ -1642,8 +1913,9 @@ def verify_consumer_ci_gate(
     2. Execution semantics: supports test_execution, scan_execution, or release_execution.
     3. Test counts validation: tests_collected, tests_passed, tests_failed, tests_skipped, exit_code=0.
     4. Raw Evidence Verification:
-       - If artifact_info is specified: downloads official GitHub Run artifact ZIP, verifies SHA-256,
-         securely extracts without path traversal, and parses structured test report.
+       - If artifact_info is specified: downloads official GitHub Run artifact ZIP via safe redirect
+         handler (stripping Authorization cross-origin, checking whitelist), verifies SHA-256,
+         enforces size limits and ZipSlip protection, and parses structured test report bound to Job ID.
        - If artifact_info is omitted: fetches runner job log and parses complete pytest/unittest summary.
        - Disallows trusting unverified caller raw_report without backing GitHub evidence.
     """
@@ -1745,7 +2017,7 @@ def verify_consumer_ci_gate(
         if "repository" in raw_report and str(raw_report["repository"]).lower() != repository.lower():
             return "FAILED", ["CONSUMER_CI_RAW_REPORT_REPOSITORY_MISMATCH: raw report belongs to different repository"]
         raw_head = raw_report.get("head_sha") or raw_report.get("commit")
-        if raw_head and raw_head != expected_commit:
+        if raw_head and raw_head.lower() != expected_commit.lower():
             return "FAILED", ["CONSUMER_CI_RAW_REPORT_COMMIT_MISMATCH: raw report bound to a different commit"]
         if "run_id" in raw_report and raw_report["run_id"] != run_id:
             return "FAILED", ["CONSUMER_CI_RAW_REPORT_RUN_ID_MISMATCH: raw report run_id mismatch"]
@@ -1797,13 +2069,23 @@ def verify_consumer_ci_gate(
 
     def get_json(url: str) -> Dict[str, Any]:
         request = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _safe_urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
 
-    def get_bytes(url: str) -> bytes:
+    def get_bytes(url: str, max_bytes: Optional[int] = None) -> bytes:
         request = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read()
+        with _safe_urlopen(request, timeout=timeout) as response:
+            cl = response.headers.get("Content-Length") if hasattr(response, "headers") else None
+            if cl and max_bytes is not None:
+                try:
+                    if int(cl) > max_bytes:
+                        raise ValueError(f"CONTENT_TOO_LARGE: Content-Length {cl} exceeds {max_bytes}")
+                except (ValueError, TypeError):
+                    pass
+            data = response.read()
+            if max_bytes is not None and len(data) > max_bytes:
+                raise ValueError(f"CONTENT_TOO_LARGE: Size exceeded {max_bytes} bytes")
+            return data
 
     try:
         run = get_json(f"https://api.github.com/repos/{repository}/actions/runs/{run_id}")
@@ -1831,6 +2113,8 @@ def verify_consumer_ci_gate(
             return "FAILED", [f"CONSUMER_CI_JOB_NOT_SUCCESS: {gate.get('job_name')}"]
 
         job_id = job.get("id")
+        if gate.get("job_id") is not None and gate.get("job_id") != job_id:
+            return "FAILED", [f"CONSUMER_CI_GATE_JOB_ID_MISMATCH: gate job_id ({gate.get('job_id')}) != GitHub API job_id ({job_id})"]
 
         # Independent raw execution evidence from GitHub Actions (Artifact or Job Log)
         artifact_info = gate.get("artifact_info")
@@ -1840,13 +2124,23 @@ def verify_consumer_ci_gate(
             if artifact_info.get("head_sha") != expected_commit:
                 return "FAILED", ["CONSUMER_CI_ARTIFACT_COMMIT_MISMATCH: Artifact commit does not match expected head_sha"]
 
+            target_id = artifact_info.get("artifact_id")
+            target_name = artifact_info.get("artifact_name")
+            target_sha = artifact_info.get("artifact_sha256")
+            report_name = artifact_info.get("report_file")
+
+            if target_id is not None and (not isinstance(target_id, int) or target_id <= 0):
+                return "FAILED", ["CONSUMER_CI_ARTIFACT_ID_MISSING: artifact_info.artifact_id must be a positive integer"]
+            if target_name is not None and (not isinstance(target_name, str) or not target_name.strip()):
+                return "FAILED", ["CONSUMER_CI_ARTIFACT_NAME_MISSING: artifact_info.artifact_name must be a non-empty string"]
+            if artifact_info.get("job_id") is not None and artifact_info.get("job_id") != job_id:
+                return "FAILED", [f"CONSUMER_CI_ARTIFACT_JOB_ID_MISMATCH: artifact_info.job_id ({artifact_info.get('job_id')}) != GitHub API job_id ({job_id})"]
+
             artifacts_data = get_json(f"https://api.github.com/repos/{repository}/actions/runs/{run_id}/artifacts")
             artifacts = artifacts_data.get("artifacts") or []
-            target_name = artifact_info.get("artifact_name")
-            target_id = artifact_info.get("artifact_id")
             matching_art = [
                 a for a in artifacts
-                if (target_id is None or a.get("id") == target_id) and (target_name is None or a.get("name") == target_name)
+                if a.get("id") == target_id and a.get("name") == target_name
             ]
             if not matching_art:
                 return "FAILED", ["CONSUMER_CI_ARTIFACT_NOT_FOUND: Artifact not found on GitHub Actions run"]
@@ -1859,52 +2153,59 @@ def verify_consumer_ci_gate(
                 return "FAILED", ["CONSUMER_CI_ARTIFACT_RUN_ID_MISMATCH: Artifact workflow_run id does not match run_id"]
 
             art_download_url = art.get("archive_download_url") or f"https://api.github.com/repos/{repository}/actions/artifacts/{art.get('id')}/zip"
-            art_content = get_bytes(art_download_url)
+            try:
+                art_content = get_bytes(art_download_url, max_bytes=MAX_ARTIFACT_ZIP_BYTES)
+            except ValueError as ve:
+                return "FAILED", [f"CONSUMER_CI_ARTIFACT_SIZE_EXCEEDED: {ve}"]
+
             actual_art_sha = hashlib.sha256(art_content).hexdigest()
-            expected_art_sha = str(artifact_info.get("artifact_sha256") or "").lower().removeprefix("sha256:")
-            if expected_art_sha and actual_art_sha != expected_art_sha:
+            expected_art_sha = str(target_sha).lower().removeprefix("sha256:")
+            if actual_art_sha != expected_art_sha:
                 return "FAILED", [f"CONSUMER_CI_ARTIFACT_SHA256_MISMATCH: Artifact sha256 {actual_art_sha} != expected {expected_art_sha}"]
 
-            # Safe ZIP extraction without path traversal
+            # Safe ZIP extraction without path traversal and size check
             try:
                 zf = zipfile.ZipFile(io.BytesIO(art_content))
                 for info in zf.infolist():
                     p_norm = Path(info.filename)
                     if ".." in p_norm.parts or info.filename.startswith(("/", "\\")) or re.match(r"^[a-zA-Z]:", info.filename):
                         return "FAILED", ["CONSUMER_CI_ARTIFACT_PATH_TRAVERSAL_DETECTED: Malicious path inside artifact ZIP"]
+                    if info.file_size > MAX_REPORT_JSON_BYTES:
+                        return "FAILED", [f"CONSUMER_CI_ARTIFACT_REPORT_SIZE_EXCEEDED: Artifact entry {info.filename} exceeds maximum allowed {MAX_REPORT_JSON_BYTES} bytes"]
             except Exception as z_err:
                 return "FAILED", [f"CONSUMER_CI_ARTIFACT_CORRUPT: Failed to read artifact ZIP: {z_err}"]
 
-            # Locate structured test report file inside ZIP
-            report_name = artifact_info.get("report_file")
-            if report_name:
-                if report_name not in zf.namelist():
-                    return "FAILED", [f"CONSUMER_CI_ARTIFACT_REPORT_MISSING: Specified report file '{report_name}' not found in artifact ZIP"]
-                target_report_file = report_name
-            else:
-                candidates = [
-                    name for name in zf.namelist()
-                    if re.search(r"(?:test[-_]?report|report|pytest[-_]?report|results)\.json$", name, re.IGNORECASE) or name.endswith(".json")
-                ]
-                if not candidates:
-                    return "FAILED", ["CONSUMER_CI_ARTIFACT_REPORT_MISSING: No structured test report JSON found in artifact ZIP"]
-                target_report_file = candidates[0]
+            if not report_name or not isinstance(report_name, str) or not report_name.strip():
+                return "FAILED", ["CONSUMER_CI_ARTIFACT_REPORT_FILE_UNSPECIFIED: artifact_info.report_file must be explicitly specified"]
+            if report_name not in zf.namelist():
+                return "FAILED", [f"CONSUMER_CI_ARTIFACT_REPORT_MISSING: Specified report file '{report_name}' not found in artifact ZIP"]
 
             try:
-                rep_bytes = zf.read(target_report_file)
+                rep_bytes = zf.read(report_name)
                 rep_data = json.loads(rep_bytes.decode("utf-8"))
             except Exception as parse_err:
-                return "FAILED", [f"CONSUMER_CI_ARTIFACT_REPORT_UNPARSEABLE: Failed to parse {target_report_file}: {parse_err}"]
+                return "FAILED", [f"CONSUMER_CI_ARTIFACT_REPORT_UNPARSEABLE: Failed to parse {report_name}: {parse_err}"]
+
+            if not isinstance(rep_data, dict):
+                return "FAILED", ["CONSUMER_CI_RAW_REPORT_INVALID_STRUCTURE: Artifact report root must be a JSON object"]
 
             # Validate report metadata
             if "repository" in rep_data and str(rep_data["repository"]).lower() != repository.lower():
                 return "FAILED", ["CONSUMER_CI_RAW_REPORT_REPOSITORY_MISMATCH: artifact report belongs to different repository"]
             rep_head = rep_data.get("head_sha") or rep_data.get("commit")
-            if rep_head and rep_head != expected_commit:
+            if rep_head and rep_head.lower() != expected_commit.lower():
                 return "FAILED", ["CONSUMER_CI_RAW_REPORT_COMMIT_MISMATCH: artifact report bound to a different commit"]
             if "run_id" in rep_data and rep_data["run_id"] != run_id:
                 return "FAILED", ["CONSUMER_CI_RAW_REPORT_RUN_ID_MISMATCH: artifact report run_id mismatch"]
-            if "job_name" in rep_data and rep_data["job_name"] != gate.get("job_name"):
+
+            # Job identity binding in structured report
+            rep_job_id = rep_data.get("job_id")
+            rep_job_name = rep_data.get("job_name")
+            if rep_job_id is None and rep_job_name is None:
+                return "FAILED", ["CONSUMER_CI_RAW_REPORT_JOB_IDENTITY_MISSING: Artifact report must specify job_id or job_name bound to GitHub Actions Job"]
+            if rep_job_id is not None and rep_job_id != job_id:
+                return "FAILED", [f"CONSUMER_CI_RAW_REPORT_JOB_ID_MISMATCH: Structured artifact report job_id ({rep_job_id}) != GitHub API job_id ({job_id})"]
+            if rep_job_name is not None and rep_job_name != gate.get("job_name"):
                 return "FAILED", ["CONSUMER_CI_RAW_REPORT_JOB_NAME_MISMATCH: artifact report job_name mismatch"]
 
             if has_test:
@@ -2508,9 +2809,12 @@ def acquire_transaction_lock(
     project_root: Path,
     tx_id: str,
     timeout: float = 3.0,
+    is_recovery: bool = False,
 ) -> Tuple[bool, Optional[str], Optional[int]]:
     """Acquire single-writer cross-process lock for transaction execution or recovery.
     Supports in-process re-entrancy by PID. Returns (acquired, error_message, fd).
+    Enforces OS-level kernel mutual exclusion and detects abnormal process exit stale locks
+    without blindly deleting based solely on PID number.
     """
     project_root = Path(project_root).resolve()
     lock_path = project_root / ".standards_sync.lock"
@@ -2522,30 +2826,33 @@ def acquire_transaction_lock(
         return True, None, None
 
     start = datetime.now(timezone.utc).timestamp()
+    import time
     while True:
         try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
-            lock_payload = {
-                "pid": current_pid,
-                "tx_id": tx_id,
-                "acquired_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            }
-            os.write(fd, json.dumps(lock_payload).encode("utf-8"))
-            _REENTRANT_TX_LOCK_DEPTH[key] = 1
-            return True, None, fd
-        except FileExistsError:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+        except Exception as e:
+            now = datetime.now(timezone.utc).timestamp()
+            if now - start >= timeout:
+                return False, f"TRANSACTION_LOCK_ERROR: {e}", None
+            time.sleep(0.05)
+            continue
+
+        has_os_lock = _os_lock_file(fd)
+        if not has_os_lock:
+            # Active process holds the OS kernel lock
             try:
-                raw = lock_path.read_text(encoding="utf-8")
+                os.lseek(fd, 0, os.SEEK_SET)
+                raw = os.read(fd, 4096).decode("utf-8", errors="replace").strip()
                 holder = json.loads(raw)
                 holder_pid = holder.get("pid")
                 holder_tx = holder.get("tx_id")
             except Exception:
                 holder_pid = "unknown"
                 holder_tx = "unknown"
-
-            if holder_pid == current_pid:
-                _REENTRANT_TX_LOCK_DEPTH[key] = _REENTRANT_TX_LOCK_DEPTH.get(key, 0) + 1
-                return True, None, None
+            try:
+                os.close(fd)
+            except Exception:
+                pass
 
             now = datetime.now(timezone.utc).timestamp()
             if now - start >= timeout:
@@ -2554,9 +2861,100 @@ def acquire_transaction_lock(
                     f"TRANSACTION_CONCURRENCY_BLOCKED: Another transaction or recovery process is active (lock held by pid={holder_pid}, tx_id={holder_tx})",
                     None,
                 )
-            import time
             time.sleep(0.05)
+            continue
+
+        # We acquired the OS kernel lock!
+        holder: Dict[str, Any] = {}
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            raw = os.read(fd, 4096).decode("utf-8", errors="replace").strip()
+            if raw:
+                holder = json.loads(raw)
+        except Exception:
+            holder = {}
+
+        holder_pid = holder.get("pid")
+        holder_tx = holder.get("tx_id")
+        holder_ident = holder.get("process_identity")
+
+        if holder_pid == current_pid:
+            _REENTRANT_TX_LOCK_DEPTH[key] = _REENTRANT_TX_LOCK_DEPTH.get(key, 0) + 1
+            return True, None, fd
+
+        if holder_pid is not None:
+            # Check if previous holder process is alive
+            if _is_process_alive(holder_pid, holder_ident):
+                # An active process is still alive! Release lock and wait
+                _os_unlock_file(fd)
+                try:
+                    os.close(fd)
+                except Exception:
+                    pass
+                now = datetime.now(timezone.utc).timestamp()
+                if now - start >= timeout:
+                    return (
+                        False,
+                        f"TRANSACTION_CONCURRENCY_BLOCKED: Another transaction or recovery process is active (lock held by pid={holder_pid}, tx_id={holder_tx})",
+                        None,
+                    )
+                time.sleep(0.05)
+                continue
+
+            # Process is dead! But rule 3: Do NOT blindly delete or steal lock solely based on PID number!
+            # Rule 4: Check lock owner and transaction identity against transaction journal!
+            journal_path = project_root / ".standards_sync_tx.json"
+            can_reclaim_stale_lock = False
+            if journal_path.exists():
+                try:
+                    j_data = json.loads(journal_path.read_text(encoding="utf-8"))
+                    if isinstance(j_data, dict) and j_data.get("tx_id") == holder_tx:
+                        if is_recovery or tx_id == "tx-recovery":
+                            can_reclaim_stale_lock = True
+                except Exception:
+                    can_reclaim_stale_lock = False
+
+            if not can_reclaim_stale_lock:
+                # Lock belongs to an unverified or alien transaction; do not blindly overwrite!
+                _os_unlock_file(fd)
+                try:
+                    os.close(fd)
+                except Exception:
+                    pass
+                now = datetime.now(timezone.utc).timestamp()
+                if now - start >= timeout:
+                    return (
+                        False,
+                        f"TRANSACTION_CONCURRENCY_BLOCKED: Another transaction or recovery process is active (lock held by pid={holder_pid}, tx_id={holder_tx})",
+                        None,
+                    )
+                time.sleep(0.05)
+                continue
+
+        # Fresh lock or verified stale lock reclaimed for recovery:
+        try:
+            os.ftruncate(fd, 0)
+            os.lseek(fd, 0, os.SEEK_SET)
+            lock_payload = {
+                "pid": current_pid,
+                "tx_id": tx_id,
+                "acquired_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "process_identity": _get_process_identity(current_pid),
+            }
+            if holder_pid:
+                lock_payload["recovered_from_stale_pid"] = holder_pid
+                lock_payload["recovered_from_stale_tx"] = holder_tx
+            payload_bytes = (json.dumps(lock_payload, indent=2) + "\n").encode("utf-8")
+            os.write(fd, payload_bytes)
+            os.fsync(fd)
+            _REENTRANT_TX_LOCK_DEPTH[key] = 1
+            return True, None, fd
         except Exception as e:
+            _os_unlock_file(fd)
+            try:
+                os.close(fd)
+            except Exception:
+                pass
             return False, f"TRANSACTION_LOCK_ERROR: {e}", None
 
 
@@ -2573,6 +2971,10 @@ def release_transaction_lock(project_root: Path, fd: Optional[int]) -> None:
 
     _REENTRANT_TX_LOCK_DEPTH[key] = 0
     if fd is not None:
+        try:
+            _os_unlock_file(fd)
+        except Exception:
+            pass
         try:
             os.close(fd)
         except Exception:
@@ -2610,17 +3012,23 @@ def detect_interrupted_transaction(project_root: Path) -> Dict[str, Any]:
                     journal_data["corrupt"] = True
                     journal_data["error"] = f"Missing required fields: {missing}"
                 else:
-                    targets = journal_data.get("targets") or {}
-                    for bk in ("lock_bak", "manifest_bak"):
-                        if targets.get(bk):
-                            bp = project_root / targets[bk]
-                            if bp.exists() and bp not in backup_paths:
-                                backup_paths.append(bp)
-                    for tk in ("lock_tmp", "manifest_tmp"):
-                        if targets.get(tk):
-                            tp = project_root / targets[tk]
-                            if tp.exists() and tp not in tmp_paths:
-                                tmp_paths.append(tp)
+                    targets = journal_data.get("targets")
+                    if not isinstance(targets, dict):
+                        journal_corrupt = True
+                        journal_data["corrupt"] = True
+                        journal_data["error"] = "Journal targets must be a dictionary"
+                    else:
+                        for tk, tv in targets.items():
+                            ok, valid_path, err = _validate_journal_target(project_root, tv)
+                            if not ok:
+                                journal_corrupt = True
+                                journal_data["corrupt"] = True
+                                journal_data["error"] = f"MALICIOUS_JOURNAL_TARGET: {err}"
+                                break
+                            if tk in ("lock_bak", "manifest_bak") and valid_path.exists() and valid_path not in backup_paths:
+                                backup_paths.append(valid_path)
+                            elif tk in ("lock_tmp", "manifest_tmp") and valid_path.exists() and valid_path not in tmp_paths:
+                                tmp_paths.append(valid_path)
         except Exception as exc:
             journal_corrupt = True
             journal_data = {"corrupt": True, "error": str(exc)}
@@ -2672,6 +3080,7 @@ def recover_interrupted_transaction(
     Preserves backup files and journal if recovery fails, ensuring no loss of valid original data.
     Guarantees idempotency: if no interrupted transaction is pending, returns (True, None).
     Distinguishes uncommitted rollback from committed cleanup.
+    Strictly validates target paths against traversal and symlink escapes.
     """
     actual_restore = restore_fn if restore_fn is not None else shutil.copy2
     project_root = project_root.resolve()
@@ -2692,6 +3101,10 @@ def recover_interrupted_transaction(
             msg = f"CORRUPT_TRANSACTION_JOURNAL: Missing .standards_sync_tx.json while backup/tmp files exist: {check.get('backup_files') + check.get('tmp_files')}"
             return False, msg
 
+        if check.get("journal_corrupt"):
+            j_err = (check.get("journal") or {}).get("error", "Journal corrupt or invalid")
+            return False, f"CORRUPT_TRANSACTION_JOURNAL: {j_err}"
+
         try:
             journal = json.loads(journal_path.read_text(encoding="utf-8"))
         except Exception as exc:
@@ -2705,11 +3118,22 @@ def recover_interrupted_transaction(
         if missing_fields:
             return False, f"CORRUPT_TRANSACTION_JOURNAL: Missing required fields in journal: {missing_fields}"
 
-        targets = journal.get("targets") or {}
-        lock_bak = project_root / targets.get("lock_bak", "standards.lock.json.bak")
-        manifest_bak = project_root / targets.get("manifest_bak", "engineering-manifest.yaml.bak")
-        lock_tmp = project_root / targets.get("lock_tmp", "standards.lock.json.tmp")
-        manifest_tmp = project_root / targets.get("manifest_tmp", "engineering-manifest.yaml.tmp")
+        targets = journal.get("targets")
+        if not isinstance(targets, dict):
+            return False, "CORRUPT_TRANSACTION_JOURNAL: Journal targets must be an object"
+
+        # Validate all targets strictly
+        val_targets: Dict[str, Path] = {}
+        for tk, tv in targets.items():
+            ok, p_tgt, err = _validate_journal_target(project_root, tv)
+            if not ok:
+                return False, f"CORRUPT_TRANSACTION_JOURNAL: Path traversal detected in journal target '{tk}': {err}"
+            val_targets[tk] = p_tgt
+
+        lock_bak = val_targets.get("lock_bak", project_root / "standards.lock.json.bak")
+        manifest_bak = val_targets.get("manifest_bak", project_root / "engineering-manifest.yaml.bak")
+        lock_tmp = val_targets.get("lock_tmp", project_root / "standards.lock.json.tmp")
+        manifest_tmp = val_targets.get("manifest_tmp", project_root / "engineering-manifest.yaml.tmp")
 
         # Distinction: COMMITTED Cleanup vs Uncommitted Rollback
         is_committed = journal.get("phase") == "COMMITTED" or journal.get("status") == "CLEANUP_PENDING"

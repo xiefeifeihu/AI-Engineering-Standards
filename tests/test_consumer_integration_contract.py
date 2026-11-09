@@ -1556,5 +1556,262 @@ standards_validation:
         self.assertTrue(any("CONSUMER_CI_RAW_REPORT_UNPARSEABLE" in e for e in errors), errors)
 
 
+    def test_artifact_redirect_blocks_non_https(self) -> None:
+        import urllib.request, urllib.error
+        from tools.standards_sync.core import SafeGitHubRedirectHandler
+        handler = SafeGitHubRedirectHandler(initial_host="api.github.com")
+        req = urllib.request.Request("https://api.github.com/download", headers={"Authorization": "Bearer secret"})
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            handler.redirect_request(req, None, 302, "Found", {}, "http://pipelines.actions.githubusercontent.com/file.zip")
+        self.assertIn("INSECURE_REDIRECT", str(ctx.exception))
+
+    def test_artifact_redirect_blocks_untrusted_host(self) -> None:
+        import urllib.request, urllib.error
+        from tools.standards_sync.core import SafeGitHubRedirectHandler
+        handler = SafeGitHubRedirectHandler(initial_host="api.github.com")
+        req = urllib.request.Request("https://api.github.com/download", headers={"Authorization": "Bearer secret"})
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            handler.redirect_request(req, None, 302, "Found", {}, "https://attacker.evil.com/leak.zip")
+        self.assertIn("UNTRUSTED_REDIRECT_HOST", str(ctx.exception))
+
+    def test_artifact_redirect_strips_authorization_on_cross_origin(self) -> None:
+        import urllib.request, urllib.error
+        from tools.standards_sync.core import SafeGitHubRedirectHandler
+        handler = SafeGitHubRedirectHandler(initial_host="api.github.com")
+        req = urllib.request.Request("https://api.github.com/download", headers={"Authorization": "Bearer secret_token_12345"})
+        new_req = handler.redirect_request(
+            req, None, 302, "Found", {}, "https://pipelines.actions.githubusercontent.com/artifact.zip"
+        )
+        self.assertIsNotNone(new_req)
+        self.assertFalse(new_req.has_header("Authorization"))
+
+    def test_artifact_report_missing_job_identity_fails(self) -> None:
+        from unittest.mock import patch
+        import io, zipfile, hashlib
+        commit = "a" * 40
+        repository = "example/consumer"
+        rep_bytes = json.dumps({
+            "repository": repository,
+            "commit": commit,
+            "run_id": 12345,
+            "summary": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "test_errors": 0},
+        }).encode("utf-8")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("report.json", rep_bytes)
+        z_bytes = buf.getvalue()
+        z_sha = hashlib.sha256(z_bytes).hexdigest()
+
+        gate = {
+            "status": "PASS", "command": "pytest", "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345, "job_name": "Unit Tests", "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": {"tests_collected": 5, "tests_passed": 5},
+            "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0},
+            "artifact_info": {
+                "artifact_name": "test-report", "artifact_id": 100, "run_id": 12345,
+                "head_sha": commit, "artifact_sha256": f"sha256:{z_sha}", "report_file": "report.json",
+            },
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        artifacts_payload = {"artifacts": [{"id": 100, "name": "test-report", "workflow_run": {"id": 12345}, "expired": False}]}
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(artifacts_payload), FakeResponse(z_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_RAW_REPORT_JOB_IDENTITY_MISSING" in e for e in errors), errors)
+
+    def test_artifact_report_job_id_mismatch_fails(self) -> None:
+        from unittest.mock import patch
+        import io, zipfile, hashlib
+        commit = "a" * 40
+        repository = "example/consumer"
+        rep_bytes = json.dumps({
+            "repository": repository,
+            "commit": commit,
+            "run_id": 12345,
+            "job_id": 99999,
+            "job_name": "Unit Tests",
+            "summary": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "test_errors": 0},
+        }).encode("utf-8")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("report.json", rep_bytes)
+        z_bytes = buf.getvalue()
+        z_sha = hashlib.sha256(z_bytes).hexdigest()
+
+        gate = {
+            "status": "PASS", "command": "pytest", "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345, "job_name": "Unit Tests", "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": {"tests_collected": 5, "tests_passed": 5},
+            "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0},
+            "artifact_info": {
+                "artifact_name": "test-report", "artifact_id": 100, "run_id": 12345,
+                "head_sha": commit, "artifact_sha256": f"sha256:{z_sha}", "report_file": "report.json",
+            },
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        artifacts_payload = {"artifacts": [{"id": 100, "name": "test-report", "workflow_run": {"id": 12345}, "expired": False}]}
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(artifacts_payload), FakeResponse(z_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_RAW_REPORT_JOB_ID_MISMATCH" in e for e in errors), errors)
+
+    def test_consumer_ci_gate_job_id_mismatch_fails(self) -> None:
+        from unittest.mock import patch
+        commit = "a" * 40
+        repository = "example/consumer"
+        gate = {
+            "status": "PASS", "command": "pytest", "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345, "job_name": "Unit Tests", "job_id": 8888, "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": {"tests_collected": 5, "tests_passed": 5},
+            "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0},
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_JOB_ID_MISMATCH" in e for e in errors), errors)
+
+    def test_artifact_missing_report_file_fails(self) -> None:
+        from unittest.mock import patch
+        import io, zipfile, hashlib
+        commit = "a" * 40
+        repository = "example/consumer"
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("unrelated.txt", b"hello")
+        z_bytes = buf.getvalue()
+        z_sha = hashlib.sha256(z_bytes).hexdigest()
+        gate = {
+            "status": "PASS", "command": "pytest", "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345, "job_name": "Unit Tests", "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": {"tests_collected": 5, "tests_passed": 5},
+            "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0},
+            "artifact_info": {
+                "artifact_name": "test-report", "artifact_id": 100, "run_id": 12345,
+                "head_sha": commit, "artifact_sha256": f"sha256:{z_sha}",
+            },
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        artifacts_payload = {"artifacts": [{"id": 100, "name": "test-report", "workflow_run": {"id": 12345}, "expired": False}]}
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(artifacts_payload), FakeResponse(z_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_ARTIFACT_REPORT_FILE_UNSPECIFIED" in e for e in errors), errors)
+
+    def test_artifact_zip_size_exceeded_fails(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import MAX_ARTIFACT_ZIP_BYTES
+        commit = "a" * 40
+        repository = "example/consumer"
+        oversized_bytes = b"X" * (MAX_ARTIFACT_ZIP_BYTES + 10)
+        gate = {
+            "status": "PASS", "command": "pytest", "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345, "job_name": "Unit Tests", "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": {"tests_collected": 5, "tests_passed": 5},
+            "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0},
+            "artifact_info": {
+                "artifact_name": "test-report", "artifact_id": 100, "run_id": 12345,
+                "head_sha": commit, "artifact_sha256": "a" * 64, "report_file": "report.json",
+            },
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        artifacts_payload = {"artifacts": [{"id": 100, "name": "test-report", "workflow_run": {"id": 12345}, "expired": False}]}
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(artifacts_payload), FakeResponse(oversized_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_ARTIFACT_SIZE_EXCEEDED" in e for e in errors), errors)
+
+    def test_artifact_report_size_exceeded_fails(self) -> None:
+        from unittest.mock import patch
+        import io, zipfile, hashlib
+        from tools.standards_sync.core import MAX_REPORT_JSON_BYTES
+        commit = "a" * 40
+        repository = "example/consumer"
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("report.json", b" " * (MAX_REPORT_JSON_BYTES + 100))
+        z_bytes = buf.getvalue()
+        z_sha = hashlib.sha256(z_bytes).hexdigest()
+
+        gate = {
+            "status": "PASS", "command": "pytest", "workflow_path": ".github/workflows/ci.yml",
+            "run_id": 12345, "job_name": "Unit Tests", "head_sha": commit,
+            "evidence_ref": f"https://github.com/{repository}/actions/runs/12345",
+            "raw_report": {"tests_collected": 5, "tests_passed": 5},
+            "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0},
+            "artifact_info": {
+                "artifact_name": "test-report", "artifact_id": 100, "run_id": 12345,
+                "head_sha": commit, "artifact_sha256": f"sha256:{z_sha}", "report_file": "report.json",
+            },
+        }
+        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        artifacts_payload = {"artifacts": [{"id": 100, "name": "test-report", "workflow_run": {"id": 12345}, "expired": False}]}
+        with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(artifacts_payload), FakeResponse(z_bytes)]):
+            status, errors = verify_consumer_ci_gate(repository, gate, commit)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_ARTIFACT_REPORT_SIZE_EXCEEDED" in e for e in errors), errors)
+
+    def test_log_parser_conflicting_multiple_summaries_returns_failed(self) -> None:
+        from tools.standards_sync.core import parse_runner_test_log
+        commit = "a" * 40
+        log = "Ran 5 tests in 0.1s\n\nOK\ncollected 10 items\n=== 8 passed, 2 failed in 0.5s ==="
+        status, errors = parse_runner_test_log(log, commit, 5, 5)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_RAW_LOG_CONFLICTING_SUMMARIES" in e for e in errors), errors)
+
+    def test_log_parser_nonzero_exit_code_returns_failed(self) -> None:
+        from tools.standards_sync.core import parse_runner_test_log
+        commit = "a" * 40
+        log = "Ran 5 tests in 0.1s\n\nOK\nProcess completed with exit code 1"
+        status, errors = parse_runner_test_log(log, commit, 5, 5)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_RAW_LOG_CONTAINS_FAILURE" in e for e in errors), errors)
+
+
+    def test_log_parser_unrelated_ok_and_missing_unittest_summary_returns_not_verifiable(self) -> None:
+        from tools.standards_sync.core import parse_runner_test_log
+        commit = "a" * 40
+        # Step log has an unrelated OK, and unittest printed Ran 10 tests, but process crashed before outcome summary
+        log = "[Profile OK] environment initialized\nRan 10 tests in 0.234s\n"
+        status, errors = parse_runner_test_log(log, commit, 10, 10)
+        self.assertEqual(status, "NOT_VERIFIABLE")
+        self.assertTrue(any("CONSUMER_CI_RAW_REPORT_UNPARSEABLE" in e for e in errors), errors)
+
+    def test_log_parser_pytest_errors_returns_failed(self) -> None:
+        from tools.standards_sync.core import parse_runner_test_log
+        commit = "a" * 40
+        log = "collected 8 items\n=== 5 passed, 1 skipped, 2 errors in 0.45s ==="
+        status, errors = parse_runner_test_log(log, commit, 5, 8)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_GATE_HAS_FAILED_TESTS" in e for e in errors), errors)
+
+    def test_log_parser_truncated_log_returns_not_verifiable(self) -> None:
+        from tools.standards_sync.core import parse_runner_test_log
+        commit = "a" * 40
+        log = "pytest starting...\ncollected 12 items\ntest_core.py ..."
+        status, errors = parse_runner_test_log(log, commit, 12, 12)
+        self.assertEqual(status, "NOT_VERIFIABLE")
+        self.assertTrue(any("CONSUMER_CI_RAW_REPORT_UNPARSEABLE" in e for e in errors), errors)
+
+    def test_log_parser_exit_code_inconsistent_returns_failed(self) -> None:
+        from tools.standards_sync.core import parse_runner_test_log
+        commit = "a" * 40
+        log = "Ran 10 tests in 0.123s\n\nOK\nExit code 2\n"
+        status, errors = parse_runner_test_log(log, commit, 10, 10)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONSUMER_CI_RAW_LOG_CONTAINS_FAILURE" in e for e in errors), errors)
+
+
 if __name__ == "__main__":
     unittest.main()

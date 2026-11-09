@@ -41,6 +41,8 @@ from tools.standards_sync.core import (
     parse_semver,
     prepare_upgrade_candidate,
     promote_upgrade,
+    acquire_transaction_lock,
+    release_transaction_lock,
     detect_interrupted_transaction,
     execute_transactional_two_file_update,
     recover_interrupted_transaction,
@@ -2082,6 +2084,169 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             ok2, err2 = recover_interrupted_transaction(dst)
             self.assertTrue(ok2)
             self.assertIsNone(err2)
+
+    def test_g22_real_multiprocess_lock_concurrency_blocked(self) -> None:
+        """P1-A: Real multi-process concurrency test. When parent process holds lock,
+        child process attempting to acquire lock is blocked by mutual exclusion.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            ok, err, fd = acquire_transaction_lock(dst, "parent-tx", timeout=1.0)
+            self.assertTrue(ok)
+            try:
+                child_code = f"""
+import sys
+from pathlib import Path
+sys.path.insert(0, r"{ROOT}")
+from tools.standards_sync.core import acquire_transaction_lock
+ok, err, fd = acquire_transaction_lock(Path(r"{dst}"), "child-tx", timeout=0.2)
+if not ok and "TRANSACTION_CONCURRENCY_BLOCKED" in str(err):
+    print("CHILD_BLOCKED_OK")
+else:
+    print(f"CHILD_UNEXPECTED: ok={{ok}}, err={{err}}")
+"""
+                res = subprocess.run([sys.executable, "-c", child_code], capture_output=True, text=True)
+                self.assertIn("CHILD_BLOCKED_OK", res.stdout.strip())
+            finally:
+                release_transaction_lock(dst, fd)
+
+    def test_g23_stale_lock_recovered_after_holder_process_killed(self) -> None:
+        """P1-A: Stale lock recovery when holder process is forcefully terminated (killed)
+        mid-transaction. recover_interrupted_transaction safely detects dead process PID,
+        checks transaction identity against journal, and restores backups.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            lock_path = dst / "standards.lock.json"
+            man_path = dst / "engineering-manifest.yaml"
+            lock_path.write_text(json.dumps({"version": "2.11.0", "tag": "v2.11.0", "peeled_commit": "abc"}), encoding="utf-8")
+            man_path.write_text("standards:\n  version: '2.11.0'\n  tag: 'v2.11.0'\n  peeled_commit: 'abc'\n", encoding="utf-8")
+
+            child_code = f"""
+import sys, time, json, hashlib
+from pathlib import Path
+sys.path.insert(0, r"{ROOT}")
+from tools.standards_sync.core import acquire_transaction_lock
+dst = Path(r"{dst}")
+ok, err, fd = acquire_transaction_lock(dst, "crashed-tx-001", timeout=1.0)
+if not ok:
+    print("LOCK_FAILED")
+    sys.exit(1)
+
+lock_bytes = (dst / "standards.lock.json").read_bytes()
+man_bytes = (dst / "engineering-manifest.yaml").read_bytes()
+(dst / "standards.lock.json.bak").write_bytes(lock_bytes)
+(dst / "engineering-manifest.yaml.bak").write_bytes(man_bytes)
+
+(dst / "standards.lock.json").write_text(json.dumps({{"version": "corrupted"}}), encoding="utf-8")
+
+journal = {{
+    "tx_id": "crashed-tx-001",
+    "phase": "PREPARED",
+    "operation_type": "UPDATE",
+    "status": "IN_PROGRESS",
+    "has_orig_lock": True,
+    "has_orig_manifest": True,
+    "orig_lock_sha256": hashlib.sha256(lock_bytes).hexdigest(),
+    "orig_manifest_sha256": hashlib.sha256(man_bytes).hexdigest(),
+    "backup_lock_sha256": hashlib.sha256(lock_bytes).hexdigest(),
+    "backup_manifest_sha256": hashlib.sha256(man_bytes).hexdigest(),
+    "targets": {{
+        "lock_path": "standards.lock.json",
+        "manifest_path": "engineering-manifest.yaml",
+        "lock_bak": "standards.lock.json.bak",
+        "manifest_bak": "engineering-manifest.yaml.bak",
+    }}
+}}
+(dst / ".standards_sync_tx.json").write_text(json.dumps(journal), encoding="utf-8")
+print("CHILD_READY", flush=True)
+while True:
+    time.sleep(1)
+"""
+            proc = subprocess.Popen([sys.executable, "-c", child_code], stdout=subprocess.PIPE, text=True)
+            ready_line = proc.stdout.readline()
+            self.assertEqual(ready_line.strip(), "CHILD_READY")
+
+            proc.kill()
+            proc.stdout.close()
+            proc.wait()
+
+            self.assertTrue((dst / ".standards_sync.lock").exists())
+
+            rec_ok, rec_err = recover_interrupted_transaction(dst)
+            self.assertTrue(rec_ok, f"Recovery failed: {rec_err}")
+
+            res_lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            self.assertEqual(res_lock.get("version"), "2.11.0")
+            self.assertFalse((dst / ".standards_sync_tx.json").exists())
+            self.assertFalse((dst / ".standards_sync.lock").exists())
+
+    def test_g24_journal_path_traversal_targets_blocked(self) -> None:
+        """P1-B: Fault injection for journal path traversal. Targets with '../' traversal
+        are detected and blocked with CORRUPT_TRANSACTION_JOURNAL.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            outside_file = dst.parent / "escape.txt"
+            outside_file.write_text("outside data", encoding="utf-8")
+            try:
+                journal = {
+                    "tx_id": "malicious-tx-001",
+                    "phase": "PREPARED",
+                    "operation_type": "UPDATE",
+                    "status": "IN_PROGRESS",
+                    "has_orig_lock": True,
+                    "has_orig_manifest": True,
+                    "targets": {
+                        "lock_path": "../escape.txt",
+                        "manifest_path": "engineering-manifest.yaml",
+                        "lock_bak": "../escape.txt",
+                        "manifest_bak": "engineering-manifest.yaml.bak",
+                    }
+                }
+                (dst / ".standards_sync_tx.json").write_text(json.dumps(journal), encoding="utf-8")
+                det = detect_interrupted_transaction(dst)
+                self.assertTrue(det.get("journal_corrupt"))
+                rec_ok, rec_err = recover_interrupted_transaction(dst)
+                self.assertFalse(rec_ok)
+                self.assertIn("CORRUPT_TRANSACTION_JOURNAL", str(rec_err))
+                self.assertIn("TARGET_TRAVERSAL", str(rec_err))
+                self.assertEqual(outside_file.read_text(encoding="utf-8"), "outside data")
+            finally:
+                if outside_file.exists():
+                    outside_file.unlink()
+
+    def test_g25_journal_absolute_and_drive_path_targets_blocked(self) -> None:
+        """P1-B: Fault injection for absolute, drive letter, and UNC paths in journal targets."""
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            bad_targets = [
+                "/etc/passwd",
+                "C:\\Windows\\system32\\cmd.exe",
+                "\\\\server\\share\\file.txt",
+            ]
+            for bad in bad_targets:
+                journal = {
+                    "tx_id": "bad-target-tx",
+                    "phase": "PREPARED",
+                    "operation_type": "UPDATE",
+                    "status": "IN_PROGRESS",
+                    "has_orig_lock": True,
+                    "has_orig_manifest": True,
+                    "targets": {
+                        "lock_path": bad,
+                        "manifest_path": "engineering-manifest.yaml",
+                        "lock_bak": "standards.lock.json.bak",
+                        "manifest_bak": "engineering-manifest.yaml.bak",
+                    }
+                }
+                (dst / ".standards_sync_tx.json").write_text(json.dumps(journal), encoding="utf-8")
+                det = detect_interrupted_transaction(dst)
+                self.assertTrue(det.get("journal_corrupt"))
+                rec_ok, rec_err = recover_interrupted_transaction(dst)
+                self.assertFalse(rec_ok)
+                self.assertIn("CORRUPT_TRANSACTION_JOURNAL", str(rec_err))
+
 
 if __name__ == "__main__":
     unittest.main()
