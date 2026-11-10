@@ -11,7 +11,7 @@ change_summary: "自动采集生成任务 Std-009-SINGLE-OWNER-GOVERNANCE-CLOSEO
 history_reference: null
 primary_entrypoint: false
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:40099695508a55a64a3e2e2bfc294e4c60ce767add0cf9f1af25f0048538e53f"
+content_sha256: "sha256:c4e1f1b6077a3ee3193b8f94711cfff6b03e0e219b203842bd46632b792dbcb8"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
@@ -48,13 +48,13 @@ CONTENT_SHA256=sha256:157f5e3ce04b697add66b2663ea124d386c250b64bf778d183b66475ce
 - **核验状态 (`verification_status`)**：`PASS`
 - **执行命令 (`command`)**：`python -m unittest discover -s tests -v`
 - **退出码 (`exit_code`)**：`0`
-- **通过 / 失败用例数**：`216 / 0`
+- **通过 / 失败用例数**：`215 / 0`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ## 4. 远端 CI 关联 (`ci_run`)
 - **Run ID (`run_id`)**：`42747292971`
 - **工作流 (`workflow`)**：`.github/workflows/standards-ci.yml`
-- **关联 Commit (`commit`)**：`9687f961b22df612c4311961e06fc1c1fd508c37`
+- **关联 Commit (`commit`)**：`c52f97a52c9080bc76e05684f996fd89653e1fa8`
 - **核验状态 (`verification_status`)**：`PASS`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 

@@ -4,9 +4,14 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 
 ## [Unreleased]
 
-> RELEASE_STATUS=CANDIDATE | PROPOSED_VERSION=3.0.0 | MAIN_MERGED=false | RELEASE_TAG_NOT_CREATED=true
+> RELEASE_STATUS=CANDIDATE | PROPOSED_VERSION=3.0.0 | MAIN_MERGED=false | RELEASE_TAG_NOT_CREATED=true | REISSUE_IN_PROGRESS=true
 >
-> 本节记录 PR #9 (包含 PR #8 候选变更与 Std-009 单人 Owner 治理及安全修正) 的候选变更。只有合入官方 main、main CI 通过并创建正式 Annotated Tag 后，才可迁移为带发布日期的 `## [3.0.0] - YYYY-MM-DD`。
+> **v3.0.0 一次性重发处理中 (PR #9)**：
+> - 当前分支处于 v3.0.0 一次性重发候选就绪状态，包含 PR #8 核心规范体系、Std-009 单人 Owner 治理机制收敛与 Std-010 事务路径安全加固。
+> - Std-009 单人 Owner 治理与 PR 合并审批契约已完整实现并进入候选。
+> - 远端旧 `v3.0.0` Annotated Tag 已按 Owner 授权在本地完整备份后清理（`OLD_TAG_DELETED=true`），正式 Tag 尚未重建。
+> - 保持 PR #9 Draft 状态，待 ChatGPT 独立审核给出建议结论并由唯一 Owner 批准合入 main 后，由 main CI 自动重建同名 Annotated Tag。
+> - 严禁提前标记 RELEASED 或在正式合入与 Tag 重建前变更发布状态。
 
 ### Added
 - **个人工程单人 Owner 治理机制与 PR 合并审批契约 (STD-034 §16.5 / D2=APPROVED / Std-009)**:

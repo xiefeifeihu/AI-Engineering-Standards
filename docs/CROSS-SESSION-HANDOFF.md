@@ -7,32 +7,32 @@ status: "IN_REVIEW"
 applies_to_release: "v3.0.0"
 last_updated: "2026-11-10"
 supersedes: null
-change_summary: "自动采集生成任务 Std-009-SINGLE-OWNER-GOVERNANCE-CLOSEOUT 跨会话交接文档 (STD-020 v2.0.0)"
+change_summary: "自动采集生成任务 Std-010-V3-0-0-REISSUE-FINAL-CLOSEOUT 跨会话交接文档 (STD-020 v2.0.0)"
 history_reference: null
 primary_entrypoint: true
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:40099695508a55a64a3e2e2bfc294e4c60ce767add0cf9f1af25f0048538e53f"
+content_sha256: "sha256:2a1cc4495d79082bcdf75a9870b3e80a65fe0bf678ae91780682ea7ec8b5dcbc"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
 
-# 跨会话工作交接 (Std-009-SINGLE-OWNER-GOVERNANCE-CLOSEOUT)
+# 跨会话工作交接 (Std-010-V3-0-0-REISSUE-FINAL-CLOSEOUT)
 
 ```text
-TASK_ID=Std-009-SINGLE-OWNER-GOVERNANCE-CLOSEOUT
+TASK_ID=Std-010-V3-0-0-REISSUE-FINAL-CLOSEOUT
 VERSION=v3.0.0
 HANDOFF_TYPE=DURABLE
-STATUS=COMPLETED
-COMMIT_HASH=c52f97a52c9080bc76e05684f996fd89653e1fa8
-CAPTURED_AT=2026-11-10T05:36:08Z
-CONTENT_SHA256=sha256:157f5e3ce04b697add66b2663ea124d386c250b64bf778d183b66475ced1812b
+STATUS=IN_PROGRESS
+COMMIT_HASH=60a03bc1ca03e03ad1e88f3036ec06bcbe748837
+CAPTURED_AT=2026-11-10T06:52:42Z
+CONTENT_SHA256=sha256:2ae9db610a07e26506db01ca82b5f0fa8a7f8bda37b59c5828e3ffa94ea33de7
 ```
 
 > **强制重核验约束 (`STD-020` §3)**：新会话接手时必须重新核验实时工程事实（Git、Standards 锁定、CI 与 Runtime），严禁仅凭旧聊天摘要推断当前状态。
 
 ## 1. 当前 Git 状态与分支身份 (`git_state`)
 - **当前分支 (`branch`)**：`feat/standards-baseline-sync-governance`
-- **本地 HEAD (`local_head`)**：`c52f97a52c9080bc76e05684f996fd89653e1fa8`
+- **本地 HEAD (`local_head`)**：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
 - **远端 main (`remote_head`)**：`1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b`
 - **工作区干净状态 (`worktree_clean`)**：`false`
 - **Git 状态摘要 (`status_summary`)**：`## feat/standards-baseline-sync-governance...origin/feat/standards-baseline-sync-governance`
@@ -52,29 +52,45 @@ CONTENT_SHA256=sha256:157f5e3ce04b697add66b2663ea124d386c250b64bf778d183b66475ce
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ## 4. 远端 CI 关联 (`ci_run`)
-- **Run ID (`run_id`)**：`42747292971`
+- **Run ID (`run_id`)**：`42763704495`
 - **工作流 (`workflow`)**：`.github/workflows/standards-ci.yml`
-- **关联 Commit (`commit`)**：`9687f961b22df612c4311961e06fc1c1fd508c37`
+- **关联 Commit (`commit`)**：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
 - **核验状态 (`verification_status`)**：`PASS`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)
 - **1. 基线源 Commit**：`9687f961b22df612c4311961e06fc1c1fd508c37`
 - **2. Git 快照观测时间**：`None`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
-- **3. 最近一次已验证 CI Commit**：`c52f97a52c9080bc76e05684f996fd89653e1fa8`（Run 42747292971 / 42760791748 双平台全绿，215 tests PASS）
-- **4. 当前候选 Commit**：`c52f97a52c9080bc76e05684f996fd89653e1fa8`
+- **3. 最近一次已验证 CI Commit**：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
+- **4. 当前候选 Commit**：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
 - **5. 当前待验证事项**：远端 GitHub Actions CI 双平台实测；严禁在推送前或运行完成前伪造 CI PASS
-- **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748（避免每次记录 CI 无限触发基线变更）
+- **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456（避免每次记录 CI 无限触发基线变更）
+
+### 4.2 v3.0.0 一次性重发发布与 Tag 状态追踪
+- **PR 编号 (`pr_number`)**：`9`
+- **PR 状态 (`pr_status`)**：`DRAFT`
+- **主干 HEAD (`main_head`)**：`1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b`
+- **旧 Tag 状态 (`old_tag`)**：`v3.0.0`
+- **旧 Tag 删除状态 (`old_tag_deleted`)**：`true`（已于远端删除，新 Tag 尚未创建）
+- **原 Tag Object SHA (`old_tag_object`)**：`325008af90a1e6dcc88ff714c9ec4e7ecee86ec6`
+- **原 Peeled Commit (`old_tag_peeled_commit`)**：`1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b`
+- **旧 Tag 本地 Bundle 备份 SHA256 (`old_tag_bundle_sha256`)**：`45bc3e455fc06b96a669ba9d7c44195f5dfb4e42e55397d795200942e434ebfc`
+- **发布流程状态 (`release_flow_status`)**：`IN_PROGRESS`（待 Owner 最终合入 PR #9 后由 main CI 自动重建同名 Tag）
 
 ## 5. 已完成事项 (`completed_items`)
 - [x] Single Owner Governance 个人工程单人 Owner 治理模型收敛并落地 (STD-034 §16.5)
 - [x] 废除多账号会签与评审死锁，确立 PR 合并模式 (GITHUB_PR_MERGE_EVENT) 作为 Owner 最终批准终态
 - [x] 升级 documentation-approval.schema.json 与 tools/validate_approval_contract.py 支持 PR 合并溯源校验
-- [x] 适配 tag 发现测试在远端已存在 v3.0.0 Tag 时的兼容性
-- [x] 本地全量单元测试与 GitHub Actions 远端双平台 (Ubuntu/Windows) CI 全绿通过 (PASS)
+- [x] 事务日志路径安全加固：严格拒绝 Journal 目标指向工程内部或外部符号链接，防止回滚篡改核心文件
+- [x] 新增符号链接路径阻断单元测试 test_g28，全量测试用例扩充至 216 项并全绿通过 (PASS)
+- [x] 完成旧 Tag v3.0.0 删除前完整对象与 Bundle 备份，核验旧 Tag 已从远端清理且新 Tag 待重建
+- [x] GitHub Actions 远端双平台 (Ubuntu/Windows) Push Run (42763704495) 与 PR Run (42763710456) 全绿通过 (PASS)
 
 ## 6. 未完成事项 (`pending_items`)
-- 暂无
+- [ ] 保持 PR #9 Draft 状态，等待 ChatGPT 独立审核给出建议结论
+- [ ] Owner 批准并执行 PR #9 合入 main (GITHUB_PR_MERGE_EVENT)
+- [ ] main CI 运行并通过，触发 publish-version-tag 自动重建正式 Annotated Tag v3.0.0
+- [ ] 核验新 Tag Object SHA、Peeled Commit、main HEAD、VERSION 和 main CI Run 一致性
 
 ## 7. 阻断项 (`blockers`)
 - 当前无 `BLOCK` 阻断项。
@@ -87,7 +103,7 @@ CONTENT_SHA256=sha256:157f5e3ce04b697add66b2663ea124d386c250b64bf778d183b66475ce
 ## 9. 待审批建议事项 (`proposed_items`)
 | 提案 ID | 提案内容 | 需 Owner 批准 | 状态 |
 |:---|:---|:---|:---|
-
+| `PR-MERGE-AND-TAG-REISSUE-001` | PR #9 合入 main 并由 main CI 自动重建 v3.0.0 Tag | `true` | `PROPOSED` |
 
 ## 10. 下一会话启动指引 (`next_session_guide`)
 ### 10.1 新会话必读顺序 (`mandatory_read_order`)

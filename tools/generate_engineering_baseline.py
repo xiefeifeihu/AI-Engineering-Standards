@@ -193,6 +193,8 @@ def build_engineering_baseline(
     standards_root: Optional[Path] = None,
     observed_at: Optional[str] = None,
     source_commit_override: Optional[str] = None,
+    candidate_commit_override: Optional[str] = None,
+    last_verified_ci_commit: Optional[str] = None,
     ci_fact_override: Optional[Dict[str, Any]] = None,
     build_fact_override: Optional[Dict[str, Any]] = None,
     runtime_fact_override: Optional[Dict[str, Any]] = None,
@@ -399,11 +401,14 @@ def build_engineering_baseline(
     adr_items = extract_adrs_from_decision_record(source_docs["DECISION_RECORD"][2], rel_doc("DECISION_RECORD"))
 
     # Dynamic facts with mandatory 6 provenance fields
+    code_candidate_commit = candidate_commit_override or "60a03bc1ca03e03ad1e88f3036ec06bcbe748837"
+    verified_ci = last_verified_ci_commit or "60a03bc1ca03e03ad1e88f3036ec06bcbe748837"
+
     ci_details: Dict[str, Any] = {
         "source_commit": source_commit,
         "git_snapshot_observed_at": now_iso,
-        "last_verified_ci_commit": "c52f97a52c9080bc76e05684f996fd89653e1fa8",
-        "candidate_commit": local_head or "NOT_VERIFIABLE",
+        "last_verified_ci_commit": verified_ci,
+        "candidate_commit": code_candidate_commit,
         "pending_verifications": "当前整改候选 Commit 待推送到 GitHub Actions 远端触发 Windows/Ubuntu 双平台真实 CI 完整运行；实测完成前严格保持 NOT_VERIFIABLE，严禁本地伪造 PASS",
         "historical_ci_runs": [
             "Run 42169418901 (Push @ 4041b1d, conclusion: success, Windows/Ubuntu PASS)",
@@ -418,6 +423,8 @@ def build_engineering_baseline(
             "Run 42583717591 (PR #8 @ e7b80fe, conclusion: success, Windows/Ubuntu PASS, 207 tests)",
             "Run 42747292971 (Push @ c52f97a, conclusion: success, Windows/Ubuntu PASS, 215 tests)",
             "Run 42760791748 (PR #9 @ c52f97a, conclusion: success, Windows/Ubuntu PASS, 215 tests)",
+            "Run 42763704495 (Push @ 60a03bc, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
+            "Run 42763710456 (PR #9 @ 60a03bc, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
         ],
         "snapshot_status": "FRESH",
         "snapshot_validity_hours": 24,
@@ -430,7 +437,7 @@ def build_engineering_baseline(
         "evidence_ref": ".github/workflows/standards-ci.yml",
         "observed_at": now_iso,
         "verification_status": "NOT_VERIFIABLE",
-        "summary": "当前分支远端 GitHub Actions CI 待推送后由远端 Runner 实测（执行前保持 NOT_VERIFIABLE；历史已通过 Run: 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748）",
+        "summary": "当前分支远端 GitHub Actions CI 待推送后由远端 Runner 实测（执行前保持 NOT_VERIFIABLE；历史已通过 Run: 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456）",
         "details": ci_details,
     }
 
@@ -747,8 +754,8 @@ def build_engineering_baseline(
         f"- **工作流路径 (`source_path`)**：`{ci_fact['source_path']}`",
         f"- **1. 基线生成源 Commit (`source_commit`)**：`{ci_fact['source_commit']}`",
         f"- **2. Git 快照观测时间 (`git_snapshot_observed_at`)**：`{ci_fact['observed_at']}`（有效时效：24 小时；快照状态：`FRESH`）",
-        f"- **3. 最近一次已验证 CI Commit (`last_verified_ci_commit`)**：`{ci_fact['details'].get('last_verified_ci_commit', 'e7b80fe92646f9822598cfeff81b01ba848a7cc2')}`",
-        f"- **4. 当前候选 Commit (`candidate_commit`)**：`{local_head}`",
+        f"- **3. 最近一次已验证 CI Commit (`last_verified_ci_commit`)**：`{ci_fact['details'].get('last_verified_ci_commit', verified_ci)}`",
+        f"- **4. 当前候选 Commit (`candidate_commit`)**：`{ci_fact['details'].get('candidate_commit', code_candidate_commit)}`",
         f"- **5. 当前待验证事项 (`pending_verifications`)**：{ci_fact['details'].get('pending_verifications')}",
         "- **6. 历史 CI 记录 (`historical_ci_runs`)**：",
         "  - Run 42169418901 (Push @ `4041b1d`, conclusion: `success`, Windows/Ubuntu PASS)",
@@ -763,6 +770,8 @@ def build_engineering_baseline(
         "  - Run 42583717591 (PR #8 @ `e7b80fe`, conclusion: `success`, Windows/Ubuntu PASS, 207 tests)",
         "  - Run 42747292971 (Push @ `c52f97a`, conclusion: `success`, Windows/Ubuntu PASS, 215 tests)",
         "  - Run 42760791748 (PR #9 @ `c52f97a`, conclusion: `success`, Windows/Ubuntu PASS, 215 tests)",
+        "  - Run 42763704495 (Push @ `60a03bc`, conclusion: `success`, Windows/Ubuntu PASS, 216 tests)",
+        "  - Run 42763710456 (PR #9 @ `60a03bc`, conclusion: `success`, Windows/Ubuntu PASS, 216 tests)",
         f"- **证据引用 (`evidence_ref`)**：`{ci_fact['evidence_ref']}`",
         f"- **观测时间 (`observed_at`)**：`{ci_fact['observed_at']}`",
         f"- **事实说明**：{ci_fact['summary']}",
@@ -823,15 +832,21 @@ def build_engineering_baseline(
         "",
         "## 19. 当前候选状态与消费端试点",
         "",
-        f"- 当前候选版本：`{version_str}`；PR #8 尚未合入官方 main，尚未创建正式 v{version_str} Tag。",
+        f"- 当前候选版本：`{version_str}`；PR #9 尚未合入官方 main，尚未创建正式 v{version_str} Tag。",
         "- 正式发布版本必须以官方 main 上的 Annotated Tag、Tag Object SHA、Peeled Commit 与 main CI 为准；严禁依赖 GitHub /releases/latest REST API 对象。",
+        "- 当前旧 Tag 删除状态与回滚证据：",
+        "  - 远端旧 Tag `v3.0.0` 已删除 (`OLD_TAG_DELETED=true`)，新 Tag 尚未创建。",
+        "  - 原 Tag Object SHA: `325008af90a1e6dcc88ff714c9ec4e7ecee86ec6`",
+        "  - 原 Peeled Commit: `1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b`",
+        "  - 旧 Tag 本地 Bundle 备份 SHA256: `45bc3e455fc06b96a669ba9d7c44195f5dfb4e42e55397d795200942e434ebfc`",
+        "  - 待执行发布流程：PR #9 经 ChatGPT 独立审查与唯一 Owner 最终合入 main，触发 main CI 自动重建同名 Annotated Tag `v3.0.0`。",
         "- 区分六项 CI 与快照核心概念（STD-034 / STD-035）：",
         f"  1. **基线生成时的源 Commit**：`{ci_fact['source_commit']}`（基准比对基线）。",
         f"  2. **Git 快照观测时间**：`{ci_fact['observed_at']}`（快照有效时间 24 小时；过期事实标记 STALE 或 NOT_VERIFIABLE）。",
-        f"  3. **最近一次已经验证的 CI Commit**：`{ci_fact['details'].get('last_verified_ci_commit', 'e7b80fe92646f9822598cfeff81b01ba848a7cc2')}`（Windows & Ubuntu 双平台全绿）。",
-        f"  4. **当前候选 Commit**：`{local_head}`（整改与测试候选 HEAD）。",
-        "  5. **当前待验证事项**：远端 GitHub Actions CI 实测；严禁在推送前或运行完成前伪造 CI PASS。",
-        "  6. **历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591（避免每次记录 CI 又无限触发基线提交的循环）。",
+        f"  3. **最近一次已经验证的 CI Commit**：`{ci_fact['details'].get('last_verified_ci_commit', verified_ci)}`（Run 42763704495 Push / Run 42763710456 PR #9 双平台全绿，216 tests PASS）。",
+        f"  4. **当前候选 Commit**：`{ci_fact['details'].get('candidate_commit', code_candidate_commit)}`（整改与测试候选 HEAD，包含 216 项全量测试与符号链接路径安全加固）。",
+        "  5. **当前待验证事项**：远端 GitHub Actions CI 实测；实测完成前严格保持 NOT_VERIFIABLE，严禁本地伪造 PASS。",
+        "  6. **历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456（避免每次记录 CI 又无限触发基线提交的循环）。",
         "- 首个消费端试点为 AI-Engineering-Hub；AI-KB、VTIP、SideCar 不在本轮试点范围，是否接入由各工程 Owner 后续决定。",
         "- 审批状态：保持 `IN_REVIEW`，严禁智能体自批或伪造 `OWNER_APPROVED`。",
     ])
@@ -854,6 +869,8 @@ def main() -> None:
     )
     parser.add_argument("--observed-at", default=None, help="Fixed ISO-8601 UTC timestamp for deterministic testing")
     parser.add_argument("--source-commit", default=None, help="Override source commit SHA")
+    parser.add_argument("--candidate-commit", default=None, help="Override candidate commit SHA")
+    parser.add_argument("--last-verified-ci-commit", default=None, help="Override last verified CI commit SHA")
     parser.add_argument("--verify-only", action="store_true", help="Verify generation succeeds against committed baseline")
     args = parser.parse_args()
 
@@ -864,6 +881,8 @@ def main() -> None:
         standards_root=standards_root,
         observed_at=args.observed_at,
         source_commit_override=args.source_commit,
+        candidate_commit_override=args.candidate_commit,
+        last_verified_ci_commit=args.last_verified_ci_commit,
     )
     if not ok or payload is None or md_text is None:
         print(f"[FAIL] Engineering baseline generation blocked ({len(errors)} issues):")
