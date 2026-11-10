@@ -1,0 +1,440 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/documentation-approval.schema.json",
+  "title": "Documentation & Standards Upgrade Independent Approval Evidence Schema (STD-034 / STD-035)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "repository",
+    "candidate_commit",
+    "content_sha256",
+    "decision_scope",
+    "reviewer_type",
+    "review_result",
+    "approval_status",
+    "approved_at",
+    "approval_reference",
+    "chatgpt_review"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "target_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "document_id": {
+      "type": "string",
+      "pattern": "^DOC-[A-Za-z0-9_-]+$"
+    },
+    "document_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "candidate_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^(sha256:)?[0-9a-f]{64}$"
+    },
+    "decision_scope": {
+      "type": "string",
+      "enum": [
+        "AI_APPROVABLE",
+        "OWNER_MANDATORY",
+        "OWNER_APPROVAL_REQUIRED",
+        "GATE_MAPPING",
+        "UNCERTAIN"
+      ],
+      "description": "UNCERTAIN defaults to requiring OWNER_APPROVED"
+    },
+    "approval_scope": {
+      "type": "string",
+      "enum": [
+        "AI_APPROVABLE",
+        "OWNER_MANDATORY",
+        "OWNER_APPROVAL_REQUIRED",
+        "GATE_MAPPING",
+        "UNCERTAIN"
+      ]
+    },
+    "change_categories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "BASELINE_VIEW_GENERATION",
+          "DOCUMENT_INDEX_UPDATE",
+          "APPROVED_FACT_SUMMARY",
+          "GIT_CI_EVIDENCE_REFRESH",
+          "LINK_AND_FORMAT_FIX",
+          "NON_SEMANTIC_DOC_CLEANUP",
+          "PRODUCT_SCOPE_CHANGE",
+          "ARCHITECTURE_DECISION_CHANGE",
+          "API_SEMANTICS_CHANGE",
+          "SECURITY_BOUNDARY_CHANGE",
+          "DATA_OWNERSHIP_CHANGE",
+          "FORMAL_STANDARDS_SEMANTIC_CHANGE",
+          "BREAKING_SCHEMA_CHANGE",
+          "IRREVERSIBLE_MIGRATION"
+        ]
+      }
+    },
+    "actor_role": {
+      "type": "string",
+      "enum": [
+        "CHATGPT_INDEPENDENT_REVIEWER",
+        "REPOSITORY_OWNER"
+      ],
+      "description": "Coding agents (CODING_AGENT) are strictly forbidden from issuing approval records"
+    },
+    "reviewer_type": {
+      "type": "string",
+      "enum": [
+        "CHATGPT_INDEPENDENT_REVIEW",
+        "OWNER"
+      ]
+    },
+    "review_result": {
+      "type": "string",
+      "enum": [
+        "AI_APPROVED",
+        "OWNER_APPROVAL_REQUIRED",
+        "OWNER_APPROVED",
+        "REQUEST_CHANGES",
+        "BLOCKED"
+      ]
+    },
+    "approval_status": {
+      "type": "string",
+      "enum": [
+        "AI_APPROVED",
+        "OWNER_APPROVAL_REQUIRED",
+        "OWNER_APPROVED",
+        "REJECTED",
+        "BLOCKED"
+      ]
+    },
+    "approved_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "approval_reference": {
+      "type": "string",
+      "minLength": 4
+    },
+    "chatgpt_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reviewer",
+        "reviewed_at",
+        "candidate_commit",
+        "content_sha256",
+        "review_result",
+        "review_reference",
+        "summary"
+      ],
+      "properties": {
+        "reviewer": {
+          "const": "ChatGPT"
+        },
+        "reviewed_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "candidate_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^(sha256:)?[0-9a-f]{64}$"
+        },
+        "review_result": {
+          "type": "string",
+          "enum": [
+            "AI_APPROVED",
+            "OWNER_APPROVAL_REQUIRED",
+            "REQUEST_CHANGES",
+            "BLOCKED"
+          ]
+        },
+        "review_reference": {
+          "type": "string",
+          "minLength": 4
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 5
+        },
+        "submitted_owner_decision_items": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 2
+          }
+        }
+      }
+    },
+    "owner_approval": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "approver",
+        "approval_channel",
+        "approved_at",
+        "candidate_commit",
+        "content_sha256",
+        "approved_decision_ids",
+        "approval_reference",
+        "decision"
+      ],
+      "properties": {
+        "approver": {
+          "type": "string",
+          "minLength": 2
+        },
+        "approval_channel": {
+          "type": "string",
+          "enum": [
+            "CHATGPT_CHAT_APPROVAL",
+            "CHATGPT_CONVERSATION",
+            "GITHUB_REVIEW_APPROVAL",
+            "SIGNED_OWNER_RECORD"
+          ]
+        },
+        "approved_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "candidate_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^(sha256:)?[0-9a-f]{64}$"
+        },
+        "approved_decision_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 2
+          }
+        },
+        "approval_reference": {
+          "type": "string",
+          "minLength": 4
+        },
+        "decision": {
+          "const": "OWNER_APPROVED"
+        }
+      }
+    },
+    "approval_provenance": {
+      "type": "string",
+      "enum": [
+        "VERIFIED",
+        "NOT_VERIFIABLE",
+        "FAILED"
+      ],
+      "description": "Indicates whether approval identity and provenance were cryptographically or API verified"
+    },
+    "approval_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "event_type",
+        "provenance_type",
+        "actor_identity",
+        "candidate_commit",
+        "content_sha256",
+        "approval_scope",
+        "event_timestamp"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "CHATGPT_INDEPENDENT_REVIEW_EVENT",
+            "OWNER_CHAT_APPROVAL_EVENT",
+            "GITHUB_PR_REVIEW_EVENT"
+          ]
+        },
+        "provenance_type": {
+          "type": "string",
+          "enum": [
+            "GITHUB_PR_REVIEW",
+            "TRUSTED_CHATGPT_EVENT",
+            "SIGNED_OWNER_EVENT",
+            "LOCAL_UNVERIFIED"
+          ]
+        },
+        "actor_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "identity_id",
+            "identity_type",
+            "service_provenance_ref"
+          ],
+          "properties": {
+            "identity_id": {
+              "type": "string",
+              "minLength": 2
+            },
+            "identity_type": {
+              "type": "string",
+              "enum": [
+                "GITHUB_USER",
+                "CHATGPT_SERVICE",
+                "OWNER_KEY",
+                "LOCAL_MOCK"
+              ]
+            },
+            "service_provenance_ref": {
+              "type": "string",
+              "minLength": 4
+            }
+          }
+        },
+        "candidate_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^(sha256:)?[0-9a-f]{64}$"
+        },
+        "approval_scope": {
+          "type": "string",
+          "enum": [
+            "AI_APPROVABLE",
+            "OWNER_MANDATORY",
+            "OWNER_APPROVAL_REQUIRED",
+            "GATE_MAPPING",
+            "UNCERTAIN"
+          ]
+        },
+        "event_timestamp": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "verification_status": {
+          "type": "string",
+          "enum": [
+            "VERIFIED",
+            "NOT_VERIFIABLE",
+            "FAILED"
+          ]
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision_scope": {
+            "enum": [
+              "OWNER_MANDATORY",
+              "UNCERTAIN"
+            ]
+          }
+        },
+        "required": [
+          "decision_scope"
+        ]
+      },
+      "then": {
+        "properties": {
+          "approval_status": {
+            "enum": [
+              "OWNER_APPROVAL_REQUIRED",
+              "OWNER_APPROVED",
+              "REJECTED",
+              "BLOCKED"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "approval_status": {
+            "const": "OWNER_APPROVED"
+          }
+        },
+        "required": [
+          "approval_status"
+        ]
+      },
+      "then": {
+        "required": [
+          "owner_approval"
+        ],
+        "properties": {
+          "owner_approval": {
+            "type": "object"
+          },
+          "reviewer_type": {
+            "const": "OWNER"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "approval_status": {
+            "const": "AI_APPROVED"
+          }
+        },
+        "required": [
+          "approval_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "decision_scope": {
+            "const": "AI_APPROVABLE"
+          },
+          "reviewer_type": {
+            "const": "CHATGPT_INDEPENDENT_REVIEW"
+          },
+          "review_result": {
+            "const": "AI_APPROVED"
+          }
+        }
+      }
+    }
+  ]
+}

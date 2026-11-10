@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://standards.local/engineering-manifest-schema.json",
-  "title": "Engineering Project Manifest",
-  "description": "Schema for machine-readable AI engineering project manifests defining services, endpoints, credentials, and health contracts.",
+  "$id": "https://standards.local/engineering-manifest.schema.json",
+  "title": "Engineering Project Manifest Schema (STD-001 Canonical)",
+  "description": "Canonical schema for machine-readable AI engineering project manifests defining project identity, standards lock binding, document applicability, services, endpoints, credentials, and health contracts.",
   "type": "object",
   "required": [
     "schema_version",
@@ -19,8 +19,71 @@
         "1.1.0",
         "1.1.3",
         "1.2",
-        "1.2.0"
+        "1.2.0",
+        "1.3",
+        "1.3.0",
+        "2.0",
+        "2.0.0"
       ]
+    },
+    "standards": {
+      "type": "object",
+      "description": "Standards version lock binding (must match standards.lock.json)",
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "standard_version": {
+          "type": "string",
+          "pattern": "^v?\\d+\\.\\d+\\.\\d+$"
+        },
+        "tag": {
+          "type": "string",
+          "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+        },
+        "release_tag": {
+          "type": "string",
+          "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+        },
+        "tag_object_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "peeled_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "standard_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        "lock_file": {
+          "type": "string"
+        }
+      }
+    },
+    "standards_version": {
+      "type": "string",
+      "pattern": "^v?\\d+\\.\\d+\\.\\d+$"
+    },
+    "standards_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "standards_tag": {
+      "type": "string",
+      "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+    },
+    "standards_tag_object": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "standards_lock_file": {
+      "type": "string"
     },
     "project": {
       "type": "object",
@@ -39,6 +102,17 @@
         },
         "purpose": {
           "type": "string"
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "deployment_kind": {
+          "type": "string",
+          "enum": [
+            "SERVICE",
+            "NON_RUNTIME_ARTIFACT"
+          ]
         },
         "repo_path_hints": {
           "type": "object",
@@ -86,6 +160,74 @@
             "MAINTAINER_RELEASE",
             "HIGH_ASSURANCE"
           ]
+        },
+        "approval_mode": {
+          "type": "string",
+          "enum": [
+            "OWNER_LOCAL_CONSENT",
+            "AUTO_AFTER_GREEN",
+            "MAINTAINER_APPROVAL",
+            "GITHUB_ENVIRONMENT_REVIEW",
+            "LOCAL_AUTHORIZED_KEY"
+          ]
+        },
+        "release_policy_reference": {
+          "type": "string"
+        },
+        "document_type_applicability": {
+          "type": "object",
+          "description": "Explicit applicability rules for STD-035 formal document types; non-applicable types require a justification",
+          "propertyNames": {
+            "enum": [
+              "PROJECT_BLUEPRINT",
+              "PRODUCT_BASELINE",
+              "SYSTEM_ARCHITECTURE",
+              "TECHNICAL_DESIGN",
+              "API_CONTRACT",
+              "PROTOTYPE_UX",
+              "TEST_ACCEPTANCE",
+              "RELEASE_OPERATIONS",
+              "DECISION_RECORD",
+              "CROSS_SESSION_HANDOFF",
+              "DOCUMENT_INDEX",
+              "ENGINEERING_BASELINE"
+            ]
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "applicable"
+            ],
+            "properties": {
+              "applicable": {
+                "type": "boolean"
+              },
+              "justification": {
+                "type": "string",
+                "minLength": 5
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "applicable": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "applicable"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "justification"
+                  ]
+                }
+              }
+            ]
+          }
         }
       }
     },
@@ -132,6 +274,22 @@
               "none"
             ]
           },
+          "lifecycle_policy": {
+            "type": "string",
+            "enum": [
+              "ALWAYS_ON",
+              "ON_DEMAND",
+              "MANUAL",
+              "EXTERNAL"
+            ]
+          },
+          "desired_state": {
+            "type": "string",
+            "enum": [
+              "RUNNING",
+              "STOPPED"
+            ]
+          },
           "endpoints": {
             "type": "object",
             "properties": {
@@ -168,12 +326,7 @@
               "endpoint": {
                 "type": "string"
               },
-              "expected_status": {
-                "type": [
-                  "integer",
-                  "string"
-                ]
-              },
+              "expected_status": {},
               "optional": {
                 "type": "boolean"
               },
@@ -183,68 +336,13 @@
             }
           },
           "config_references": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "label",
-                "path"
-              ],
-              "properties": {
-                "label": {
-                  "type": "string"
-                },
-                "path": {
-                  "type": "string"
-                },
-                "owner": {
-                  "type": "string"
-                }
-              }
-            }
+            "type": "array"
           },
           "credential_references": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "label"
-              ],
-              "properties": {
-                "label": {
-                  "type": "string"
-                },
-                "env_var": {
-                  "type": "string"
-                },
-                "file_ref": {
-                  "type": "string"
-                },
-                "status_detector": {
-                  "type": "string"
-                }
-              }
-            }
+            "type": "array"
           },
           "lifecycle_commands": {
-            "type": "object",
-            "properties": {
-              "start": {
-                "type": "string"
-              },
-              "stop": {
-                "type": "string"
-              },
-              "restart": {
-                "type": "string"
-              },
-              "status": {
-                "type": "string"
-              },
-              "logs": {
-                "type": "string"
-              }
-            }
+            "type": "object"
           },
           "tags": {
             "type": "array",
@@ -254,6 +352,126 @@
           }
         }
       }
+    },
+    "standards_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "required_ci_jobs"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "approval_evidence_ref": {
+          "type": "string",
+          "minLength": 3,
+          "description": "Owner approval evidence reference approving these required CI job mappings"
+        },
+        "approval_record": {
+          "type": "object",
+          "description": "Owner approval contract record approving these required CI job mappings"
+        },
+        "required_ci_jobs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "unit_tests",
+            "integration_tests",
+            "release_gates",
+            "security_scan",
+            "business_api"
+          ],
+          "properties": {
+            "unit_tests": {
+              "$ref": "#/$defs/consumer_ci_job"
+            },
+            "integration_tests": {
+              "$ref": "#/$defs/consumer_ci_job"
+            },
+            "release_gates": {
+              "$ref": "#/$defs/consumer_ci_job"
+            },
+            "security_scan": {
+              "$ref": "#/$defs/consumer_ci_job"
+            },
+            "business_api": {
+              "$ref": "#/$defs/consumer_ci_job"
+            },
+            "runtime_acceptance": {
+              "$ref": "#/$defs/consumer_ci_job"
+            }
+          }
+        }
+      }
     }
-  }
+  },
+  "$defs": {
+    "consumer_ci_job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workflow_path",
+        "job_name",
+        "command"
+      ],
+      "properties": {
+        "workflow_path": {
+          "type": "string",
+          "pattern": "^\\.github/workflows/.+\\.ya?ml$"
+        },
+        "job_name": {
+          "type": "string",
+          "minLength": 3
+        },
+        "command": {
+          "type": "string",
+          "minLength": 3
+        },
+        "min_tests_passed": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Owner-reviewed minimum number of passing tests required for this gate"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "project": {
+            "properties": {
+              "deployment_kind": {
+                "const": "SERVICE"
+              }
+            },
+            "required": [
+              "deployment_kind"
+            ]
+          }
+        },
+        "required": [
+          "project"
+        ]
+      },
+      "then": {
+        "properties": {
+          "standards_validation": {
+            "properties": {
+              "required_ci_jobs": {
+                "required": [
+                  "runtime_acceptance"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "standards_validation"
+        ]
+      }
+    }
+  ]
 }

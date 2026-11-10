@@ -8,12 +8,23 @@ on:
       - "fix/**"
       - "main"
       - "codex/**"
+  pull_request:
+    branches:
+      - "main"
   workflow_dispatch:
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
 
 jobs:
   validate-standards:
-    name: Validate JSON Schemas & Engineering Manifest
-    runs-on: ubuntu-latest
+    name: Validate Schemas, Docs, Baseline, Handoff, Sync & Approval Contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Standards Repository
         uses: actions/checkout@v4
@@ -28,19 +39,42 @@ jobs:
       - name: Install Validation Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install jsonschema pyyaml
+          pip install -r requirements-standards.txt
 
-      - name: Validate JSON Schemas
+      - name: Validate JSON Schemas & Samples
         run: |
           python tools/validate-schemas.py
 
+      - name: Validate Documentation Collection, Links, Anchors & 12 Templates (STD-035)
+        run: |
+          python tools/validate-documentation-collection.py --project-root . --schema schemas/documentation-metadata.schema.json --check-templates
+
+      - name: Verify Deterministic Engineering Baseline (STD-035)
+        run: |
+          python tools/generate_engineering_baseline.py --project-root . --verify-only
+
+      - name: Verify Automated Cross-Session Handoff Contract (STD-020)
+        run: |
+          python tools/generate_handoff.py --project-root . --task-id STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001 --verify-only
+
+      - name: Verify Official Standards Sync Tool & Lock Contract (STD-034)
+        run: |
+          python tools/standards_sync/cli.py verify-lock --project-root .
+          python tools/standards_sync/cli.py compare --from-ref v2.11.0 --to-ref WORKTREE
+
+      - name: Run Consumer Integration Contract Tests
+        run: |
+          python -m unittest tests.test_consumer_integration_contract -v
+
+      - name: Run Full Unit, Approval Authenticity & Compatibility Test Suite
+        run: |
+          python -m unittest discover -s tests -v
+
       - name: Verify VERSION Consistency
+        shell: bash
         run: |
           test -f VERSION
           echo "Verified Standards VERSION: $(cat VERSION)"
-
-      - name: Validate approval policy contracts
-        run: python -m unittest discover -s tests -v
 
   publish-version-tag:
     name: Publish Standards Tag after main CI
@@ -79,11 +113,19 @@ jobs:
           if [[ -n "$existing" ]]; then
             git fetch origin "refs/tags/$tag:refs/tags/$tag"
             peeled="$(git rev-parse "$tag^{commit}")"
-            if [[ "$peeled" != "$current_sha" ]]; then
-              echo "::error::Existing Tag points to another commit; no overwrite"
+            if [[ "$peeled" == "$current_sha" ]]; then
+              echo "Tag already verified: $tag -> $peeled"
+            elif git merge-base --is-ancestor "$peeled" "$current_sha"; then
+              echo "Existing immutable release Tag $tag -> $peeled is an ancestor of current main $current_sha."
+              echo "No new Tag is created because this VERSION has already been released."
+              echo "STANDARDS_TAG=$tag" >> "$GITHUB_STEP_SUMMARY"
+              echo "STANDARDS_PEELED_COMMIT=$peeled" >> "$GITHUB_STEP_SUMMARY"
+              echo "TAG_ACTION=SKIPPED_EXISTING_RELEASE" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            else
+              echo "::error::Existing immutable Tag is not on current main ancestry; refusing to overwrite or reuse it"
               exit 1
             fi
-            echo "Tag already verified: $tag -> $peeled"
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

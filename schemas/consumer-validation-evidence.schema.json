@@ -1,0 +1,437 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/consumer-validation-evidence.schema.json",
+  "title": "Consumer Standards Upgrade CI Evidence Contract",
+  "description": "Commit-bound evidence for consumer tests and gates required before Standards lock promotion.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "repository",
+    "project_id",
+    "deployment_kind",
+    "consumer_commit",
+    "standards_lock",
+    "generated_at",
+    "dimensions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "deployment_kind": {
+      "type": "string",
+      "enum": [
+        "SERVICE",
+        "NON_RUNTIME_ARTIFACT"
+      ]
+    },
+    "consumer_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "standards_lock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "version",
+        "tag",
+        "tag_object_sha",
+        "peeled_commit"
+      ],
+      "properties": {
+        "repository": {
+          "const": "xiefeifeihu/AI-Engineering-Standards"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "tag": {
+          "type": "string",
+          "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+        },
+        "tag_object_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "peeled_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit_tests",
+        "integration_tests",
+        "release_gates",
+        "security_scan",
+        "business_api",
+        "runtime_acceptance"
+      ],
+      "properties": {
+        "unit_tests": {
+          "$ref": "#/$defs/ci_gate"
+        },
+        "integration_tests": {
+          "$ref": "#/$defs/ci_gate"
+        },
+        "release_gates": {
+          "$ref": "#/$defs/ci_gate"
+        },
+        "security_scan": {
+          "$ref": "#/$defs/ci_gate"
+        },
+        "business_api": {
+          "$ref": "#/$defs/ci_gate"
+        },
+        "runtime_acceptance": {
+          "$ref": "#/$defs/runtime_gate"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "ci_gate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "command",
+            "workflow_path",
+            "run_id",
+            "job_name",
+            "head_sha",
+            "evidence_ref",
+            "raw_report"
+          ],
+          "properties": {
+            "status": {
+              "const": "PASS"
+            },
+            "command": {
+              "type": "string",
+              "minLength": 3
+            },
+            "workflow_path": {
+              "type": "string",
+              "pattern": "^\\.github/workflows/.+\\.ya?ml$"
+            },
+            "run_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "job_name": {
+              "type": "string",
+              "minLength": 3
+            },
+            "head_sha": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "evidence_ref": {
+              "type": "string",
+              "format": "uri"
+            },
+            "test_execution": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "tests_collected",
+                "tests_passed",
+                "tests_failed",
+                "tests_skipped",
+                "exit_code",
+                "evidence_log_ref"
+              ],
+              "properties": {
+                "tests_collected": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "tests_passed": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "tests_failed": {
+                  "type": "integer",
+                  "maximum": 0,
+                  "minimum": 0
+                },
+                "tests_skipped": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "exit_code": {
+                  "type": "integer",
+                  "const": 0
+                },
+                "evidence_log_ref": {
+                  "type": "string"
+                }
+              }
+            },
+            "raw_report": {
+              "description": "Raw execution report (dict or string log) from GitHub Actions runner",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "minProperties": 1
+                },
+                {
+                  "type": "string",
+                  "minLength": 1
+                }
+              ]
+            },
+            "artifact_info": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "artifact_name",
+                "artifact_id",
+                "run_id",
+                "head_sha",
+                "artifact_sha256"
+              ],
+              "properties": {
+                "artifact_name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "artifact_id": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "run_id": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "head_sha": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "artifact_sha256": {
+                  "type": "string",
+                  "pattern": "^(sha256:)?[0-9a-f]{64}$"
+                },
+                "report_file": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "scan_execution": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "scanner",
+                "targets_scanned",
+                "vulnerabilities_found",
+                "exit_code",
+                "evidence_log_ref"
+              ],
+              "properties": {
+                "scanner": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "targets_scanned": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "vulnerabilities_found": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 0
+                },
+                "exit_code": {
+                  "type": "integer",
+                  "const": 0
+                },
+                "evidence_log_ref": {
+                  "type": "string"
+                }
+              }
+            },
+            "release_execution": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "gate_name",
+                "checks_passed",
+                "checks_failed",
+                "exit_code",
+                "evidence_log_ref"
+              ],
+              "properties": {
+                "gate_name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "checks_passed": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "checks_failed": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 0
+                },
+                "exit_code": {
+                  "type": "integer",
+                  "const": 0
+                },
+                "evidence_log_ref": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "test_execution"
+              ]
+            },
+            {
+              "required": [
+                "scan_execution"
+              ]
+            },
+            {
+              "required": [
+                "release_execution"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "FAIL",
+                "BLOCK",
+                "NOT_RUN",
+                "NOT_VERIFIABLE"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 3
+            }
+          }
+        }
+      ]
+    },
+    "runtime_gate": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ci_gate"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason"
+          ],
+          "properties": {
+            "status": {
+              "const": "NOT_APPLICABLE"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 8
+            }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "deployment_kind": {
+            "const": "NON_RUNTIME_ARTIFACT"
+          }
+        },
+        "required": [
+          "deployment_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "properties": {
+              "runtime_acceptance": {
+                "properties": {
+                  "status": {
+                    "const": "NOT_APPLICABLE"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "deployment_kind": {
+            "const": "SERVICE"
+          }
+        },
+        "required": [
+          "deployment_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "properties": {
+              "runtime_acceptance": {
+                "properties": {
+                  "status": {
+                    "const": "PASS"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

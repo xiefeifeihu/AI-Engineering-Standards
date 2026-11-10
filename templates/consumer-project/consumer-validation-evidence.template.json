@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "REPLACE-WITH-CONSUMER-UPGRADE-TASK-ID",
+  "repository": "OWNER/REPOSITORY",
+  "project_id": "replace-with-project-id",
+  "deployment_kind": "NON_RUNTIME_ARTIFACT",
+  "consumer_commit": "0000000000000000000000000000000000000000",
+  "standards_lock": {
+    "repository": "xiefeifeihu/AI-Engineering-Standards",
+    "version": "0.0.0",
+    "tag": "v0.0.0",
+    "tag_object_sha": "0000000000000000000000000000000000000000",
+    "peeled_commit": "0000000000000000000000000000000000000000"
+  },
+  "generated_at": "2026-01-01T00:00:00Z",
+  "dimensions": {
+    "unit_tests": {
+      "status": "NOT_RUN",
+      "reason": "Replace with a verified GitHub Actions Run, Job and test_execution (tests_collected, tests_passed, tests_failed, tests_skipped) bound to consumer_commit."
+    },
+    "integration_tests": {
+      "status": "NOT_RUN",
+      "reason": "Replace with a verified GitHub Actions Run, Job and test_execution bound to consumer_commit."
+    },
+    "release_gates": {
+      "status": "NOT_RUN",
+      "reason": "Replace with a verified GitHub Actions Run, Job and test_execution bound to consumer_commit."
+    },
+    "security_scan": {
+      "status": "NOT_RUN",
+      "reason": "Replace with a verified GitHub Actions Run, Job and test_execution bound to consumer_commit."
+    },
+    "business_api": {
+      "status": "NOT_RUN",
+      "reason": "Replace with a verified GitHub Actions Run, Job and test_execution bound to consumer_commit."
+    },
+    "runtime_acceptance": {
+      "status": "NOT_APPLICABLE",
+      "reason": "Template example for NON_RUNTIME_ARTIFACT only. SERVICE projects must supply a PASS Runtime CI Job."
+    }
+  }
+}
