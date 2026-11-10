@@ -32,8 +32,13 @@ if str(ROOT) not in sys.path:
 from tools.generate_engineering_baseline import (
     build_engineering_baseline,
     compute_deterministic_baseline_sha256,
+    verify_baseline_semantic_facts,
 )
-from tools.generate_handoff import build_handoff_payload, write_handoff_files
+from tools.generate_handoff import (
+    build_handoff_payload,
+    write_handoff_files,
+    verify_handoff_semantic_facts,
+)
 from tools.standards_sync.core import (
     analyze_consumer_impact,
     check_remote_main_ci,
@@ -81,6 +86,8 @@ def _copy_minimal_valid_project(dst: Path) -> str:
     shutil.copytree(ROOT / "governance", dst / "governance")
     shutil.copytree(ROOT / "standards", dst / "standards")
     shutil.copytree(ROOT / "tools", dst / "tools")
+    if (ROOT / ".github").exists():
+        shutil.copytree(ROOT / ".github", dst / ".github")
     # Initialize git repo with all files
     subprocess.run(["git", "init", str(dst)], capture_output=True, check=True)
     subprocess.run(["git", "-C", str(dst), "config", "user.email", "test@standards.local"], capture_output=True, check=True)
@@ -393,6 +400,36 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             ok_conflict, c_errs, _, _ = build_engineering_baseline(project_root=dst, standards_root=ROOT)
             self.assertFalse(ok_conflict)
             self.assertTrue(any("BASELINE_CONFLICT_STANDARDS_VERSION" in e for e in c_errs), f"Got: {c_errs}")
+
+        # 3. Verify semantic negative checks on baseline
+        baseline_fixture = """
+## 9. 最近 CI 事实
+- **核验状态 (`verification_status`)**：`PASS`
+- 1. 基线生成源 Commit (`source_commit`)：`9687f961b22df612c4311961e06fc1c1fd508c37`
+- 3. 最近一次已验证 CI Commit (`last_verified_ci_commit`)：`e187b498faf376170b5c11d46377398be988fb38`
+- 4. 代码候选 Commit (`candidate_commit`)：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
+- 5. 文档快照 Commit (`snapshot_commit`)：`e187b498faf376170b5c11d46377398be988fb38`
+- 事实说明：PR CI 已通过 (Run: 42772211734 Push / Run 42772217074 PR #9 双平台 PASS, 216 tests)，等待合并及 main CI 和 Tag 重建
+
+## 19. 当前候选状态与消费端试点
+  - 远端旧 Tag v3.0.0 已删除 (OLD_TAG_DELETED=true)，新 Tag 尚未创建。
+  3. **最近一次已经验证的 CI Commit (`last_verified_ci_commit`)**：`e187b498faf376170b5c11d46377398be988fb38`（Run 42772211734 Push / Run 42772217074 PR #9 双平台全绿，216 tests PASS）。
+  4. **代码候选 Commit (`code_candidate_commit`)**：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
+  PR 状态：DRAFT
+  发布流程状态：IN_PROGRESS
+"""
+        # Negative 1: Old CI Run ID fails
+        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"ci_run_id": "42763704495"})))
+        # Negative 2: Wrong CI Commit fails
+        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"ci_commit": "1111111111111111111111111111111111111111"})))
+        # Negative 3: PASS changed to NOT_VERIFIABLE fails
+        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"ci_status": "NOT_VERIFIABLE"})))
+        # Negative 4: 216 tests changed to 215 tests fails
+        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"test_count": 215})))
+        # Negative 5: Old candidate commit fails
+        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"candidate_commit": "c52f97a52c9080bc76e05684f996fd89653e1fa8"})))
+        # Negative 6: Old tag status changed to not deleted fails
+        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"old_tag_deleted": False})))
 
     # =========================================================================
     # C. Standards Sync Tool Tests
@@ -975,6 +1012,44 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             ok2, errs2, _ = write_handoff_files(project_root=dst, task_id="TASK-SNAP-001", standards_root=ROOT)
             self.assertFalse(ok2)
             self.assertTrue(any("HISTORICAL_HANDOFF_OVERWRITE_FORBIDDEN" in e for e in errs2))
+
+            # Verify semantic negative checks on handoff
+            handoff_fixture = """
+TASK_ID=Std-012-V3-0-0-REISSUE-EVIDENCE-ALIGNMENT
+COMMIT_HASH=e187b498faf376170b5c11d46377398be988fb38
+
+## 1. 当前 Git 状态与分支身份 (`git_state`)
+- **本地 HEAD (`local_head`)**：`e187b498faf376170b5c11d46377398be988fb38`
+
+## 3. 实际测试结果汇总 (`test_results`)
+- **通过 / 失败用例数**：`216 / 0`
+
+## 4. 远端 CI 关联 (`ci_run`)
+- **Run ID (`run_id`)**：`42772211734`
+- **关联 Commit (`commit`)**：`e187b498faf376170b5c11d46377398be988fb38`
+- **核验状态 (`verification_status`)**：`PASS`
+
+### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)
+- **3. 最近一次已验证 CI Commit**：`e187b498faf376170b5c11d46377398be988fb38`（Run 42772211734 Push / Run 42772217074 PR #9 双平台全绿，216 tests PASS）
+- **4. 当前候选 Commit**：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
+
+### 4.2 v3.0.0 一次性重发发布与 Tag 状态追踪
+- **PR 状态 (`pr_status`)**：`DRAFT`
+- **旧 Tag 删除状态 (`old_tag_deleted`)**：`true`
+- **发布流程状态 (`release_flow_status`)**：`IN_PROGRESS`
+"""
+            # Negative 1: Old CI Run ID fails
+            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"ci_run_id": "42763704495"})))
+            # Negative 2: Wrong CI Commit fails
+            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"ci_commit": "1111111111111111111111111111111111111111"})))
+            # Negative 3: PASS changed to NOT_VERIFIABLE fails
+            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"ci_status": "NOT_VERIFIABLE"})))
+            # Negative 4: 216 tests changed to 215 tests fails
+            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"test_count": 215})))
+            # Negative 5: Old candidate commit fails
+            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"candidate_commit": "c52f97a52c9080bc76e05684f996fd89653e1fa8"})))
+            # Negative 6: Old tag status changed to not deleted fails
+            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"old_tag_deleted": False})))
 
     def test_f_r_doc_source_path_not_existing_in_source_commit_must_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

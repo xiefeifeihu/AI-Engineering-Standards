@@ -14,6 +14,12 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 > - 严禁提前标记 RELEASED 或在正式合入与 Tag 重建前变更发布状态。
 
 ### Added
+- **交接与基线生成器事实对齐与语义门禁强化 (STD-020 / STD-035 / Std-012)**:
+  - 修复 `tools/generate_engineering_baseline.py` 与 `tools/generate_handoff.py`，清晰分离并准确呈现四类关键 Commit：`source_commit`（基线源）、`code_candidate_commit`（代码候选）、`snapshot_commit`（文档快照）与 `last_verified_ci_commit`（CI 验证）。
+  - 支持 CLI 传入真实 CI 状态、Run ID（包含 Push Run 42772211734 与 PR Run 42772217074）、CI Commit 与摘要，不再将 NOT_VERIFIABLE 固定作为默认事实。
+  - 大幅增强 `--verify-only` 门禁真实性：除 Frontmatter 与摘要哈希外，增加 11 项关键事实语义一致性核查（TASK_ID、candidate_commit、snapshot_commit、last_verified_ci_commit、CI Run ID、CI Commit、CI verification_status、TEST_COUNT、PR 状态、release_flow_status、OLD_TAG_DELETED）。
+  - 补充 6 类负向拦截测试覆盖（旧 CI Run ID 失败、错误 CI Commit 失败、PASS 改 NOT_VERIFIABLE 失败、216 tests 改 215 tests 失败、旧候选 Commit 失败、旧 Tag 未删除失败）。
+  - 规范时间戳字段继承与防抖，避免无意义的时间抖动导致无限提交循环。
 - **个人工程单人 Owner 治理机制与 PR 合并审批契约 (STD-034 §16.5 / D2=APPROVED / Std-009)**:
   - 确立个人工程单一 Owner 治理模式（实际仓库所有者 `xiefeifeihu`），无需第二名 Reviewer、第二 GitHub 账号或团队审批。
   - 明确职责边界与权限分离：ChatGPT 负责独立技术审查并提出建议结论（`READY_FOR_OWNER_MERGE`、`CHANGES_REQUESTED` 或 `BLOCK`），不得代替 Owner 批准发布；编程智能体（VibeCoding）负责工程代码与门禁执行，严禁自行批准；Owner 作为最终审批者。
