@@ -660,6 +660,8 @@ def build_engineering_baseline(
         "Run 42772217074 (PR #9 @ e187b49, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
         "Run 42783497089 (Push @ 4538b8b, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
         "Run 42783504258 (PR #9 @ 4538b8b, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
+        "Run 42800374434 (Push @ 70f7554, conclusion: success, Windows/Ubuntu PASS, 217 tests)",
+        "Run 42800383714 (PR #9 @ 70f7554, conclusion: success, Windows/Ubuntu PASS, 217 tests)",
     ]
     hist_runs = historical_ci_runs or default_historical_runs
 
@@ -696,7 +698,7 @@ def build_engineering_baseline(
             run_lbl = "42783497089 Push / 42783504258 PR #9"
         summary_text = f"PR CI 已通过 (Run: {run_lbl} 双平台 PASS, {effective_test_count} tests)，等待合并及 main CI 和 Tag 重建"
     else:
-        summary_text = "当前分支远端 GitHub Actions CI 待推送后由远端 Runner 实测（执行前保持 NOT_VERIFIABLE；历史已通过 Run: 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258）"
+        summary_text = "当前分支远端 GitHub Actions CI 待推送后由远端 Runner 实测（执行前保持 NOT_VERIFIABLE；历史已通过 Run: 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714）"
 
     ci_fact: Dict[str, Any] = ci_fact_override or {
         "repository": repository,

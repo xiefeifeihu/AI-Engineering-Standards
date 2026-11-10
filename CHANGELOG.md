@@ -14,6 +14,13 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 > - 严禁提前标记 RELEASED 或在正式合入与 Tag 重建前变更发布状态。
 
 ### Added
+- **GitHub Actions 实时 CI 真实性门禁接入与身份绑定强化 (STD-014 / STD-034 / STD-035 / Std-014)**:
+  - 将实时 GitHub CI 真实性验证正式接入 `.github/workflows/standards-ci.yml` 核心门禁（`python tools/release_evidence.py --project-root . --check-ci`），执行于 Schema 校验之后、Baseline/Handoff verify-only 之前 (P1-A)。
+  - 在 CI 中配置最小只读权限 (`actions: read`、`contents: read`) 并通过 `GITHUB_TOKEN` 鉴权，严禁泄露 Token，在网络不可达时返回 `NOT_VERIFIABLE` 并阻断发布门禁。
+  - 完善 `tools/release_evidence.py` 中的 `verify_single_github_run()`，实现 9 大核心项严格核验：Repository full_name、Run ID、Event 类型、Workflow path (`.github/workflows/standards-ci.yml`)、被测 Commit head_sha、status=completed、conclusion=success、Ubuntu Job completed/success、Windows Job completed/success；Push Run 额外核验目标功能分支 `head_branch`；PR Run 额外核验 PR number=9、`base.ref=main` 与 `event=pull_request` (P1-B)。
+  - 消除 `tools/validate-schemas.py` 内部重复执行完整 unittest 的性能瓶颈，严格遵循职责分离原则，仅验证 JSON Schema 结构与样本有效性，由 `standards-ci.yml` 保留一次完整 unittest discover (P2)。
+  - 新增 12 项真实性负向测试用例（覆盖 Repository 不匹配、Run ID 不匹配、Workflow path 不匹配、Event 不匹配、head_sha 不匹配、PR number 不匹配、base branch 不匹配、Run 未完成、Run conclusion 失败、Ubuntu Job 缺失/失败、Windows Job 缺失/失败、API 不可达），严格证明所有身份不匹配与故障场景均不能返回 PASS。
+  - 对齐发布证据、权威基线与跨会话交接中的历史 CI 事实至已通过 Commit `70f7554`（Push Run 42800374434，PR Run 42800383714，全量 217 项测试双平台全绿）。
 - **单一发布证据源与 verify-only 真实性强化 (STD-020 / STD-034 / STD-035 / Std-013)**:
   - 确立 `docs/release-evidence/v3.0.0-reissue.json` 为单一发布证据源，定义 `schemas/release-evidence.schema.json` 契约，收敛 20 项关键发布、Tag 与 CI 事实。
   - 实现通用发布证据加载与 GitHub CI 真实性校验器（`tools/release_evidence.py`），支持 gh CLI 与 API 只读鉴权双通道，严禁泄露 Token，在网络离线或无权限时客观标记 `NOT_VERIFIABLE`，严禁伪造 PASS。

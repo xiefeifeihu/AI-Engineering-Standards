@@ -168,36 +168,35 @@ def load_release_evidence(
     return True, [], data
 
 
-def _query_run_via_gh(
-    repo: str,
-    run_id: str,
-    timeout: int = 10,
-) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+def _get_github_token() -> Optional[str]:
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token and token.strip():
+        return token.strip()
     try:
-        cmd = [
-            "gh",
-            "run",
-            "view",
-            str(run_id),
-            "--repo",
-            repo,
-            "--json",
-            "name,headSha,event,status,conclusion,workflowDatabaseId,jobs",
-        ]
         res = subprocess.run(
-            cmd,
+            ["gh", "auth", "token"],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout,
+            timeout=5,
         )
         if res.returncode == 0 and res.stdout.strip():
-            parsed = json.loads(res.stdout)
-            return True, parsed, ""
-        return False, None, res.stderr or "gh command returned non-zero exit code"
-    except Exception as e:
-        return False, None, str(e)
+            return res.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def _sanitize_error_message(msg: str, token: Optional[str] = None) -> str:
+    if token:
+        msg = msg.replace(token, "***")
+    return re.sub(
+        r"ghp_[a-zA-Z0-9]+|ghs_[a-zA-Z0-9]+|bearer\s+[a-zA-Z0-9_.-]+",
+        "***",
+        msg,
+        flags=re.IGNORECASE,
+    )
 
 
 def _query_run_via_api(
@@ -206,14 +205,15 @@ def _query_run_via_api(
     token: Optional[str] = None,
     timeout: int = 10,
 ) -> Tuple[bool, Optional[Dict[str, Any]], str]:
-    token = token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    if not token:
+    tok = token or _get_github_token()
+    if not tok:
         return False, None, "No GitHub token available for API query"
 
     headers = {
         "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {token}",
+        "Authorization": f"Bearer {tok}",
         "User-Agent": "AI-Engineering-Standards-Verifier",
+        "X-GitHub-Api-Version": "2022-11-28",
     }
     run_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
     jobs_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs"
@@ -230,7 +230,47 @@ def _query_run_via_api(
         run_data["jobs"] = jobs_data.get("jobs", [])
         return True, run_data, ""
     except Exception as e:
-        return False, None, str(e)
+        return False, None, _sanitize_error_message(str(e), tok)
+
+
+def _query_run_via_gh(
+    repo: str,
+    run_id: str,
+    timeout: int = 10,
+) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+    try:
+        cmd_run = ["gh", "api", f"repos/{repo}/actions/runs/{run_id}"]
+        res_run = subprocess.run(
+            cmd_run,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        if res_run.returncode != 0 or not res_run.stdout.strip():
+            return False, None, _sanitize_error_message(res_run.stderr or "gh api run query failed")
+
+        run_data = json.loads(res_run.stdout)
+
+        cmd_jobs = ["gh", "api", f"repos/{repo}/actions/runs/{run_id}/jobs"]
+        res_jobs = subprocess.run(
+            cmd_jobs,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        if res_jobs.returncode == 0 and res_jobs.stdout.strip():
+            jobs_data = json.loads(res_jobs.stdout)
+            run_data["jobs"] = jobs_data.get("jobs", [])
+        else:
+            run_data["jobs"] = []
+
+        return True, run_data, ""
+    except Exception as e:
+        return False, None, _sanitize_error_message(str(e))
 
 
 def verify_single_github_run(
@@ -238,17 +278,22 @@ def verify_single_github_run(
     run_id: str,
     expected_event: str,
     expected_head_sha: str,
+    expected_head_branch: Optional[str] = None,
+    expected_pr_number: Optional[int | str] = None,
+    expected_base_ref: Optional[str] = None,
+    expected_workflow_path: str = ".github/workflows/standards-ci.yml",
     timeout: int = 10,
     simulate_data: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, List[str], Dict[str, Any]]:
-    """Verify an individual GitHub Actions run against requirements.
+    """Verify an individual GitHub Actions run against all authenticity requirements.
     Never outputs tokens. Returns status: 'PASS', 'FAIL', or 'NOT_VERIFIABLE'.
     """
     errors: List[str] = []
     run_meta: Dict[str, Any] = {
         "run_id": str(run_id),
-        "event": expected_event,
-        "head_sha": expected_head_sha,
+        "expected_event": expected_event,
+        "expected_head_sha": expected_head_sha,
+        "expected_workflow_path": expected_workflow_path,
     }
 
     if simulate_data is not None:
@@ -256,37 +301,80 @@ def verify_single_github_run(
         ok = True
         err_msg = ""
     else:
-        ok, run_data, err_msg = _query_run_via_gh(repo, str(run_id), timeout=timeout)
+        # Priority 1: GitHub REST API
+        ok, run_data, err_msg = _query_run_via_api(repo, str(run_id), timeout=timeout)
+        # Priority 2: Fallback to gh CLI
         if not ok:
-            ok, run_data, err_msg = _query_run_via_api(repo, str(run_id), timeout=timeout)
+            ok, run_data, err_msg = _query_run_via_gh(repo, str(run_id), timeout=timeout)
 
     if not ok or run_data is None:
         # Cannot access run (e.g. offline, rate limit, historical run not accessible)
         # Never fake PASS; record NOT_VERIFIABLE
         run_meta["verification_status"] = "NOT_VERIFIABLE"
-        run_meta["reason"] = f"GITHUB_CI_NOT_ACCESSIBLE: {err_msg}"
-        return "NOT_VERIFIABLE", [f"Run {run_id} not accessible: {err_msg}"], run_meta
+        run_meta["reason"] = f"GITHUB_CI_NOT_ACCESSIBLE: {_sanitize_error_message(err_msg)}"
+        return "NOT_VERIFIABLE", [f"Run {run_id} not accessible: {_sanitize_error_message(err_msg)}"], run_meta
 
+    # 1. Repository full_name binding
+    actual_repo: Optional[str] = None
+    if isinstance(run_data.get("repository"), dict):
+        actual_repo = run_data["repository"].get("full_name")
+    elif isinstance(run_data.get("repository"), str):
+        actual_repo = run_data["repository"]
+    elif run_data.get("repo"):
+        actual_repo = str(run_data["repo"])
+
+    run_meta["actual_repository"] = actual_repo
+    if not actual_repo:
+        errors.append(f"Run {run_id} is missing repository information")
+    elif actual_repo != repo:
+        errors.append(f"Run {run_id} repository mismatch: expected '{repo}', got '{actual_repo}'")
+
+    # 2. Run ID binding
+    actual_run_id = str(run_data.get("id") or run_data.get("databaseId") or "")
+    run_meta["actual_run_id"] = actual_run_id
+    if not actual_run_id:
+        errors.append(f"Run {run_id} is missing run ID")
+    elif actual_run_id != str(run_id):
+        errors.append(f"Run {run_id} ID mismatch: expected '{run_id}', got '{actual_run_id}'")
+
+    # 3. Event type
     actual_event = run_data.get("event")
-    actual_head = run_data.get("headSha") or run_data.get("head_sha")
-    actual_conclusion = run_data.get("conclusion")
-    actual_status = run_data.get("status")
-
     run_meta["actual_event"] = actual_event
-    run_meta["actual_head_sha"] = actual_head
-    run_meta["actual_conclusion"] = actual_conclusion
-    run_meta["actual_status"] = actual_status
-
-    if actual_event != expected_event:
+    if not actual_event:
+        errors.append(f"Run {run_id} is missing event type")
+    elif actual_event != expected_event:
         errors.append(f"Run {run_id} event mismatch: expected '{expected_event}', got '{actual_event}'")
 
-    if actual_head != expected_head_sha:
+    # 4. Workflow path binding (must be .github/workflows/standards-ci.yml)
+    actual_path = run_data.get("path") or run_data.get("workflowPath") or run_data.get("workflow_path")
+    run_meta["actual_workflow_path"] = actual_path
+    if not actual_path:
+        errors.append(f"Run {run_id} is missing workflow path")
+    elif actual_path != expected_workflow_path:
+        errors.append(f"Run {run_id} workflow path mismatch: expected '{expected_workflow_path}', got '{actual_path}'")
+
+    # 5. head_sha binding (must match independent evidence CI Commit; use Run's own head_sha, not dynamic PR head)
+    actual_head = run_data.get("headSha") or run_data.get("head_sha")
+    run_meta["actual_head_sha"] = actual_head
+    if not actual_head:
+        errors.append(f"Run {run_id} is missing head SHA")
+    elif actual_head != expected_head_sha:
         errors.append(f"Run {run_id} head_sha mismatch: expected '{expected_head_sha}', got '{actual_head}'")
 
+    # 6. Status binding: status=completed
+    actual_status = run_data.get("status")
+    run_meta["actual_status"] = actual_status
+    if actual_status != "completed":
+        errors.append(f"Run {run_id} status was '{actual_status}', expected 'completed'")
+
+    # 7. Conclusion binding: conclusion=success
+    actual_conclusion = run_data.get("conclusion")
+    run_meta["actual_conclusion"] = actual_conclusion
     if actual_conclusion != "success":
         errors.append(f"Run {run_id} conclusion was '{actual_conclusion}', expected 'success'")
 
-    # Validate Ubuntu and Windows jobs
+    # 8. Ubuntu Job: completed/success
+    # 9. Windows Job: completed/success
     jobs = run_data.get("jobs", [])
     ubuntu_job = None
     windows_job = None
@@ -300,18 +388,58 @@ def verify_single_github_run(
     if ubuntu_job is None:
         errors.append(f"Run {run_id} is missing Ubuntu validation job")
     else:
+        u_status = ubuntu_job.get("status")
         u_concl = ubuntu_job.get("conclusion")
+        run_meta["ubuntu_status"] = u_status
         run_meta["ubuntu_conclusion"] = u_concl
+        if u_status != "completed":
+            errors.append(f"Run {run_id} Ubuntu job status was '{u_status}', expected 'completed'")
         if u_concl != "success":
             errors.append(f"Run {run_id} Ubuntu job conclusion was '{u_concl}', expected 'success'")
 
     if windows_job is None:
         errors.append(f"Run {run_id} is missing Windows validation job")
     else:
+        w_status = windows_job.get("status")
         w_concl = windows_job.get("conclusion")
+        run_meta["windows_status"] = w_status
         run_meta["windows_conclusion"] = w_concl
+        if w_status != "completed":
+            errors.append(f"Run {run_id} Windows job status was '{w_status}', expected 'completed'")
         if w_concl != "success":
             errors.append(f"Run {run_id} Windows job conclusion was '{w_concl}', expected 'success'")
+
+    # Push Run extra check: head_branch must be target feature branch
+    if expected_event == "push" and expected_head_branch is not None:
+        actual_head_branch = run_data.get("headBranch") or run_data.get("head_branch")
+        run_meta["actual_head_branch"] = actual_head_branch
+        if not actual_head_branch:
+            errors.append(f"Run {run_id} is missing head_branch")
+        elif actual_head_branch != expected_head_branch:
+            errors.append(f"Run {run_id} head_branch mismatch: expected '{expected_head_branch}', got '{actual_head_branch}'")
+
+    # PR Run extra checks: PR number, base.ref=main, event=pull_request
+    if expected_event == "pull_request":
+        prs = run_data.get("pull_requests", [])
+        run_meta["pull_requests"] = [p.get("number") for p in prs if isinstance(p, dict)]
+        if expected_pr_number is not None:
+            if not prs:
+                errors.append(f"Run {run_id} has no associated pull requests")
+            else:
+                matching_pr = None
+                for p in prs:
+                    if isinstance(p, dict) and str(p.get("number")) == str(expected_pr_number):
+                        matching_pr = p
+                        break
+                if matching_pr is None:
+                    found_nums = [p.get("number") for p in prs if isinstance(p, dict)]
+                    errors.append(f"Run {run_id} PR number mismatch: expected {expected_pr_number}, found {found_nums}")
+                else:
+                    if expected_base_ref is not None:
+                        base_ref = matching_pr.get("base", {}).get("ref") if isinstance(matching_pr.get("base"), dict) else None
+                        run_meta["actual_base_ref"] = base_ref
+                        if base_ref != expected_base_ref:
+                            errors.append(f"Run {run_id} PR base ref mismatch: expected '{expected_base_ref}', got '{base_ref}'")
 
     if errors:
         run_meta["verification_status"] = "FAIL"
@@ -328,6 +456,7 @@ def verify_github_ci_runs(
     timeout: int = 10,
     simulate_status: Optional[str] = None,
     simulate_data_map: Optional[Dict[str, Any]] = None,
+    target_branch: Optional[str] = None,
 ) -> Tuple[str, List[str], Dict[str, Any]]:
     """Verify both Push Run and PR Run recorded in release evidence.
     Returns (overall_status, errors, details).
@@ -344,6 +473,28 @@ def verify_github_ci_runs(
     head_sha = evidence["last_verified_ci_commit"]
     push_id = str(evidence["push_run_id"])
     pr_id = str(evidence["pr_run_id"])
+    pr_number = evidence.get("pr_number", 9)
+
+    effective_target_branch = target_branch
+    if not effective_target_branch:
+        candidate = os.environ.get("GITHUB_HEAD_REF")
+        if not candidate:
+            ref_name = os.environ.get("GITHUB_REF_NAME", "")
+            if not ref_name.endswith("/merge") and not ref_name.endswith("/head"):
+                candidate = ref_name
+        if not candidate:
+            try:
+                res = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                if res.returncode == 0 and res.stdout.strip() and res.stdout.strip() != "HEAD":
+                    candidate = res.stdout.strip()
+            except Exception:
+                pass
+        effective_target_branch = candidate or "feat/standards-baseline-sync-governance"
 
     sim_push = simulate_data_map.get(push_id) if simulate_data_map else None
     sim_pr = simulate_data_map.get(pr_id) if simulate_data_map else None
@@ -353,6 +504,8 @@ def verify_github_ci_runs(
         run_id=push_id,
         expected_event="push",
         expected_head_sha=head_sha,
+        expected_head_branch=effective_target_branch,
+        expected_workflow_path=".github/workflows/standards-ci.yml",
         timeout=timeout,
         simulate_data=sim_push,
     )
@@ -362,6 +515,9 @@ def verify_github_ci_runs(
         run_id=pr_id,
         expected_event="pull_request",
         expected_head_sha=head_sha,
+        expected_pr_number=pr_number,
+        expected_base_ref="main",
+        expected_workflow_path=".github/workflows/standards-ci.yml",
         timeout=timeout,
         simulate_data=sim_pr,
     )
@@ -371,6 +527,10 @@ def verify_github_ci_runs(
         "push_run": push_meta,
         "pr_run": pr_meta,
         "last_verified_ci_commit": head_sha,
+        "repository": repo,
+        "target_branch": effective_target_branch,
+        "pr_number": pr_number,
+        "base_ref": "main",
     }
 
     if push_st == "FAIL" or pr_st == "FAIL":
@@ -407,5 +567,5 @@ if __name__ == "__main__":
         if ci_errs:
             for e in ci_errs:
                 print(f"  - {e}")
-        if st == "FAIL":
+        if st != "PASS":
             sys.exit(1)

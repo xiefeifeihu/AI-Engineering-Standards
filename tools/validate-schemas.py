@@ -3,7 +3,6 @@
 """Validate All AI Engineering Standards Schemas and Sample Payloads."""
 import json
 import sys
-import unittest
 import jsonschema
 from pathlib import Path
 
@@ -1528,9 +1527,6 @@ def main():
             failed += 1
             
     test_samples()
-    approval_tests = unittest.defaultTestLoader.discover(str(ROOT / 'tests'))
-    if not unittest.TextTestRunner(verbosity=2).run(approval_tests).wasSuccessful():
-        failed += 1
 
     if failed == 0:
         print(f"\nAll {len(schemas)} schemas validated successfully!")

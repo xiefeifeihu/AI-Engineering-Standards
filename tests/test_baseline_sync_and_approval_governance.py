@@ -521,14 +521,18 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
 
             # --- Negative 9: Windows Job failed in CI check ---
             sim_windows_fail = {
+                "id": int(valid_ev_data["push_run_id"]),
                 "name": "Standards CI",
                 "headSha": valid_ev_data["last_verified_ci_commit"],
                 "event": "push",
                 "status": "completed",
                 "conclusion": "failure",
+                "path": ".github/workflows/standards-ci.yml",
+                "head_branch": "feat/standards-baseline-sync-governance",
+                "repository": {"full_name": valid_ev_data["repository"]},
                 "jobs": [
-                    {"name": "Validate (ubuntu-latest)", "conclusion": "success"},
-                    {"name": "Validate (windows-latest)", "conclusion": "failure"},
+                    {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                    {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "failure"},
                 ],
             }
             st9, errs9, _ = verify_single_github_run(
@@ -543,14 +547,18 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
 
             # --- Negative 10: Ubuntu Job failed in CI check ---
             sim_ubuntu_fail = {
+                "id": int(valid_ev_data["push_run_id"]),
                 "name": "Standards CI",
                 "headSha": valid_ev_data["last_verified_ci_commit"],
                 "event": "push",
                 "status": "completed",
                 "conclusion": "failure",
+                "path": ".github/workflows/standards-ci.yml",
+                "head_branch": "feat/standards-baseline-sync-governance",
+                "repository": {"full_name": valid_ev_data["repository"]},
                 "jobs": [
-                    {"name": "Validate (ubuntu-latest)", "conclusion": "failure"},
-                    {"name": "Validate (windows-latest)", "conclusion": "success"},
+                    {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "failure"},
+                    {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
                 ],
             }
             st10, errs10, _ = verify_single_github_run(
@@ -581,7 +589,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
 
             # Modify baseline markdown: tamper push run id
             base_md = (ROOT / "docs" / "当前权威基线.md").read_text(encoding="utf-8")
-            tampered_base_md = base_md.replace("42783497089", "42772211734")
+            tampered_base_md = base_md.replace(str(valid_ev_data["push_run_id"]), "42772211734")
             new_sha_base = compute_canonical_document_sha256(tampered_base_md)
             tampered_base_md = re.sub(r'content_sha256:\s*"[^"]+"', f'content_sha256: "{new_sha_base}"', tampered_base_md)
             tampered_base_path = tmp / "tampered_baseline.md"
@@ -596,7 +604,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
 
             # Modify handoff markdown: tamper CI commit
             handoff_md = (ROOT / "docs" / "CROSS-SESSION-HANDOFF.md").read_text(encoding="utf-8")
-            tampered_h_md = handoff_md.replace("4538b8ba29cb9413782c4197e73bddab64849d82", "e187b498faf376170b5c11d46377398be988fb38")
+            tampered_h_md = handoff_md.replace(valid_ev_data["last_verified_ci_commit"], "e187b498faf376170b5c11d46377398be988fb38")
             new_sha_h = compute_canonical_document_sha256(tampered_h_md)
             tampered_h_md = re.sub(r'content_sha256:\s*"[^"]+"', f'content_sha256: "{new_sha_h}"', tampered_h_md)
             tampered_h_path = tmp / "CROSS-SESSION-HANDOFF.md"
@@ -609,6 +617,284 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             )
             self.assertNotEqual(res_tamper_h.returncode, 0, "Tampered handoff MUST fail verify-only even with matching content_sha256")
             self.assertIn("mismatches", res_tamper_h.stdout)
+
+    def test_b13_github_ci_authenticity_gate_12_negative_tests(self) -> None:
+        """STD-014 / STD-034: 12 negative authenticity tests proving all identity mismatches,
+        incomplete runs, failed conclusions, missing/failed jobs, and API unreachability
+        can NEVER return PASS.
+        """
+        canonical_repo = "xiefeifeihu/AI-Engineering-Standards"
+        canonical_push_id = "42800374434"
+        canonical_pr_id = "42800383714"
+        canonical_head_sha = "70f7554feacfaa6c61b0fa571454f468aaa6d844"
+        canonical_branch = "feat/standards-baseline-sync-governance"
+        canonical_path = ".github/workflows/standards-ci.yml"
+
+        base_push_data = {
+            "id": int(canonical_push_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": canonical_head_sha,
+            "headSha": canonical_head_sha,
+            "event": "push",
+            "status": "completed",
+            "conclusion": "success",
+            "path": canonical_path,
+            "head_branch": canonical_branch,
+            "headBranch": canonical_branch,
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "jobs": [
+                {
+                    "name": "Validate Schemas, Docs, Baseline, Handoff, Sync & Approval Contracts (ubuntu-latest)",
+                    "status": "completed",
+                    "conclusion": "success",
+                },
+                {
+                    "name": "Validate Schemas, Docs, Baseline, Handoff, Sync & Approval Contracts (windows-latest)",
+                    "status": "completed",
+                    "conclusion": "success",
+                },
+            ],
+        }
+
+        base_pr_data = {
+            "id": int(canonical_pr_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": canonical_head_sha,
+            "headSha": canonical_head_sha,
+            "event": "pull_request",
+            "status": "completed",
+            "conclusion": "success",
+            "path": canonical_path,
+            "head_branch": canonical_branch,
+            "headBranch": canonical_branch,
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "pull_requests": [
+                {
+                    "number": 9,
+                    "head": {"ref": canonical_branch, "sha": canonical_head_sha},
+                    "base": {"ref": "main", "sha": "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b"},
+                }
+            ],
+            "jobs": [
+                {
+                    "name": "Validate Schemas, Docs, Baseline, Handoff, Sync & Approval Contracts (ubuntu-latest)",
+                    "status": "completed",
+                    "conclusion": "success",
+                },
+                {
+                    "name": "Validate Schemas, Docs, Baseline, Handoff, Sync & Approval Contracts (windows-latest)",
+                    "status": "completed",
+                    "conclusion": "success",
+                },
+            ],
+        }
+
+        # 1. Repository 不匹配
+        sim1 = dict(base_push_data, repository={"full_name": "attacker/AI-Engineering-Standards"})
+        st1, errs1, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim1,
+        )
+        self.assertEqual(st1, "FAIL")
+        self.assertNotEqual(st1, "PASS")
+        self.assertTrue(any("repository mismatch" in e.lower() for e in errs1))
+
+        # 2. Run ID 不匹配
+        sim2 = dict(base_push_data, id=99999999999)
+        st2, errs2, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim2,
+        )
+        self.assertEqual(st2, "FAIL")
+        self.assertNotEqual(st2, "PASS")
+        self.assertTrue(any("id mismatch" in e.lower() for e in errs2))
+
+        # 3. Workflow path 不匹配
+        sim3 = dict(base_push_data, path=".github/workflows/untrusted-other.yml")
+        st3, errs3, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim3,
+        )
+        self.assertEqual(st3, "FAIL")
+        self.assertNotEqual(st3, "PASS")
+        self.assertTrue(any("workflow path mismatch" in e.lower() for e in errs3))
+
+        # 4. Event 不匹配
+        sim4 = dict(base_push_data, event="workflow_dispatch")
+        st4, errs4, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim4,
+        )
+        self.assertEqual(st4, "FAIL")
+        self.assertNotEqual(st4, "PASS")
+        self.assertTrue(any("event mismatch" in e.lower() for e in errs4))
+
+        # 5. head_sha 不匹配
+        sim5 = dict(base_push_data, head_sha="1111111111111111111111111111111111111111", headSha="1111111111111111111111111111111111111111")
+        st5, errs5, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim5,
+        )
+        self.assertEqual(st5, "FAIL")
+        self.assertNotEqual(st5, "PASS")
+        self.assertTrue(any("head_sha mismatch" in e.lower() for e in errs5))
+
+        # 6. PR number 不匹配
+        sim6 = dict(base_pr_data, pull_requests=[{"number": 999, "head": {"ref": canonical_branch}, "base": {"ref": "main"}}])
+        st6, errs6, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_pr_id,
+            expected_event="pull_request",
+            expected_head_sha=canonical_head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            simulate_data=sim6,
+        )
+        self.assertEqual(st6, "FAIL")
+        self.assertNotEqual(st6, "PASS")
+        self.assertTrue(any("pr number mismatch" in e.lower() for e in errs6))
+
+        # 7. base branch 不匹配
+        sim7 = dict(base_pr_data, pull_requests=[{"number": 9, "head": {"ref": canonical_branch}, "base": {"ref": "release-v2"}}])
+        st7, errs7, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_pr_id,
+            expected_event="pull_request",
+            expected_head_sha=canonical_head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            simulate_data=sim7,
+        )
+        self.assertEqual(st7, "FAIL")
+        self.assertNotEqual(st7, "PASS")
+        self.assertTrue(any("base ref mismatch" in e.lower() for e in errs7))
+
+        # 8. Run 未完成
+        sim8 = dict(base_push_data, status="in_progress")
+        st8, errs8, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim8,
+        )
+        self.assertEqual(st8, "FAIL")
+        self.assertNotEqual(st8, "PASS")
+        self.assertTrue(any("status was 'in_progress'" in e.lower() for e in errs8))
+
+        # 9. Run conclusion 失败
+        sim9 = dict(base_push_data, conclusion="failure")
+        st9, errs9, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim9,
+        )
+        self.assertEqual(st9, "FAIL")
+        self.assertNotEqual(st9, "PASS")
+        self.assertTrue(any("conclusion was 'failure'" in e.lower() for e in errs9))
+
+        # 10. Ubuntu Job 缺失或失败
+        # 10a: 缺失
+        sim10a = dict(base_push_data, jobs=[{"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"}])
+        st10a, errs10a, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim10a,
+        )
+        self.assertEqual(st10a, "FAIL")
+        self.assertNotEqual(st10a, "PASS")
+        self.assertTrue(any("missing ubuntu" in e.lower() for e in errs10a))
+
+        # 10b: 失败
+        sim10b = dict(base_push_data, jobs=[
+            {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "failure"},
+            {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+        ])
+        st10b, errs10b, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim10b,
+        )
+        self.assertEqual(st10b, "FAIL")
+        self.assertNotEqual(st10b, "PASS")
+        self.assertTrue(any("ubuntu job conclusion was 'failure'" in e.lower() for e in errs10b))
+
+        # 11. Windows Job 缺失或失败
+        # 11a: 缺失
+        sim11a = dict(base_push_data, jobs=[{"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"}])
+        st11a, errs11a, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim11a,
+        )
+        self.assertEqual(st11a, "FAIL")
+        self.assertNotEqual(st11a, "PASS")
+        self.assertTrue(any("missing windows" in e.lower() for e in errs11a))
+
+        # 11b: 失败
+        sim11b = dict(base_push_data, jobs=[
+            {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+            {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "failure"},
+        ])
+        st11b, errs11b, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim11b,
+        )
+        self.assertEqual(st11b, "FAIL")
+        self.assertNotEqual(st11b, "PASS")
+        self.assertTrue(any("windows job conclusion was 'failure'" in e.lower() for e in errs11b))
+
+        # 12. API 不可达 (网络异常/无权限/离线)
+        st12, errs12, meta12 = verify_single_github_run(
+            repo="unreachable/repo",
+            run_id="00000000",
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            timeout=1,
+            simulate_data=None,
+        )
+        self.assertEqual(st12, "NOT_VERIFIABLE")
+        self.assertNotEqual(st12, "PASS")
+        self.assertTrue(any("not accessible" in e.lower() for e in errs12))
+        self.assertNotIn("ghp_", str(meta12))
+        self.assertNotIn("ghs_", str(meta12))
 
     # =========================================================================
     # C. Standards Sync Tool Tests
