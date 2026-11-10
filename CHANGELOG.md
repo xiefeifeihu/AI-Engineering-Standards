@@ -14,6 +14,13 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 > - 严禁提前标记 RELEASED 或在正式合入与 Tag 重建前变更发布状态。
 
 ### Added
+- **单一发布证据源与 verify-only 真实性强化 (STD-020 / STD-034 / STD-035 / Std-013)**:
+  - 确立 `docs/release-evidence/v3.0.0-reissue.json` 为单一发布证据源，定义 `schemas/release-evidence.schema.json` 契约，收敛 20 项关键发布、Tag 与 CI 事实。
+  - 实现通用发布证据加载与 GitHub CI 真实性校验器（`tools/release_evidence.py`），支持 gh CLI 与 API 只读鉴权双通道，严禁泄露 Token，在网络离线或无权限时客观标记 `NOT_VERIFIABLE`，严禁伪造 PASS。
+  - 彻底重构 `tools/generate_engineering_baseline.py` 与 `tools/generate_handoff.py` 的 `--verify-only` 门禁机制：所有期望语义事实直接且仅来自独立发布证据文件，彻底废除从待验证 Markdown 文件内容正则回填的“自证循环”（彻底解决 P1-B 漏洞）。
+  - 对齐权威基线与交接文档中的最新 CI 事实至已验证 Commit `4538b8ba`（Push Run 42783497089，PR Run 42783504258，全量 216 项测试在 Windows 与 Ubuntu 双平台全绿），解决交接与基线事实过期（解决 P1-A）。
+  - 修复 FINAL_RETURN Commit SHA 逻辑，区分输入快照 Commit（`4538b8ba`）与输出提交 Commit，严禁制造自引用或虚构提交（解决 P1-C）。
+  - 增加 12 类真实 CLI 负向门禁测试，并严格证明：仅修改待验证 Markdown 中的 Commit 或 Run ID，即使重新计算 Frontmatter `content_sha256`，`verify-only` 仍然失败。
 - **交接与基线生成器事实对齐与语义门禁强化 (STD-020 / STD-035 / Std-012)**:
   - 修复 `tools/generate_engineering_baseline.py` 与 `tools/generate_handoff.py`，清晰分离并准确呈现四类关键 Commit：`source_commit`（基线源）、`code_candidate_commit`（代码候选）、`snapshot_commit`（文档快照）与 `last_verified_ci_commit`（CI 验证）。
   - 支持 CLI 传入真实 CI 状态、Run ID（包含 Push Run 42772211734 与 PR Run 42772217074）、CI Commit 与摘要，不再将 NOT_VERIFIABLE 固定作为默认事实。

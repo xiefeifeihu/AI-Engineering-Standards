@@ -39,6 +39,12 @@ from tools.generate_handoff import (
     write_handoff_files,
     verify_handoff_semantic_facts,
 )
+from tools.release_evidence import (
+    load_release_evidence,
+    resolve_release_evidence_path,
+    verify_github_ci_runs,
+    verify_single_github_run,
+)
 from tools.standards_sync.core import (
     analyze_consumer_impact,
     check_remote_main_ci,
@@ -406,20 +412,20 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
 ## 9. 最近 CI 事实
 - **核验状态 (`verification_status`)**：`PASS`
 - 1. 基线生成源 Commit (`source_commit`)：`9687f961b22df612c4311961e06fc1c1fd508c37`
-- 3. 最近一次已验证 CI Commit (`last_verified_ci_commit`)：`e187b498faf376170b5c11d46377398be988fb38`
+- 3. 最近一次已验证 CI Commit (`last_verified_ci_commit`)：`4538b8ba29cb9413782c4197e73bddab64849d82`
 - 4. 代码候选 Commit (`candidate_commit`)：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
-- 5. 文档快照 Commit (`snapshot_commit`)：`e187b498faf376170b5c11d46377398be988fb38`
-- 事实说明：PR CI 已通过 (Run: 42772211734 Push / Run 42772217074 PR #9 双平台 PASS, 216 tests)，等待合并及 main CI 和 Tag 重建
+- 5. 文档快照 Commit (`snapshot_commit`)：`4538b8ba29cb9413782c4197e73bddab64849d82`
+- 事实说明：PR CI 已通过 (Run: 42783497089 Push / 42783504258 PR #9 双平台 PASS, 216 tests)，等待合并及 main CI 和 Tag 重建
 
 ## 19. 当前候选状态与消费端试点
   - 远端旧 Tag v3.0.0 已删除 (OLD_TAG_DELETED=true)，新 Tag 尚未创建。
-  3. **最近一次已经验证的 CI Commit (`last_verified_ci_commit`)**：`e187b498faf376170b5c11d46377398be988fb38`（Run 42772211734 Push / Run 42772217074 PR #9 双平台全绿，216 tests PASS）。
+  3. **最近一次已经验证的 CI Commit (`last_verified_ci_commit`)**：`4538b8ba29cb9413782c4197e73bddab64849d82`（Run 42783497089 Push / Run 42783504258 PR #9 双平台全绿，216 tests PASS）。
   4. **代码候选 Commit (`code_candidate_commit`)**：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
   PR 状态：DRAFT
   发布流程状态：IN_PROGRESS
 """
         # Negative 1: Old CI Run ID fails
-        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"ci_run_id": "42763704495"})))
+        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"ci_run_id": "42772211734"})))
         # Negative 2: Wrong CI Commit fails
         self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"ci_commit": "1111111111111111111111111111111111111111"})))
         # Negative 3: PASS changed to NOT_VERIFIABLE fails
@@ -430,6 +436,179 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"candidate_commit": "c52f97a52c9080bc76e05684f996fd89653e1fa8"})))
         # Negative 6: Old tag status changed to not deleted fails
         self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"old_tag_deleted": False})))
+
+    def test_b12_release_evidence_verify_only_integrity_and_12_cli_negative_checks(self) -> None:
+        """STD-034 / STD-035: Comprehensive verification of release evidence single-source
+        and 12 real CLI negative checks + proof test against self-proving markdown modification.
+        """
+        evidence_file = ROOT / "docs" / "release-evidence" / "v3.0.0-reissue.json"
+        self.assertTrue(evidence_file.exists(), f"Evidence file missing: {evidence_file}")
+        valid_ev_data = json.loads(evidence_file.read_text(encoding="utf-8"))
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+
+            # --- Negative 1: Missing evidence file blocks verify-only ---
+            non_existent_ev = tmp / "missing-evidence.json"
+            res = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"), "--project-root", str(ROOT), "--release-evidence", str(non_existent_ev), "--verify-only"],
+                capture_output=True, text=True, encoding="utf-8"
+            )
+            self.assertNotEqual(res.returncode, 0)
+            self.assertIn("RELEASE_EVIDENCE_NOT_FOUND", res.stdout + res.stderr)
+
+            res_h = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "generate_handoff.py"), "--project-root", str(ROOT), "--release-evidence", str(non_existent_ev), "--verify-only"],
+                capture_output=True, text=True, encoding="utf-8"
+            )
+            self.assertNotEqual(res_h.returncode, 0)
+            self.assertIn("RELEASE_EVIDENCE_NOT_FOUND", res_h.stdout + res_h.stderr)
+
+            # --- Negative 2: Corrupted evidence JSON blocks verify-only ---
+            corrupt_ev = tmp / "corrupt-evidence.json"
+            corrupt_ev.write_text("{bad_json: True", encoding="utf-8")
+            res_c = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"), "--project-root", str(ROOT), "--release-evidence", str(corrupt_ev), "--verify-only"],
+                capture_output=True, text=True, encoding="utf-8"
+            )
+            self.assertNotEqual(res_c.returncode, 0)
+            self.assertIn("RELEASE_EVIDENCE_CORRUPT", res_c.stdout + res_c.stderr)
+
+            # Helper to run CLI with modified evidence
+            def run_baseline_with_evidence(mod_ev: Dict[str, Any]) -> subprocess.CompletedProcess:
+                p = tmp / "test-ev.json"
+                p.write_text(json.dumps(mod_ev, ensure_ascii=False), encoding="utf-8")
+                return subprocess.run(
+                    [sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"), "--project-root", str(ROOT), "--release-evidence", str(p), "--verify-only"],
+                    capture_output=True, text=True, encoding="utf-8"
+                )
+
+            # --- Negative 3: Old Push Run ID fails ---
+            ev3 = dict(valid_ev_data, push_run_id="42772211734")
+            res3 = run_baseline_with_evidence(ev3)
+            self.assertNotEqual(res3.returncode, 0)
+            self.assertTrue("ci_run_id" in res3.stdout or "push_run_id" in res3.stdout)
+
+            # --- Negative 4: Old PR Run ID fails ---
+            ev4 = dict(valid_ev_data, pr_run_id="42772217074")
+            res4 = run_baseline_with_evidence(ev4)
+            self.assertNotEqual(res4.returncode, 0)
+            self.assertIn("pr_run_id", res4.stdout)
+
+            # --- Negative 5: Wrong CI Commit fails ---
+            ev5 = dict(valid_ev_data, last_verified_ci_commit="e187b498faf376170b5c11d46377398be988fb38")
+            res5 = run_baseline_with_evidence(ev5)
+            self.assertNotEqual(res5.returncode, 0)
+            self.assertIn("last_verified_ci_commit", res5.stdout)
+
+            # --- Negative 6: Wrong Candidate Commit fails ---
+            ev6 = dict(valid_ev_data, candidate_commit="c52f97a52c9080bc76e05684f996fd89653e1fa8")
+            res6 = run_baseline_with_evidence(ev6)
+            self.assertNotEqual(res6.returncode, 0)
+            self.assertIn("candidate_commit", res6.stdout)
+
+            # --- Negative 7: PASS changed to NOT_VERIFIABLE fails ---
+            ev7 = dict(valid_ev_data, ci_status="NOT_VERIFIABLE")
+            res7 = run_baseline_with_evidence(ev7)
+            self.assertNotEqual(res7.returncode, 0)
+            self.assertIn("ci verification_status", res7.stdout)
+
+            # --- Negative 8: 216 tests changed to 215 tests fails ---
+            ev8 = dict(valid_ev_data, test_count=215)
+            res8 = run_baseline_with_evidence(ev8)
+            self.assertNotEqual(res8.returncode, 0)
+            self.assertIn("test count", res8.stdout)
+
+            # --- Negative 9: Windows Job failed in CI check ---
+            sim_windows_fail = {
+                "name": "Standards CI",
+                "headSha": valid_ev_data["last_verified_ci_commit"],
+                "event": "push",
+                "status": "completed",
+                "conclusion": "failure",
+                "jobs": [
+                    {"name": "Validate (ubuntu-latest)", "conclusion": "success"},
+                    {"name": "Validate (windows-latest)", "conclusion": "failure"},
+                ],
+            }
+            st9, errs9, _ = verify_single_github_run(
+                repo=valid_ev_data["repository"],
+                run_id=valid_ev_data["push_run_id"],
+                expected_event="push",
+                expected_head_sha=valid_ev_data["last_verified_ci_commit"],
+                simulate_data=sim_windows_fail,
+            )
+            self.assertEqual(st9, "FAIL")
+            self.assertTrue(any("Windows job conclusion" in e for e in errs9))
+
+            # --- Negative 10: Ubuntu Job failed in CI check ---
+            sim_ubuntu_fail = {
+                "name": "Standards CI",
+                "headSha": valid_ev_data["last_verified_ci_commit"],
+                "event": "push",
+                "status": "completed",
+                "conclusion": "failure",
+                "jobs": [
+                    {"name": "Validate (ubuntu-latest)", "conclusion": "failure"},
+                    {"name": "Validate (windows-latest)", "conclusion": "success"},
+                ],
+            }
+            st10, errs10, _ = verify_single_github_run(
+                repo=valid_ev_data["repository"],
+                run_id=valid_ev_data["push_run_id"],
+                expected_event="push",
+                expected_head_sha=valid_ev_data["last_verified_ci_commit"],
+                simulate_data=sim_ubuntu_fail,
+            )
+            self.assertEqual(st10, "FAIL")
+            self.assertTrue(any("Ubuntu job conclusion" in e for e in errs10))
+
+            # --- Negative 11: Wrong PR status fails ---
+            ev11 = dict(valid_ev_data, pr_status="MERGED")
+            res11 = run_baseline_with_evidence(ev11)
+            self.assertNotEqual(res11.returncode, 0)
+            self.assertIn("pr_status", res11.stdout)
+
+            # --- Negative 12: OLD_TAG_DELETED wrong fails ---
+            ev12 = dict(valid_ev_data, old_tag_deleted=False)
+            res12 = run_baseline_with_evidence(ev12)
+            self.assertNotEqual(res12.returncode, 0)
+            self.assertIn("OLD_TAG_DELETED", res12.stdout)
+
+            # --- Proof Test: Modifying Commit or Run ID in markdown under test STILL FAILS ---
+            # Even if content_sha256 is correctly recalculated!
+            from tools.validate_approval_contract import compute_canonical_document_sha256
+
+            # Modify baseline markdown: tamper push run id
+            base_md = (ROOT / "docs" / "当前权威基线.md").read_text(encoding="utf-8")
+            tampered_base_md = base_md.replace("42783497089", "42772211734")
+            new_sha_base = compute_canonical_document_sha256(tampered_base_md)
+            tampered_base_md = re.sub(r'content_sha256:\s*"[^"]+"', f'content_sha256: "{new_sha_base}"', tampered_base_md)
+            tampered_base_path = tmp / "tampered_baseline.md"
+            tampered_base_path.write_text(tampered_base_md, encoding="utf-8")
+
+            res_tamper_b = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"), "--project-root", str(ROOT), "--output", str(tampered_base_path), "--verify-only"],
+                capture_output=True, text=True, encoding="utf-8"
+            )
+            self.assertNotEqual(res_tamper_b.returncode, 0, "Tampered baseline MUST fail verify-only even with matching content_sha256")
+            self.assertIn("mismatches", res_tamper_b.stdout)
+
+            # Modify handoff markdown: tamper CI commit
+            handoff_md = (ROOT / "docs" / "CROSS-SESSION-HANDOFF.md").read_text(encoding="utf-8")
+            tampered_h_md = handoff_md.replace("4538b8ba29cb9413782c4197e73bddab64849d82", "e187b498faf376170b5c11d46377398be988fb38")
+            new_sha_h = compute_canonical_document_sha256(tampered_h_md)
+            tampered_h_md = re.sub(r'content_sha256:\s*"[^"]+"', f'content_sha256: "{new_sha_h}"', tampered_h_md)
+            tampered_h_path = tmp / "CROSS-SESSION-HANDOFF.md"
+            tampered_h_path.write_text(tampered_h_md, encoding="utf-8")
+
+            # Verify tampered handoff against project root fails verify-only
+            res_tamper_h = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "generate_handoff.py"), "--project-root", str(ROOT), "--output", str(tampered_h_path), "--verify-only"],
+                capture_output=True, text=True, encoding="utf-8"
+            )
+            self.assertNotEqual(res_tamper_h.returncode, 0, "Tampered handoff MUST fail verify-only even with matching content_sha256")
+            self.assertIn("mismatches", res_tamper_h.stdout)
 
     # =========================================================================
     # C. Standards Sync Tool Tests
@@ -1015,22 +1194,24 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
 
             # Verify semantic negative checks on handoff
             handoff_fixture = """
-TASK_ID=Std-012-V3-0-0-REISSUE-EVIDENCE-ALIGNMENT
-COMMIT_HASH=e187b498faf376170b5c11d46377398be988fb38
+TASK_ID=Std-013-V3-0-0-REISSUE-VERIFY-ONLY-INTEGRITY
+COMMIT_HASH=4538b8ba29cb9413782c4197e73bddab64849d82
 
 ## 1. 当前 Git 状态与分支身份 (`git_state`)
-- **本地 HEAD (`local_head`)**：`e187b498faf376170b5c11d46377398be988fb38`
+- **本地 HEAD (`local_head`)**：`4538b8ba29cb9413782c4197e73bddab64849d82`
 
 ## 3. 实际测试结果汇总 (`test_results`)
 - **通过 / 失败用例数**：`216 / 0`
 
 ## 4. 远端 CI 关联 (`ci_run`)
-- **Run ID (`run_id`)**：`42772211734`
-- **关联 Commit (`commit`)**：`e187b498faf376170b5c11d46377398be988fb38`
+- **Run ID (`run_id`)**：`42783497089`
+- **Push Run ID**：`42783497089`
+- **PR Run ID**：`42783504258`
+- **关联 Commit (`commit`)**：`4538b8ba29cb9413782c4197e73bddab64849d82`
 - **核验状态 (`verification_status`)**：`PASS`
 
 ### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)
-- **3. 最近一次已验证 CI Commit**：`e187b498faf376170b5c11d46377398be988fb38`（Run 42772211734 Push / Run 42772217074 PR #9 双平台全绿，216 tests PASS）
+- **3. 最近一次已验证 CI Commit**：`4538b8ba29cb9413782c4197e73bddab64849d82`（Run 42783497089 Push / Run 42783504258 PR #9 双平台全绿，216 tests PASS）
 - **4. 当前候选 Commit**：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
 
 ### 4.2 v3.0.0 一次性重发发布与 Tag 状态追踪
@@ -1039,7 +1220,7 @@ COMMIT_HASH=e187b498faf376170b5c11d46377398be988fb38
 - **发布流程状态 (`release_flow_status`)**：`IN_PROGRESS`
 """
             # Negative 1: Old CI Run ID fails
-            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"ci_run_id": "42763704495"})))
+            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"ci_run_id": "42772211734"})))
             # Negative 2: Wrong CI Commit fails
             self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"ci_commit": "1111111111111111111111111111111111111111"})))
             # Negative 3: PASS changed to NOT_VERIFIABLE fails

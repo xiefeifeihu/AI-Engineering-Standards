@@ -16,6 +16,7 @@ on:
 env:
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
   validate-standards:
