@@ -221,3 +221,11 @@ LOCAL_HEAD == REMOTE_HEAD == TAG_COMMIT == BUILD_COMMIT == LIVE_COMMIT
    - 编程智能体 **MUST NOT** 自行宣布 ChatGPT 已经批准，**MUST NOT** 伪造聊天审批记录或数字签名，**MUST NOT** 将设计决策阶段的批准等同于具体代码/文档 Diff 的最终批准。
    - 审批绑定的 `CANDIDATE_COMMIT` 或 `CONTENT_SHA256` 发生变化后，原审批自动失效，必须重新提交审核。
 4. **生产发布审批协同 (`STD-032`)**：生产环境部署审批继续严格执行 `STD-032` §4 的显式互斥策略与一次性消费防重放机制。
+5. **个人工程单人 Owner 治理机制 (Single Owner Governance & PR Merge Approval)**：
+   - **单人所有权与角色定位**：每个个人工程拥有且仅拥有一个合法 Owner（即 GitHub 仓库实际所有者，如 `xiefeifeihu`）。ChatGPT 仅负责跨文档事实与技术审查并提出建议，结论单独记录为 `READY_FOR_OWNER_MERGE`、`CHANGES_REQUESTED` 或 `BLOCK`；编程智能体（VibeCoding）仅负责工程代码与门禁执行；ChatGPT 不得代替 Owner 批准发布，智能体严禁自行批准。
+   - **免除多账号会签与评审死锁**：个人工程不要求第二名 Reviewer，不要求创建第二个 GitHub 账号，不要求团队审批或机器人多方会签。
+   - **PR 合并审批模式 (`GITHUB_PR_MERGE_EVENT`)**：
+     - 正式合并前，审批状态保持为 `OWNER_APPROVAL_REQUIRED`。
+     - Owner 通过 GitHub 界面将审查通过的候选 PR 合并入 `main` 分支作为最终批准动作。PR 作者与仓库 Owner 为同一人时，允许 Owner 直接合并，不强制要求提交 GitHub 自我 PR Review。
+     - 审批溯源验证（`tools/validate_approval_contract.py`）调用 GitHub PR API (`GET /repos/{owner}/{repo}/pulls/{pull_number}`) 验证：`merged=true`、`merged_by.login == 仓库 Owner`、`base.ref == "main"`、`head.sha == candidate_commit` 且 `merged_at` 非空。
+     - 满足全部溯源约束后，方可将审批状态标记为 `OWNER_APPROVED`。PR 未真实合入 `main` 前，严禁伪造 `OWNER_APPROVED`。

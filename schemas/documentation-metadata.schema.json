@@ -183,9 +183,12 @@
           "enum": [
             "AI_APPROVED",
             "OWNER_APPROVAL_REQUIRED",
+            "READY_FOR_OWNER_MERGE",
             "OWNER_APPROVED",
             "REQUEST_CHANGES",
-            "BLOCKED"
+            "CHANGES_REQUESTED",
+            "BLOCKED",
+            "BLOCK"
           ]
         },
         "approval_status": {
@@ -237,13 +240,15 @@
               "enum": [
                 "CHATGPT_INDEPENDENT_REVIEW_EVENT",
                 "OWNER_CHAT_APPROVAL_EVENT",
-                "GITHUB_PR_REVIEW_EVENT"
+                "GITHUB_PR_REVIEW_EVENT",
+                "GITHUB_PR_MERGE_EVENT"
               ]
             },
             "provenance_type": {
               "type": "string",
               "enum": [
                 "GITHUB_PR_REVIEW",
+                "GITHUB_PR_MERGE",
                 "TRUSTED_CHATGPT_EVENT",
                 "SIGNED_OWNER_EVENT",
                 "LOCAL_UNVERIFIED"

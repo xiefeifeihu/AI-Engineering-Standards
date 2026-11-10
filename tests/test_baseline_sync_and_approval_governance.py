@@ -1960,31 +1960,305 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
     # =========================================================================
     # G16-G21: Concurrency and Cleanup Robustness (P1-D Remediation)
     # =========================================================================
+    def test_owner_merge_event_approved_verifies(self) -> None:
+        """Section II: Owner PR Merge Event positive verification path."""
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-10T02:09:26Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "owner_approval": {
+                "approved_decision_ids": ["D-001"],
+                "approved_at": "2026-11-10T02:09:26Z",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+            },
+            "approval_event": {
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "event_id": "8",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8",
+                },
+            },
+        }
+        pr_data = {
+            "number": 8,
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": commit},
+            "merged_at": "2026-11-10T02:09:26Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(pr_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "VERIFIED", errors)
+        self.assertEqual(errors, [])
+
+    def test_owner_merge_event_unmerged_pr_fails(self) -> None:
+        """Section II: Unmerged PR must fail with APPROVAL_PR_NOT_MERGED; status stays OWNER_APPROVAL_REQUIRED."""
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-10T02:09:26Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "owner_approval": {
+                "approved_decision_ids": ["D-001"],
+                "approved_at": "2026-11-10T02:09:26Z",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+            },
+            "approval_event": {
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "event_id": "8",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8",
+                },
+            },
+        }
+        pr_data = {
+            "number": 8,
+            "merged": False,
+            "merged_by": None,
+            "base": {"ref": "main"},
+            "head": {"sha": commit},
+            "merged_at": None,
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(pr_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("APPROVAL_PR_NOT_MERGED" in e for e in errors), errors)
+
+    def test_owner_merge_event_merged_by_non_owner_fails(self) -> None:
+        """Section II: PR merged by unauthorized third-party user must fail."""
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-10T02:09:26Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "approval_event": {
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "event_id": "8",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8",
+                },
+            },
+        }
+        pr_data = {
+            "number": 8,
+            "merged": True,
+            "merged_by": {"login": "attacker-user"},
+            "base": {"ref": "main"},
+            "head": {"sha": commit},
+            "merged_at": "2026-11-10T02:09:26Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(pr_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("APPROVAL_ACTOR_MISMATCH" in e for e in errors), errors)
+
+    def test_owner_merge_event_base_branch_not_main_fails(self) -> None:
+        """Section II: PR merged into non-main branch must fail."""
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-10T02:09:26Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "approval_event": {
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "event_id": "8",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8",
+                },
+            },
+        }
+        pr_data = {
+            "number": 8,
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "feat/other"},
+            "head": {"sha": commit},
+            "merged_at": "2026-11-10T02:09:26Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(pr_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("APPROVAL_PR_BASE_BRANCH_MISMATCH" in e for e in errors), errors)
+
+    def test_owner_merge_event_head_commit_mismatch_fails(self) -> None:
+        """Section II: PR head commit must match candidate commit."""
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-10T02:09:26Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "approval_event": {
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "event_id": "8",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8",
+                },
+            },
+        }
+        pr_data = {
+            "number": 8,
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": "b" * 40},
+            "merged_at": "2026-11-10T02:09:26Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(pr_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("APPROVAL_PR_HEAD_COMMIT_MISMATCH" in e for e in errors), errors)
+
+    def test_owner_merge_event_agent_actor_fails(self) -> None:
+        """Section II: Agent or bot actor cannot perform Owner merge approval."""
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-10T02:09:26Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "approval_event": {
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "event_id": "8",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "claude-code",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8",
+                },
+            },
+        }
+        pr_data = {
+            "number": 8,
+            "merged": True,
+            "merged_by": {"login": "claude-code"},
+            "base": {"ref": "main"},
+            "head": {"sha": commit},
+            "merged_at": "2026-11-10T02:09:26Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(pr_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("AGENT_SELF_APPROVAL_FORBIDDEN" in e for e in errors), errors)
+
     def test_g16_concurrent_upgrade_processes_blocked_by_mutex(self) -> None:
+        from tools.standards_sync.core import _os_lock_file
         with tempfile.TemporaryDirectory() as tmp:
             dst = Path(tmp)
             (dst / "standards.lock.json").write_text("{}", encoding="utf-8")
             (dst / "engineering-manifest.yaml").write_text("standards: {}", encoding="utf-8")
             lock_file = dst / ".standards_sync.lock"
-            lock_file.write_text(json.dumps({"pid": 999999, "tx_id": "other-process"}), encoding="utf-8")
-
-            ok, err = execute_transactional_two_file_update(
-                project_root=dst,
-                new_lock={"version": "3.0.0"},
-                new_manifest_standards={"version": "3.0.0"},
-            )
-            self.assertFalse(ok)
-            self.assertIn("TRANSACTION_CONCURRENCY_BLOCKED", str(err))
+            fd_holder = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o644)
+            os.write(fd_holder, json.dumps({"pid": 999999, "tx_id": "other-process"}).encode("utf-8"))
+            _os_lock_file(fd_holder)
+            try:
+                ok, err = execute_transactional_two_file_update(
+                    project_root=dst,
+                    new_lock={"version": "3.0.0"},
+                    new_manifest_standards={"version": "3.0.0"},
+                )
+                self.assertFalse(ok)
+                self.assertIn("TRANSACTION_CONCURRENCY_BLOCKED", str(err))
+            finally:
+                os.close(fd_holder)
 
     def test_g17_upgrade_and_recover_concurrent_blocked(self) -> None:
+        from tools.standards_sync.core import _os_lock_file
         with tempfile.TemporaryDirectory() as tmp:
             dst = Path(tmp)
             lock_file = dst / ".standards_sync.lock"
-            lock_file.write_text(json.dumps({"pid": 999999, "tx_id": "other-process"}), encoding="utf-8")
-
-            ok, err = recover_interrupted_transaction(dst)
-            self.assertFalse(ok)
-            self.assertIn("TRANSACTION_CONCURRENCY_BLOCKED", str(err))
+            fd_holder = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o644)
+            os.write(fd_holder, json.dumps({"pid": 999999, "tx_id": "other-process"}).encode("utf-8"))
+            _os_lock_file(fd_holder)
+            try:
+                ok, err = recover_interrupted_transaction(dst)
+                self.assertFalse(ok)
+                self.assertIn("TRANSACTION_CONCURRENCY_BLOCKED", str(err))
+            finally:
+                os.close(fd_holder)
 
     def test_g18_backup_deletion_failure_preserves_committed_cleanup_pending(self) -> None:
         from unittest.mock import patch
@@ -2179,7 +2453,12 @@ while True:
             res_lock = json.loads(lock_path.read_text(encoding="utf-8"))
             self.assertEqual(res_lock.get("version"), "2.11.0")
             self.assertFalse((dst / ".standards_sync_tx.json").exists())
-            self.assertFalse((dst / ".standards_sync.lock").exists())
+            self.assertTrue((dst / ".standards_sync.lock").exists())
+            # Persistent lock file exists and can immediately be acquired by a new transaction
+            acq_ok, acq_err, fd = acquire_transaction_lock(dst, "test-tx-recovered")
+            self.assertTrue(acq_ok, f"Failed to acquire lock: {acq_err}")
+            self.assertIsNotNone(fd)
+            release_transaction_lock(dst, fd)
 
     def test_g24_journal_path_traversal_targets_blocked(self) -> None:
         """P1-B: Fault injection for journal path traversal. Targets with '../' traversal
@@ -2246,6 +2525,213 @@ while True:
                 rec_ok, rec_err = recover_interrupted_transaction(dst)
                 self.assertFalse(rec_ok)
                 self.assertIn("CORRUPT_TRANSACTION_JOURNAL", str(rec_err))
+
+
+    def test_g26_journal_internal_normal_files_blocked(self) -> None:
+        """Section III-B: Journal path whitelist strictly allows only fixed target files
+        (standards.lock.json, engineering-manifest.yaml, and their .bak backups).
+        Internal normal files (e.g. README.md, docs/RELEASE-OPERATIONS.md, config files)
+        or unknown target keys are blocked with CORRUPT_TRANSACTION_JOURNAL and left untouched.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            readme_file = dst / "README.md"
+            readme_file.write_text("# Important Project README\nDo not overwrite!", encoding="utf-8")
+            docs_dir = dst / "docs"
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            doc_file = docs_dir / "RELEASE-OPERATIONS.md"
+            doc_file.write_text("# Sensitive Release Ops", encoding="utf-8")
+
+            bad_cases = [
+                {"lock_path": "README.md"},
+                {"manifest_path": "docs/RELEASE-OPERATIONS.md"},
+                {"unknown_key": "standards.lock.json"},
+                {"lock_path": "standards.lock.json", "manifest_path": "config.yaml"},
+                {"lock_path": "standards.lock.json", "manifest_path": "engineering-manifest.yaml", "temp_lock": "arbitrary_temp.json"},
+            ]
+            for case in bad_cases:
+                targets = {
+                    "lock_path": "standards.lock.json",
+                    "manifest_path": "engineering-manifest.yaml",
+                    "lock_bak": "standards.lock.json.bak",
+                    "manifest_bak": "engineering-manifest.yaml.bak",
+                }
+                targets.update(case)
+                journal = {
+                    "tx_id": "malicious-internal-tx",
+                    "phase": "PREPARED",
+                    "operation_type": "UPDATE",
+                    "status": "IN_PROGRESS",
+                    "has_orig_lock": True,
+                    "has_orig_manifest": True,
+                    "targets": targets,
+                }
+                (dst / ".standards_sync_tx.json").write_text(json.dumps(journal), encoding="utf-8")
+                det = detect_interrupted_transaction(dst)
+                self.assertTrue(det.get("journal_corrupt"), f"Expected journal_corrupt for {case}")
+                rec_ok, rec_err = recover_interrupted_transaction(dst)
+                self.assertFalse(rec_ok)
+                self.assertIn("CORRUPT_TRANSACTION_JOURNAL", str(rec_err))
+                self.assertEqual(readme_file.read_text(encoding="utf-8"), "# Important Project README\nDo not overwrite!")
+                self.assertEqual(doc_file.read_text(encoding="utf-8"), "# Sensitive Release Ops")
+
+    def test_g27_transaction_lock_multiprocess_concurrency_and_recovery(self) -> None:
+        """Section III-A: Real multi-process concurrency, lock handoff, and crash recovery.
+        Verifies:
+        1. Lock release and immediate acquisition by another process without race window.
+        2. Two processes consecutively executing transactions with persistent lock file.
+        3. Stale metadata after abnormal termination is recovered and another process can execute.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            lock_path = dst / "standards.lock.json"
+            lock_path.write_text(json.dumps({"version": "2.11.0", "digest": "init"}), encoding="utf-8")
+            manifest_path = dst / "engineering-manifest.yaml"
+            manifest_path.write_text("standards: {}\n", encoding="utf-8")
+
+            # Part 1: Process 1 acquires lock, signals, waits for trigger, then releases.
+            # Process 2 waits for trigger and immediately acquires lock.
+            child_proc1 = f"""
+import sys, time
+from pathlib import Path
+sys.path.insert(0, r"{ROOT}")
+from tools.standards_sync.core import acquire_transaction_lock, release_transaction_lock
+
+dst = Path(r"{dst}")
+ok, err, fd = acquire_transaction_lock(dst, "tx-proc-1")
+if not ok:
+    print(f"PROC1_ERROR: {{err}}", flush=True)
+    sys.exit(1)
+print("PROC1_HOLDING", flush=True)
+cmd = sys.stdin.readline().strip()
+release_transaction_lock(dst, fd)
+print("PROC1_RELEASED", flush=True)
+"""
+            child_proc2 = f"""
+import sys, time
+from pathlib import Path
+sys.path.insert(0, r"{ROOT}")
+from tools.standards_sync.core import acquire_transaction_lock, release_transaction_lock
+
+dst = Path(r"{dst}")
+cmd = sys.stdin.readline().strip()
+ok, err, fd = acquire_transaction_lock(dst, "tx-proc-2")
+if ok:
+    print("PROC2_ACQUIRED", flush=True)
+    release_transaction_lock(dst, fd)
+    print("PROC2_RELEASED", flush=True)
+else:
+    print(f"PROC2_FAILED: {{err}}", flush=True)
+    sys.exit(2)
+"""
+            p1 = subprocess.Popen([sys.executable, "-c", child_proc1], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+            line1 = p1.stdout.readline().strip()
+            self.assertEqual(line1, "PROC1_HOLDING")
+
+            p2 = subprocess.Popen([sys.executable, "-c", child_proc2], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+            # Release p1 and trigger p2 simultaneously
+            p1.stdin.write("RELEASE\n")
+            p1.stdin.flush()
+            p2.stdin.write("ACQUIRE\n")
+            p2.stdin.flush()
+
+            out2 = p2.stdout.readline().strip()
+            self.assertEqual(out2, "PROC2_ACQUIRED")
+            rel1 = p1.stdout.readline().strip()
+            self.assertEqual(rel1, "PROC1_RELEASED")
+            rel2 = p2.stdout.readline().strip()
+            self.assertEqual(rel2, "PROC2_RELEASED")
+            p1.wait(timeout=5)
+            p2.wait(timeout=5)
+            p1.stdin.close()
+            p1.stdout.close()
+            p2.stdin.close()
+            p2.stdout.close()
+            self.assertEqual(p1.returncode, 0)
+            self.assertEqual(p2.returncode, 0)
+            self.assertTrue((dst / ".standards_sync.lock").exists())
+
+            # Part 2: Two processes executing consecutive transactions
+            step_code = f"""
+import sys, json
+from pathlib import Path
+sys.path.insert(0, r"{ROOT}")
+from tools.standards_sync.core import acquire_transaction_lock, release_transaction_lock
+
+dst = Path(r"{dst}")
+tx_name = sys.argv[1]
+val = sys.argv[2]
+ok, err, fd = acquire_transaction_lock(dst, tx_name)
+if not ok:
+    print(f"FAILED: {{err}}", flush=True)
+    sys.exit(3)
+lp = dst / "standards.lock.json"
+data = json.loads(lp.read_text(encoding="utf-8"))
+data["version"] = val
+lp.write_text(json.dumps(data), encoding="utf-8")
+release_transaction_lock(dst, fd)
+print("SUCCESS", flush=True)
+"""
+            res_c1 = subprocess.run([sys.executable, "-c", step_code, "tx-c1", "2.12.0"], capture_output=True, text=True)
+            self.assertEqual(res_c1.returncode, 0)
+            self.assertIn("SUCCESS", res_c1.stdout)
+            self.assertEqual(json.loads(lock_path.read_text(encoding="utf-8")).get("version"), "2.12.0")
+
+            res_c2 = subprocess.run([sys.executable, "-c", step_code, "tx-c2", "3.0.0"], capture_output=True, text=True)
+            self.assertEqual(res_c2.returncode, 0)
+            self.assertIn("SUCCESS", res_c2.stdout)
+            self.assertEqual(json.loads(lock_path.read_text(encoding="utf-8")).get("version"), "3.0.0")
+
+            # Part 3: Abnormal termination & recovery, then re-execution
+            crash_code = f"""
+import sys, json, time, hashlib
+from pathlib import Path
+sys.path.insert(0, r"{ROOT}")
+from tools.standards_sync.core import acquire_transaction_lock
+
+dst = Path(r"{dst}")
+ok, err, fd = acquire_transaction_lock(dst, "tx-crashed")
+if not ok:
+    sys.exit(4)
+lock_bytes = (dst / "standards.lock.json").read_bytes()
+(dst / "standards.lock.json.bak").write_bytes(lock_bytes)
+(dst / "standards.lock.json").write_text(json.dumps({{"version": "damaged"}}), encoding="utf-8")
+journal = {{
+    "tx_id": "tx-crashed",
+    "phase": "PREPARED",
+    "operation_type": "UPDATE",
+    "status": "IN_PROGRESS",
+    "has_orig_lock": True,
+    "has_orig_manifest": False,
+    "orig_lock_sha256": hashlib.sha256(lock_bytes).hexdigest(),
+    "backup_lock_sha256": hashlib.sha256(lock_bytes).hexdigest(),
+    "targets": {{
+        "lock_path": "standards.lock.json",
+        "lock_bak": "standards.lock.json.bak",
+    }}
+}}
+(dst / ".standards_sync_tx.json").write_text(json.dumps(journal), encoding="utf-8")
+print("CRASH_READY", flush=True)
+while True:
+    time.sleep(0.5)
+"""
+            p_crash = subprocess.Popen([sys.executable, "-c", crash_code], stdout=subprocess.PIPE, text=True)
+            ready = p_crash.stdout.readline().strip()
+            self.assertEqual(ready, "CRASH_READY")
+            p_crash.kill()
+            p_crash.stdout.close()
+            p_crash.wait()
+
+            # Recovery
+            rec_ok, rec_err = recover_interrupted_transaction(dst)
+            self.assertTrue(rec_ok, f"Recovery failed: {rec_err}")
+            self.assertEqual(json.loads(lock_path.read_text(encoding="utf-8")).get("version"), "3.0.0")
+
+            # Post-recovery transaction execution
+            res_c3 = subprocess.run([sys.executable, "-c", step_code, "tx-c3", "3.0.1"], capture_output=True, text=True)
+            self.assertEqual(res_c3.returncode, 0)
+            self.assertIn("SUCCESS", res_c3.stdout)
+            self.assertEqual(json.loads(lock_path.read_text(encoding="utf-8")).get("version"), "3.0.1")
 
 
 if __name__ == "__main__":

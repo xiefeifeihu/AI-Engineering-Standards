@@ -236,11 +236,38 @@ def _os_unlock_file(fd: int) -> None:
         pass
 
 
-def _validate_journal_target(project_root: Path, target_val: Any) -> Tuple[bool, Optional[Path], Optional[str]]:
-    """Strictly validate target path from journal to prevent path traversal or symlink escape."""
+ALLOWED_JOURNAL_TARGET_KEYS = {
+    "lock_path",
+    "manifest_path",
+    "lock_bak",
+    "manifest_bak",
+    "lock_tmp",
+    "manifest_tmp",
+}
+
+FIXED_JOURNAL_TARGET_NAMES = {
+    "standards.lock.json",
+    "engineering-manifest.yaml",
+    "standards.lock.json.bak",
+    "engineering-manifest.yaml.bak",
+}
+
+
+def _validate_journal_target(
+    project_root: Path,
+    target_val: Any,
+    target_key: Optional[str] = None,
+    tx_id: Optional[str] = None,
+) -> Tuple[bool, Optional[Path], Optional[str]]:
+    """Strictly validate target path from journal against whitelist to prevent path traversal,
+    symlink escape, and tampering with regular engineering files (such as README.md, docs/, configs).
+    """
     if not isinstance(target_val, str) or not target_val.strip():
         return False, None, "TARGET_EMPTY: Target path must be a non-empty string"
     raw = target_val.strip()
+
+    if target_key is not None and target_key not in ALLOWED_JOURNAL_TARGET_KEYS:
+        return False, None, f"TARGET_UNKNOWN_KEY: Unknown target key '{target_key}' in journal targets"
 
     if raw.startswith("/") or raw.startswith("\\"):
         return False, None, f"TARGET_ABSOLUTE_PATH: Target path cannot start with slash: {raw}"
@@ -256,6 +283,51 @@ def _validate_journal_target(project_root: Path, target_val: Any) -> Tuple[bool,
     for part in p.parts:
         if part in ("..", ".", ""):
             return False, None, f"TARGET_TRAVERSAL: Relative traversal '{part}' prohibited in target path: {raw}"
+
+    # Journal targets must only refer to top-level files in project_root; directories (like docs/) are forbidden
+    if len(p.parts) != 1:
+        return False, None, f"TARGET_SUBDIRECTORY_PROHIBITED: Journal target cannot specify subdirectories or paths: {raw}"
+
+    # Strict whitelist verification against tool-authorized target files
+    filename = p.name
+    if target_key == "lock_path":
+        if filename != "standards.lock.json":
+            return False, None, f"TARGET_WHITELIST_VIOLATION: Key 'lock_path' must be 'standards.lock.json', got '{filename}'"
+    elif target_key == "manifest_path":
+        if filename != "engineering-manifest.yaml":
+            return False, None, f"TARGET_WHITELIST_VIOLATION: Key 'manifest_path' must be 'engineering-manifest.yaml', got '{filename}'"
+    elif target_key == "lock_bak":
+        if filename != "standards.lock.json.bak":
+            return False, None, f"TARGET_WHITELIST_VIOLATION: Key 'lock_bak' must be 'standards.lock.json.bak', got '{filename}'"
+    elif target_key == "manifest_bak":
+        if filename != "engineering-manifest.yaml.bak":
+            return False, None, f"TARGET_WHITELIST_VIOLATION: Key 'manifest_bak' must be 'engineering-manifest.yaml.bak', got '{filename}'"
+    elif target_key == "lock_tmp":
+        valid_tmp = (
+            filename == "standards.lock.json.tmp"
+            or (tx_id and filename == f"standards.lock.json.{tx_id}.tmp")
+            or bool(re.fullmatch(r"^standards\.lock\.json\.(?:[A-Za-z0-9_.-]+)\.tmp$", filename))
+        )
+        if not valid_tmp:
+            return False, None, f"TARGET_WHITELIST_VIOLATION: Key 'lock_tmp' target '{filename}' does not match temporary file naming rule"
+    elif target_key == "manifest_tmp":
+        valid_tmp = (
+            filename == "engineering-manifest.yaml.tmp"
+            or (tx_id and filename == f"engineering-manifest.yaml.{tx_id}.tmp")
+            or bool(re.fullmatch(r"^engineering-manifest\.yaml\.(?:[A-Za-z0-9_.-]+)\.tmp$", filename))
+        )
+        if not valid_tmp:
+            return False, None, f"TARGET_WHITELIST_VIOLATION: Key 'manifest_tmp' target '{filename}' does not match temporary file naming rule"
+    else:
+        # Generic whitelist check when target_key is not provided
+        valid_fixed = filename in FIXED_JOURNAL_TARGET_NAMES
+        valid_tmp = bool(
+            filename in ("standards.lock.json.tmp", "engineering-manifest.yaml.tmp")
+            or re.fullmatch(r"^standards\.lock\.json\.(?:[A-Za-z0-9_.-]+)\.tmp$", filename)
+            or re.fullmatch(r"^engineering-manifest\.yaml\.(?:[A-Za-z0-9_.-]+)\.tmp$", filename)
+        )
+        if not (valid_fixed or valid_tmp):
+            return False, None, f"TARGET_WHITELIST_VIOLATION: Target file '{filename}' is not an authorized standards sync target"
 
     try:
         resolved_root = project_root.resolve()
@@ -2116,153 +2188,37 @@ def verify_consumer_ci_gate(
         if gate.get("job_id") is not None and gate.get("job_id") != job_id:
             return "FAILED", [f"CONSUMER_CI_GATE_JOB_ID_MISMATCH: gate job_id ({gate.get('job_id')}) != GitHub API job_id ({job_id})"]
 
-        # Independent raw execution evidence from GitHub Actions (Artifact or Job Log)
-        artifact_info = gate.get("artifact_info")
-        if artifact_info:
-            if artifact_info.get("run_id") != run_id:
-                return "FAILED", ["CONSUMER_CI_ARTIFACT_RUN_ID_MISMATCH: Artifact run_id does not match workflow run"]
-            if artifact_info.get("head_sha") != expected_commit:
-                return "FAILED", ["CONSUMER_CI_ARTIFACT_COMMIT_MISMATCH: Artifact commit does not match expected head_sha"]
+        # Authoritative raw execution evidence: GitHub Actions Job Log
+        job_log_url = f"https://api.github.com/repos/{repository}/actions/jobs/{job_id}/logs"
+        try:
+            log_bytes = get_bytes(job_log_url)
+            runner_log = log_bytes.decode("utf-8", errors="replace")
+        except Exception as log_exc:
+            return "NOT_VERIFIABLE", [f"CONSUMER_CI_API_NOT_VERIFIABLE: Cannot fetch raw job log from GitHub Actions: {log_exc}"]
 
-            target_id = artifact_info.get("artifact_id")
-            target_name = artifact_info.get("artifact_name")
-            target_sha = artifact_info.get("artifact_sha256")
-            report_name = artifact_info.get("report_file")
+        if has_test:
+            log_status, log_errors = parse_runner_test_log(
+                runner_log=runner_log,
+                expected_commit=expected_commit,
+                claimed_passed=passed,
+                claimed_collected=collected,
+                claimed_failed=failed,
+                claimed_skipped=skipped,
+            )
+            if log_status != "VERIFIED":
+                return log_status, log_errors
 
-            if target_id is not None and (not isinstance(target_id, int) or target_id <= 0):
-                return "FAILED", ["CONSUMER_CI_ARTIFACT_ID_MISSING: artifact_info.artifact_id must be a positive integer"]
-            if target_name is not None and (not isinstance(target_name, str) or not target_name.strip()):
-                return "FAILED", ["CONSUMER_CI_ARTIFACT_NAME_MISSING: artifact_info.artifact_name must be a non-empty string"]
-            if artifact_info.get("job_id") is not None and artifact_info.get("job_id") != job_id:
-                return "FAILED", [f"CONSUMER_CI_ARTIFACT_JOB_ID_MISMATCH: artifact_info.job_id ({artifact_info.get('job_id')}) != GitHub API job_id ({job_id})"]
-
-            artifacts_data = get_json(f"https://api.github.com/repos/{repository}/actions/runs/{run_id}/artifacts")
-            artifacts = artifacts_data.get("artifacts") or []
-            matching_art = [
-                a for a in artifacts
-                if a.get("id") == target_id and a.get("name") == target_name
-            ]
-            if not matching_art:
-                return "FAILED", ["CONSUMER_CI_ARTIFACT_NOT_FOUND: Artifact not found on GitHub Actions run"]
-            art = matching_art[0]
-            if art.get("expired"):
-                return "FAILED", ["CONSUMER_CI_ARTIFACT_EXPIRED: Artifact on GitHub has expired"]
-
-            art_run_id = (art.get("workflow_run") or {}).get("id")
-            if art_run_id and art_run_id != run_id:
-                return "FAILED", ["CONSUMER_CI_ARTIFACT_RUN_ID_MISMATCH: Artifact workflow_run id does not match run_id"]
-
-            art_download_url = art.get("archive_download_url") or f"https://api.github.com/repos/{repository}/actions/artifacts/{art.get('id')}/zip"
-            try:
-                art_content = get_bytes(art_download_url, max_bytes=MAX_ARTIFACT_ZIP_BYTES)
-            except ValueError as ve:
-                return "FAILED", [f"CONSUMER_CI_ARTIFACT_SIZE_EXCEEDED: {ve}"]
-
-            actual_art_sha = hashlib.sha256(art_content).hexdigest()
-            expected_art_sha = str(target_sha).lower().removeprefix("sha256:")
-            if actual_art_sha != expected_art_sha:
-                return "FAILED", [f"CONSUMER_CI_ARTIFACT_SHA256_MISMATCH: Artifact sha256 {actual_art_sha} != expected {expected_art_sha}"]
-
-            # Safe ZIP extraction without path traversal and size check
-            try:
-                zf = zipfile.ZipFile(io.BytesIO(art_content))
-                for info in zf.infolist():
-                    p_norm = Path(info.filename)
-                    if ".." in p_norm.parts or info.filename.startswith(("/", "\\")) or re.match(r"^[a-zA-Z]:", info.filename):
-                        return "FAILED", ["CONSUMER_CI_ARTIFACT_PATH_TRAVERSAL_DETECTED: Malicious path inside artifact ZIP"]
-                    if info.file_size > MAX_REPORT_JSON_BYTES:
-                        return "FAILED", [f"CONSUMER_CI_ARTIFACT_REPORT_SIZE_EXCEEDED: Artifact entry {info.filename} exceeds maximum allowed {MAX_REPORT_JSON_BYTES} bytes"]
-            except Exception as z_err:
-                return "FAILED", [f"CONSUMER_CI_ARTIFACT_CORRUPT: Failed to read artifact ZIP: {z_err}"]
-
-            if not report_name or not isinstance(report_name, str) or not report_name.strip():
-                return "FAILED", ["CONSUMER_CI_ARTIFACT_REPORT_FILE_UNSPECIFIED: artifact_info.report_file must be explicitly specified"]
-            if report_name not in zf.namelist():
-                return "FAILED", [f"CONSUMER_CI_ARTIFACT_REPORT_MISSING: Specified report file '{report_name}' not found in artifact ZIP"]
-
-            try:
-                rep_bytes = zf.read(report_name)
-                rep_data = json.loads(rep_bytes.decode("utf-8"))
-            except Exception as parse_err:
-                return "FAILED", [f"CONSUMER_CI_ARTIFACT_REPORT_UNPARSEABLE: Failed to parse {report_name}: {parse_err}"]
-
-            if not isinstance(rep_data, dict):
-                return "FAILED", ["CONSUMER_CI_RAW_REPORT_INVALID_STRUCTURE: Artifact report root must be a JSON object"]
-
-            # Validate report metadata
-            if "repository" in rep_data and str(rep_data["repository"]).lower() != repository.lower():
-                return "FAILED", ["CONSUMER_CI_RAW_REPORT_REPOSITORY_MISMATCH: artifact report belongs to different repository"]
-            rep_head = rep_data.get("head_sha") or rep_data.get("commit")
-            if rep_head and rep_head.lower() != expected_commit.lower():
-                return "FAILED", ["CONSUMER_CI_RAW_REPORT_COMMIT_MISMATCH: artifact report bound to a different commit"]
-            if "run_id" in rep_data and rep_data["run_id"] != run_id:
-                return "FAILED", ["CONSUMER_CI_RAW_REPORT_RUN_ID_MISMATCH: artifact report run_id mismatch"]
-
-            # Job identity binding in structured report
-            rep_job_id = rep_data.get("job_id")
-            rep_job_name = rep_data.get("job_name")
-            if rep_job_id is None and rep_job_name is None:
-                return "FAILED", ["CONSUMER_CI_RAW_REPORT_JOB_IDENTITY_MISSING: Artifact report must specify job_id or job_name bound to GitHub Actions Job"]
-            if rep_job_id is not None and rep_job_id != job_id:
-                return "FAILED", [f"CONSUMER_CI_RAW_REPORT_JOB_ID_MISMATCH: Structured artifact report job_id ({rep_job_id}) != GitHub API job_id ({job_id})"]
-            if rep_job_name is not None and rep_job_name != gate.get("job_name"):
-                return "FAILED", ["CONSUMER_CI_RAW_REPORT_JOB_NAME_MISMATCH: artifact report job_name mismatch"]
-
-            if has_test:
-                summary = rep_data.get("summary") if isinstance(rep_data.get("summary"), dict) else rep_data
-                rep_c = summary.get("tests_collected") if "tests_collected" in summary else summary.get("collected") if "collected" in summary else summary.get("total")
-                rep_p = summary.get("tests_passed") if "tests_passed" in summary else summary.get("passed")
-                rep_f = summary.get("tests_failed") if "tests_failed" in summary else summary.get("failed", 0)
-                rep_s = summary.get("tests_skipped") if "tests_skipped" in summary else summary.get("skipped", 0)
-                rep_e = summary.get("test_errors") if "test_errors" in summary else summary.get("errors", 0)
-
-                if rep_c is None or rep_p is None:
-                    return "FAILED", ["CONSUMER_CI_RAW_REPORT_MISSING_REQUIRED_FIELDS: artifact report missing required test execution fields"]
-                if rep_c <= 0:
-                    return "FAILED", ["CONSUMER_CI_GATE_ZERO_TESTS_COLLECTED: artifact report indicates 0 tests were collected"]
-                if rep_p <= 0:
-                    return "FAILED", ["CONSUMER_CI_GATE_NO_TESTS_PASSED: artifact report indicates 0 passed tests"]
-                if rep_f > 0 or rep_e > 0:
-                    return "FAILED", [f"CONSUMER_CI_GATE_HAS_FAILED_TESTS: artifact report indicates {rep_f} failed tests, {rep_e} errors"]
-                if rep_s >= rep_c:
-                    return "FAILED", ["CONSUMER_CI_GATE_ALL_TESTS_SKIPPED: artifact report indicates all tests were skipped"]
-                if rep_c != rep_p + rep_f + rep_s + rep_e:
-                    return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNTS_INCONSISTENT: collected={rep_c} != passed({rep_p}) + failed({rep_f}) + skipped({rep_s}) + errors({rep_e})"]
-
-                if rep_p != passed or rep_c != collected:
-                    return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNT_MISMATCH: claimed passed={passed} collected={collected}, artifact report has passed={rep_p} collected={rep_c}"]
-
-        else:
-            job_log_url = f"https://api.github.com/repos/{repository}/actions/jobs/{job_id}/logs"
-            try:
-                log_bytes = get_bytes(job_log_url)
-                runner_log = log_bytes.decode("utf-8", errors="replace")
-            except Exception as log_exc:
-                return "NOT_VERIFIABLE", [f"CONSUMER_CI_API_NOT_VERIFIABLE: Cannot fetch raw job log from GitHub Actions: {log_exc}"]
-
-            if has_test:
-                log_status, log_errors = parse_runner_test_log(
-                    runner_log=runner_log,
-                    expected_commit=expected_commit,
-                    claimed_passed=passed,
-                    claimed_collected=collected,
-                    claimed_failed=failed,
-                    claimed_skipped=skipped,
-                )
-                if log_status != "VERIFIED":
-                    return log_status, log_errors
-
-            elif has_scan:
-                m_vuln = re.search(r"(\d+)\s+vulnerabilit(?:y|ies)\s+found", runner_log, re.IGNORECASE)
-                if m_vuln and int(m_vuln.group(1)) > 0:
-                    return "FAILED", [f"CONSUMER_CI_GATE_SCAN_VULNERABILITIES_FOUND: raw runner log indicates {m_vuln.group(1)} vulnerabilities"]
-                if "SUCCESS" not in runner_log.upper() and "OK" not in runner_log.upper() and "PASSED" not in runner_log.upper():
-                    return "FAILED", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: raw runner log does not contain scan success indicators"]
-            elif has_release:
-                if "RELEASE FAILED" in runner_log.upper() or "CHECK FAILED" in runner_log.upper():
-                    return "FAILED", ["CONSUMER_CI_GATE_RELEASE_CHECKS_FAILED: raw runner log indicates release check failure"]
-                if "SUCCESS" not in runner_log.upper() and "OK" not in runner_log.upper() and "PASSED" not in runner_log.upper():
-                    return "FAILED", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: raw runner log does not contain release success indicators"]
+        elif has_scan:
+            m_vuln = re.search(r"(\d+)\s+vulnerabilit(?:y|ies)\s+found", runner_log, re.IGNORECASE)
+            if m_vuln and int(m_vuln.group(1)) > 0:
+                return "FAILED", [f"CONSUMER_CI_GATE_SCAN_VULNERABILITIES_FOUND: raw runner log indicates {m_vuln.group(1)} vulnerabilities"]
+            if "SUCCESS" not in runner_log.upper() and "OK" not in runner_log.upper() and "PASSED" not in runner_log.upper():
+                return "FAILED", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: raw runner log does not contain scan success indicators"]
+        elif has_release:
+            if "RELEASE FAILED" in runner_log.upper() or "CHECK FAILED" in runner_log.upper():
+                return "FAILED", ["CONSUMER_CI_GATE_RELEASE_CHECKS_FAILED: raw runner log indicates release check failure"]
+            if "SUCCESS" not in runner_log.upper() and "OK" not in runner_log.upper() and "PASSED" not in runner_log.upper():
+                return "FAILED", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: raw runner log does not contain release success indicators"]
 
         return "VERIFIED", []
     except Exception as exc:
@@ -2864,74 +2820,7 @@ def acquire_transaction_lock(
             time.sleep(0.05)
             continue
 
-        # We acquired the OS kernel lock!
-        holder: Dict[str, Any] = {}
-        try:
-            os.lseek(fd, 0, os.SEEK_SET)
-            raw = os.read(fd, 4096).decode("utf-8", errors="replace").strip()
-            if raw:
-                holder = json.loads(raw)
-        except Exception:
-            holder = {}
-
-        holder_pid = holder.get("pid")
-        holder_tx = holder.get("tx_id")
-        holder_ident = holder.get("process_identity")
-
-        if holder_pid == current_pid:
-            _REENTRANT_TX_LOCK_DEPTH[key] = _REENTRANT_TX_LOCK_DEPTH.get(key, 0) + 1
-            return True, None, fd
-
-        if holder_pid is not None:
-            # Check if previous holder process is alive
-            if _is_process_alive(holder_pid, holder_ident):
-                # An active process is still alive! Release lock and wait
-                _os_unlock_file(fd)
-                try:
-                    os.close(fd)
-                except Exception:
-                    pass
-                now = datetime.now(timezone.utc).timestamp()
-                if now - start >= timeout:
-                    return (
-                        False,
-                        f"TRANSACTION_CONCURRENCY_BLOCKED: Another transaction or recovery process is active (lock held by pid={holder_pid}, tx_id={holder_tx})",
-                        None,
-                    )
-                time.sleep(0.05)
-                continue
-
-            # Process is dead! But rule 3: Do NOT blindly delete or steal lock solely based on PID number!
-            # Rule 4: Check lock owner and transaction identity against transaction journal!
-            journal_path = project_root / ".standards_sync_tx.json"
-            can_reclaim_stale_lock = False
-            if journal_path.exists():
-                try:
-                    j_data = json.loads(journal_path.read_text(encoding="utf-8"))
-                    if isinstance(j_data, dict) and j_data.get("tx_id") == holder_tx:
-                        if is_recovery or tx_id == "tx-recovery":
-                            can_reclaim_stale_lock = True
-                except Exception:
-                    can_reclaim_stale_lock = False
-
-            if not can_reclaim_stale_lock:
-                # Lock belongs to an unverified or alien transaction; do not blindly overwrite!
-                _os_unlock_file(fd)
-                try:
-                    os.close(fd)
-                except Exception:
-                    pass
-                now = datetime.now(timezone.utc).timestamp()
-                if now - start >= timeout:
-                    return (
-                        False,
-                        f"TRANSACTION_CONCURRENCY_BLOCKED: Another transaction or recovery process is active (lock held by pid={holder_pid}, tx_id={holder_tx})",
-                        None,
-                    )
-                time.sleep(0.05)
-                continue
-
-        # Fresh lock or verified stale lock reclaimed for recovery:
+        # We acquired the OS kernel lock! The OS file lock is the sole authority for mutual exclusion.
         try:
             os.ftruncate(fd, 0)
             os.lseek(fd, 0, os.SEEK_SET)
@@ -2941,9 +2830,6 @@ def acquire_transaction_lock(
                 "acquired_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "process_identity": _get_process_identity(current_pid),
             }
-            if holder_pid:
-                lock_payload["recovered_from_stale_pid"] = holder_pid
-                lock_payload["recovered_from_stale_tx"] = holder_tx
             payload_bytes = (json.dumps(lock_payload, indent=2) + "\n").encode("utf-8")
             os.write(fd, payload_bytes)
             os.fsync(fd)
@@ -2959,7 +2845,9 @@ def acquire_transaction_lock(
 
 
 def release_transaction_lock(project_root: Path, fd: Optional[int]) -> None:
-    """Release the cross-process transaction lock, decrementing re-entrancy depth."""
+    """Release the cross-process transaction lock, decrementing re-entrancy depth.
+    Maintains persistent lock file to eliminate unlink race windows between processes.
+    """
     project_root = Path(project_root).resolve()
     lock_path = project_root / ".standards_sync.lock"
     key = str(lock_path)
@@ -2972,6 +2860,11 @@ def release_transaction_lock(project_root: Path, fd: Optional[int]) -> None:
     _REENTRANT_TX_LOCK_DEPTH[key] = 0
     if fd is not None:
         try:
+            os.ftruncate(fd, 0)
+            os.fsync(fd)
+        except Exception:
+            pass
+        try:
             _os_unlock_file(fd)
         except Exception:
             pass
@@ -2979,11 +2872,7 @@ def release_transaction_lock(project_root: Path, fd: Optional[int]) -> None:
             os.close(fd)
         except Exception:
             pass
-    if lock_path.exists():
-        try:
-            lock_path.unlink()
-        except Exception:
-            pass
+    # Persistent lock file is retained; DO NOT unlink lock_path!
 
 
 def detect_interrupted_transaction(project_root: Path) -> Dict[str, Any]:
@@ -3019,7 +2908,9 @@ def detect_interrupted_transaction(project_root: Path) -> Dict[str, Any]:
                         journal_data["error"] = "Journal targets must be a dictionary"
                     else:
                         for tk, tv in targets.items():
-                            ok, valid_path, err = _validate_journal_target(project_root, tv)
+                            ok, valid_path, err = _validate_journal_target(
+                                project_root, tv, target_key=tk, tx_id=journal_data.get("tx_id")
+                            )
                             if not ok:
                                 journal_corrupt = True
                                 journal_data["corrupt"] = True
@@ -3125,9 +3016,11 @@ def recover_interrupted_transaction(
         # Validate all targets strictly
         val_targets: Dict[str, Path] = {}
         for tk, tv in targets.items():
-            ok, p_tgt, err = _validate_journal_target(project_root, tv)
+            ok, p_tgt, err = _validate_journal_target(
+                project_root, tv, target_key=tk, tx_id=journal.get("tx_id")
+            )
             if not ok:
-                return False, f"CORRUPT_TRANSACTION_JOURNAL: Path traversal detected in journal target '{tk}': {err}"
+                return False, f"CORRUPT_TRANSACTION_JOURNAL: Path traversal or unauthorized target detected in journal target '{tk}': {err}"
             val_targets[tk] = p_tgt
 
         lock_bak = val_targets.get("lock_bak", project_root / "standards.lock.json.bak")
