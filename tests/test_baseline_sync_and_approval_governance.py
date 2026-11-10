@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import jsonschema
 import yaml
 
@@ -46,6 +47,7 @@ from tools.standards_sync.core import (
     detect_interrupted_transaction,
     execute_transactional_two_file_update,
     recover_interrupted_transaction,
+    _validate_journal_target,
     rollback_lock,
     validate_upgrade_candidate,
     verify_project_lock,
@@ -2742,6 +2744,92 @@ while True:
             self.assertEqual(res_c3.returncode, 0)
             self.assertIn("SUCCESS", res_c3.stdout)
             self.assertEqual(json.loads(lock_path.read_text(encoding="utf-8")).get("version"), "3.0.1")
+
+    def test_g28_journal_internal_symlink_to_readme_blocked(self) -> None:
+        """Negative test: Journal target pointing via project-internal symlink to README.md is rejected.
+        Journal path validation rejects all symbolic links to prevent tampering with regular project files.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            readme_file = dst / "README.md"
+            readme_file.write_text("# Sensitive Project README\nDo not overwrite!", encoding="utf-8")
+            lock_symlink = dst / "standards.lock.json"
+
+            created_symlink = False
+            try:
+                lock_symlink.symlink_to(readme_file)
+                created_symlink = True
+            except OSError:
+                # Platform lacks symlink creation privilege (e.g. unprivileged Windows)
+                pass
+
+            journal = {
+                "tx_id": "malicious-symlink-tx",
+                "phase": "PREPARED",
+                "operation_type": "UPDATE",
+                "status": "IN_PROGRESS",
+                "has_orig_lock": True,
+                "has_orig_manifest": True,
+                "targets": {
+                    "lock_path": "standards.lock.json",
+                    "manifest_path": "engineering-manifest.yaml",
+                    "lock_bak": "standards.lock.json.bak",
+                    "manifest_bak": "engineering-manifest.yaml.bak",
+                },
+            }
+            (dst / ".standards_sync_tx.json").write_text(json.dumps(journal), encoding="utf-8")
+
+            if created_symlink:
+                ok, path, err = _validate_journal_target(dst, "standards.lock.json", target_key="lock_path", tx_id="malicious-symlink-tx")
+                self.assertFalse(ok)
+                self.assertIn("TARGET_SYMLINK_PROHIBITED", str(err))
+
+                det = detect_interrupted_transaction(dst)
+                self.assertTrue(det.get("journal_corrupt"))
+                rec_ok, rec_err = recover_interrupted_transaction(dst)
+                self.assertFalse(rec_ok)
+                self.assertIn("CORRUPT_TRANSACTION_JOURNAL", str(rec_err))
+                self.assertIn("TARGET_SYMLINK_PROHIBITED", str(rec_err))
+                self.assertEqual(readme_file.read_text(encoding="utf-8"), "# Sensitive Project README\nDo not overwrite!")
+            else:
+                orig_is_symlink = Path.is_symlink
+
+                def fake_is_symlink(self_path: Path) -> bool:
+                    if self_path.name == "standards.lock.json":
+                        return True
+                    return orig_is_symlink(self_path)
+
+                with patch.object(Path, "is_symlink", fake_is_symlink):
+                    ok, path, err = _validate_journal_target(dst, "standards.lock.json", target_key="lock_path", tx_id="malicious-symlink-tx")
+                    self.assertFalse(ok)
+                    self.assertIn("TARGET_SYMLINK_PROHIBITED", str(err))
+
+                    det = detect_interrupted_transaction(dst)
+                    self.assertTrue(det.get("journal_corrupt"))
+                    rec_ok, rec_err = recover_interrupted_transaction(dst)
+                    self.assertFalse(rec_ok)
+                    self.assertIn("CORRUPT_TRANSACTION_JOURNAL", str(rec_err))
+                    self.assertIn("TARGET_SYMLINK_PROHIBITED", str(rec_err))
+                    self.assertEqual(readme_file.read_text(encoding="utf-8"), "# Sensitive Project README\nDo not overwrite!")
+
+            # Also test bak target symlink pointing to README.md
+            bak_symlink = dst / "standards.lock.json.bak"
+            created_bak_symlink = False
+            try:
+                bak_symlink.symlink_to(readme_file)
+                created_bak_symlink = True
+            except OSError:
+                pass
+
+            if created_bak_symlink:
+                ok, path, err = _validate_journal_target(dst, "standards.lock.json.bak", target_key="lock_bak", tx_id="malicious-symlink-tx")
+                self.assertFalse(ok)
+                self.assertIn("TARGET_SYMLINK_PROHIBITED", str(err))
+            else:
+                with patch.object(Path, "is_symlink", return_value=True):
+                    ok, path, err = _validate_journal_target(dst, "standards.lock.json.bak", target_key="lock_bak", tx_id="malicious-symlink-tx")
+                    self.assertFalse(ok)
+                    self.assertIn("TARGET_SYMLINK_PROHIBITED", str(err))
 
 
 if __name__ == "__main__":

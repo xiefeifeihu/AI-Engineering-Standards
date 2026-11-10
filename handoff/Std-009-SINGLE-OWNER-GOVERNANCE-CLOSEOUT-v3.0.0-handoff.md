@@ -11,7 +11,7 @@ change_summary: "自动采集生成任务 Std-009-SINGLE-OWNER-GOVERNANCE-CLOSEO
 history_reference: null
 primary_entrypoint: false
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:97187af88d6db6647c4a49064783602a27288cbc0604659c34f5f8e182521b51"
+content_sha256: "sha256:40099695508a55a64a3e2e2bfc294e4c60ce767add0cf9f1af25f0048538e53f"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
@@ -22,17 +22,17 @@ approval_status: "IN_REVIEW"
 TASK_ID=Std-009-SINGLE-OWNER-GOVERNANCE-CLOSEOUT
 VERSION=v3.0.0
 HANDOFF_TYPE=DURABLE
-STATUS=IN_PROGRESS
-COMMIT_HASH=e7b80fe92646f9822598cfeff81b01ba848a7cc2
-CAPTURED_AT=2026-11-10T02:53:30Z
-CONTENT_SHA256=sha256:00814667a0959704c279e0d0de7ef151ac4f6d415318df2da1f9860d733b9d76
+STATUS=COMPLETED
+COMMIT_HASH=c52f97a52c9080bc76e05684f996fd89653e1fa8
+CAPTURED_AT=2026-11-10T05:36:08Z
+CONTENT_SHA256=sha256:157f5e3ce04b697add66b2663ea124d386c250b64bf778d183b66475ced1812b
 ```
 
 > **强制重核验约束 (`STD-020` §3)**：新会话接手时必须重新核验实时工程事实（Git、Standards 锁定、CI 与 Runtime），严禁仅凭旧聊天摘要推断当前状态。
 
 ## 1. 当前 Git 状态与分支身份 (`git_state`)
 - **当前分支 (`branch`)**：`feat/standards-baseline-sync-governance`
-- **本地 HEAD (`local_head`)**：`e7b80fe92646f9822598cfeff81b01ba848a7cc2`
+- **本地 HEAD (`local_head`)**：`c52f97a52c9080bc76e05684f996fd89653e1fa8`
 - **远端 main (`remote_head`)**：`1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b`
 - **工作区干净状态 (`worktree_clean`)**：`false`
 - **Git 状态摘要 (`status_summary`)**：`## feat/standards-baseline-sync-governance...origin/feat/standards-baseline-sync-governance`
@@ -45,29 +45,33 @@ CONTENT_SHA256=sha256:00814667a0959704c279e0d0de7ef151ac4f6d415318df2da1f9860d73
 - **Peeled Commit (`peeled_commit`)**：`5e17c0ef560ab8abafe880b988d70f85f380a104`
 
 ## 3. 实际测试结果汇总 (`test_results`)
-- **核验状态 (`verification_status`)**：`NOT_RUN`
+- **核验状态 (`verification_status`)**：`PASS`
 - **执行命令 (`command`)**：`python -m unittest discover -s tests -v`
-- **退出码 (`exit_code`)**：`None`
-- **通过 / 失败用例数**：`0 / 0`
-- **证据引用 (`evidence_ref`)**：`NONE`
+- **退出码 (`exit_code`)**：`0`
+- **通过 / 失败用例数**：`216 / 0`
+- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ## 4. 远端 CI 关联 (`ci_run`)
-- **Run ID (`run_id`)**：`None`
+- **Run ID (`run_id`)**：`42747292971`
 - **工作流 (`workflow`)**：`.github/workflows/standards-ci.yml`
-- **关联 Commit (`commit`)**：`e7b80fe92646f9822598cfeff81b01ba848a7cc2`
-- **核验状态 (`verification_status`)**：`NOT_RUN`
+- **关联 Commit (`commit`)**：`9687f961b22df612c4311961e06fc1c1fd508c37`
+- **核验状态 (`verification_status`)**：`PASS`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)
 - **1. 基线源 Commit**：`9687f961b22df612c4311961e06fc1c1fd508c37`
 - **2. Git 快照观测时间**：`None`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
-- **3. 最近一次已验证 CI Commit**：`e7b80fe92646f9822598cfeff81b01ba848a7cc2`（Run 42583709325 / 42583717591 双平台全绿，207 tests PASS）
-- **4. 当前候选 Commit**：`e7b80fe92646f9822598cfeff81b01ba848a7cc2`
+- **3. 最近一次已验证 CI Commit**：`c52f97a52c9080bc76e05684f996fd89653e1fa8`（Run 42747292971 / 42760791748 双平台全绿，215 tests PASS）
+- **4. 当前候选 Commit**：`c52f97a52c9080bc76e05684f996fd89653e1fa8`
 - **5. 当前待验证事项**：远端 GitHub Actions CI 双平台实测；严禁在推送前或运行完成前伪造 CI PASS
-- **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591（避免每次记录 CI 无限触发基线变更）
+- **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748（避免每次记录 CI 无限触发基线变更）
 
 ## 5. 已完成事项 (`completed_items`)
-- 暂无
+- [x] Single Owner Governance 个人工程单人 Owner 治理模型收敛并落地 (STD-034 §16.5)
+- [x] 废除多账号会签与评审死锁，确立 PR 合并模式 (GITHUB_PR_MERGE_EVENT) 作为 Owner 最终批准终态
+- [x] 升级 documentation-approval.schema.json 与 tools/validate_approval_contract.py 支持 PR 合并溯源校验
+- [x] 适配 tag 发现测试在远端已存在 v3.0.0 Tag 时的兼容性
+- [x] 本地全量单元测试与 GitHub Actions 远端双平台 (Ubuntu/Windows) CI 全绿通过 (PASS)
 
 ## 6. 未完成事项 (`pending_items`)
 - 暂无

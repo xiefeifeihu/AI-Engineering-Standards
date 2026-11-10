@@ -430,10 +430,10 @@ def build_handoff_payload(
         "### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)",
         f"- **1. 基线源 Commit**：`{source_commit}`",
         f"- **2. Git 快照观测时间**：`{captured_at}`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）",
-        "- **3. 最近一次已验证 CI Commit**：`e7b80fe92646f9822598cfeff81b01ba848a7cc2`（Run 42583709325 / 42583717591 双平台全绿，207 tests PASS）",
+        "- **3. 最近一次已验证 CI Commit**：`c52f97a52c9080bc76e05684f996fd89653e1fa8`（Run 42747292971 / 42760791748 双平台全绿，215 tests PASS）",
         f"- **4. 当前候选 Commit**：`{local_head}`",
         "- **5. 当前待验证事项**：远端 GitHub Actions CI 双平台实测；严禁在推送前或运行完成前伪造 CI PASS",
-        "- **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591（避免每次记录 CI 无限触发基线变更）",
+        "- **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748（避免每次记录 CI 无限触发基线变更）",
         "",
         "## 5. 已完成事项 (`completed_items`)",
         comp_md,
@@ -478,6 +478,7 @@ def write_handoff_files(
     write_canonical_entrypoint: bool = True,
     write_task_snapshot: bool = True,
     write_temporary: bool = False,
+    allow_snapshot_overwrite: bool = False,
     **kwargs: Any,
 ) -> Tuple[bool, List[str], Dict[str, str]]:
     project_root = project_root.resolve()
@@ -497,7 +498,7 @@ def write_handoff_files(
         handoff_dir = project_root / "handoff"
         handoff_dir.mkdir(parents=True, exist_ok=True)
         task_snapshot_path = handoff_dir / f"{task_id}-{ver_tag}-handoff.md"
-        if task_snapshot_path.exists():
+        if task_snapshot_path.exists() and not allow_snapshot_overwrite:
             return (
                 False,
                 [
@@ -565,6 +566,25 @@ def main() -> None:
     parser.add_argument("--test-evidence-ref", default=None, help="Relative path to test evidence log")
     parser.add_argument("--ci-run-id", default=None, help="GitHub Actions CI Run ID")
     parser.add_argument("--ci-status", default=None, help="CI verification status (PASS, NOT_RUN, etc.)")
+    parser.add_argument(
+        "--completed-item",
+        action="append",
+        dest="completed_items",
+        default=None,
+        help="Completed item description (can specify multiple)",
+    )
+    parser.add_argument(
+        "--pending-item",
+        action="append",
+        dest="pending_items",
+        default=None,
+        help="Pending item description (can specify multiple)",
+    )
+    parser.add_argument(
+        "--allow-snapshot-overwrite",
+        action="store_true",
+        help="Allow overwriting existing handoff/<TASK>-<VER>-handoff.md snapshot",
+    )
     parser.add_argument("--verify-only", action="store_true", help="Verify handoff generation against committed file")
     args = parser.parse_args()
 
@@ -597,6 +617,8 @@ def main() -> None:
         version=args.version,
         handoff_type=args.handoff_type,
         status=args.status,
+        completed_items=args.completed_items,
+        pending_items=args.pending_items,
         source_commit_override=args.source_commit,
         test_results_override=test_override,
         ci_run_override=ci_override,
@@ -644,6 +666,9 @@ def main() -> None:
         version=args.version,
         handoff_type=args.handoff_type,
         status=args.status,
+        completed_items=args.completed_items,
+        pending_items=args.pending_items,
+        allow_snapshot_overwrite=args.allow_snapshot_overwrite,
         write_canonical_entrypoint=not args.no_canonical_entrypoint,
         write_task_snapshot=not args.no_task_snapshot,
         write_temporary=args.write_temporary,

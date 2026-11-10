@@ -402,7 +402,7 @@ def build_engineering_baseline(
     ci_details: Dict[str, Any] = {
         "source_commit": source_commit,
         "git_snapshot_observed_at": now_iso,
-        "last_verified_ci_commit": "e7b80fe92646f9822598cfeff81b01ba848a7cc2",
+        "last_verified_ci_commit": "c52f97a52c9080bc76e05684f996fd89653e1fa8",
         "candidate_commit": local_head or "NOT_VERIFIABLE",
         "pending_verifications": "当前整改候选 Commit 待推送到 GitHub Actions 远端触发 Windows/Ubuntu 双平台真实 CI 完整运行；实测完成前严格保持 NOT_VERIFIABLE，严禁本地伪造 PASS",
         "historical_ci_runs": [
@@ -416,6 +416,8 @@ def build_engineering_baseline(
             "Run 42571381569 (PR #8 @ 96d1b4a, conclusion: success, Windows/Ubuntu PASS, 188 tests)",
             "Run 42583709325 (Push @ e7b80fe, conclusion: success, Windows/Ubuntu PASS, 207 tests)",
             "Run 42583717591 (PR #8 @ e7b80fe, conclusion: success, Windows/Ubuntu PASS, 207 tests)",
+            "Run 42747292971 (Push @ c52f97a, conclusion: success, Windows/Ubuntu PASS, 215 tests)",
+            "Run 42760791748 (PR #9 @ c52f97a, conclusion: success, Windows/Ubuntu PASS, 215 tests)",
         ],
         "snapshot_status": "FRESH",
         "snapshot_validity_hours": 24,
@@ -428,7 +430,7 @@ def build_engineering_baseline(
         "evidence_ref": ".github/workflows/standards-ci.yml",
         "observed_at": now_iso,
         "verification_status": "NOT_VERIFIABLE",
-        "summary": "当前分支远端 GitHub Actions CI 待推送后由远端 Runner 实测（执行前保持 NOT_VERIFIABLE；历史已通过 Run: 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591）",
+        "summary": "当前分支远端 GitHub Actions CI 待推送后由远端 Runner 实测（执行前保持 NOT_VERIFIABLE；历史已通过 Run: 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748）",
         "details": ci_details,
     }
 
@@ -759,6 +761,8 @@ def build_engineering_baseline(
         "  - Run 42571381569 (PR #8 @ `96d1b4a`, conclusion: `success`, Windows/Ubuntu PASS, 188 tests)",
         "  - Run 42583709325 (Push @ `e7b80fe`, conclusion: `success`, Windows/Ubuntu PASS, 207 tests)",
         "  - Run 42583717591 (PR #8 @ `e7b80fe`, conclusion: `success`, Windows/Ubuntu PASS, 207 tests)",
+        "  - Run 42747292971 (Push @ `c52f97a`, conclusion: `success`, Windows/Ubuntu PASS, 215 tests)",
+        "  - Run 42760791748 (PR #9 @ `c52f97a`, conclusion: `success`, Windows/Ubuntu PASS, 215 tests)",
         f"- **证据引用 (`evidence_ref`)**：`{ci_fact['evidence_ref']}`",
         f"- **观测时间 (`observed_at`)**：`{ci_fact['observed_at']}`",
         f"- **事实说明**：{ci_fact['summary']}",

@@ -260,7 +260,7 @@ def _validate_journal_target(
     tx_id: Optional[str] = None,
 ) -> Tuple[bool, Optional[Path], Optional[str]]:
     """Strictly validate target path from journal against whitelist to prevent path traversal,
-    symlink escape, and tampering with regular engineering files (such as README.md, docs/, configs).
+    symlink attacks (rejects all symlinks), and tampering with regular engineering files (such as README.md, docs/, configs).
     """
     if not isinstance(target_val, str) or not target_val.strip():
         return False, None, "TARGET_EMPTY: Target path must be a non-empty string"
@@ -329,6 +329,10 @@ def _validate_journal_target(
         if not (valid_fixed or valid_tmp):
             return False, None, f"TARGET_WHITELIST_VIOLATION: Target file '{filename}' is not an authorized standards sync target"
 
+    check_p = project_root / p
+    if check_p.is_symlink() or os.path.islink(str(check_p)):
+        return False, None, f"TARGET_SYMLINK_PROHIBITED: Symbolic link prohibited in journal target: {raw}"
+
     try:
         resolved_root = project_root.resolve()
         candidate = (resolved_root / p).resolve()
@@ -339,14 +343,9 @@ def _validate_journal_target(
     except Exception as e:
         return False, None, f"TARGET_RESOLVE_ERROR: {e}"
 
-    check_p = project_root / p
-    if check_p.is_symlink():
-        try:
-            target_link = check_p.resolve()
-            if not target_link.is_relative_to(resolved_root):
-                return False, None, f"TARGET_SYMLINK_ESCAPE: Target symlink points outside project_root: {raw}"
-        except Exception as e:
-            return False, None, f"TARGET_SYMLINK_ERROR: {e}"
+    resolved_target = resolved_root / p
+    if resolved_target.is_symlink() or os.path.islink(str(resolved_target)):
+        return False, None, f"TARGET_SYMLINK_PROHIBITED: Symbolic link prohibited in journal target: {raw}"
 
     return True, resolved_root / p, None
 

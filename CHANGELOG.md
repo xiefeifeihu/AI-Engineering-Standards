@@ -6,9 +6,17 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 
 > RELEASE_STATUS=CANDIDATE | PROPOSED_VERSION=3.0.0 | MAIN_MERGED=false | RELEASE_TAG_NOT_CREATED=true
 >
-> 本节记录 PR #8 的候选变更。只有合入官方 main、main CI 通过并创建正式 Annotated Tag 后，才可迁移为带发布日期的 `## [3.0.0] - YYYY-MM-DD`。
+> 本节记录 PR #9 (包含 PR #8 候选变更与 Std-009 单人 Owner 治理及安全修正) 的候选变更。只有合入官方 main、main CI 通过并创建正式 Annotated Tag 后，才可迁移为带发布日期的 `## [3.0.0] - YYYY-MM-DD`。
 
 ### Added
+- **个人工程单人 Owner 治理机制与 PR 合并审批契约 (STD-034 §16.5 / D2=APPROVED / Std-009)**:
+  - 确立个人工程单一 Owner 治理模式（实际仓库所有者 `xiefeifeihu`），无需第二名 Reviewer、第二 GitHub 账号或团队审批。
+  - 明确职责边界与权限分离：ChatGPT 负责独立技术审查并提出建议结论（`READY_FOR_OWNER_MERGE`、`CHANGES_REQUESTED` 或 `BLOCK`），不得代替 Owner 批准发布；编程智能体（VibeCoding）负责工程代码与门禁执行，严禁自行批准；Owner 作为最终审批者。
+  - 确立 PR 合并审批模式 (`GITHUB_PR_MERGE_EVENT`)：候选阶段审批状态保持为 `OWNER_APPROVAL_REQUIRED`；PR 作者与仓库 Owner 为同一人时允许 Owner 直接合并，以 GitHub 界面合并候选 PR 入 `main` 作为最终批准动作。
+  - 建立 PR 合并溯源机器校验（`tools/validate_approval_contract.py`）：调用 GitHub PR API 校验 `merged=true`、`merged_by.login == Owner`、`base.ref == "main"`、`head.sha == candidate_commit` 且 `merged_at` 存在有效时间戳。未真实合入前严禁标记 `OWNER_APPROVED`。
+  - 更新 `schemas/documentation-approval.schema.json` 与 `schemas/documentation-metadata.schema.json` 支持 PR 合并审批模型。
+- **事务日志路径安全与符号链接阻断 (STD-034 §4 / Std-010)**:
+  - `tools/standards_sync/core.py` 中的 Journal 目标路径校验严格拒绝所有符号链接（包括工程内部指向 `README.md` 等普通文件的符号链接），防止利用事务回滚机制覆盖篡改工程核心文件。
 - **12 类正式文档分类与 ENGINEERING_BASELINE 规范 (STD-035 v3.0.0 / D1=APPROVED)**:
   - 正式 document_type 调整为 12 类：PROJECT_BLUEPRINT、PRODUCT_BASELINE、SYSTEM_ARCHITECTURE、TECHNICAL_DESIGN、API_CONTRACT、PROTOTYPE_UX、TEST_ACCEPTANCE、RELEASE_OPERATIONS、DECISION_RECORD、CROSS_SESSION_HANDOFF、DOCUMENT_INDEX、ENGINEERING_BASELINE。
   - 新增 docs/当前权威基线.md (ENGINEERING_BASELINE) 确定性综合视图，汇聚 11 类正式文档与 10 类实时工程事实，强制记录 18 项核心内容与 6 项动态溯源字段 (repository, source_path, source_commit, evidence_ref, observed_at, verification_status)。
