@@ -452,7 +452,7 @@ def build_handoff_payload(
         or existing_facts.get("push_run_id")
         or (ci_run_override.get("run_id") if ci_run_override else None)
         or existing_facts.get("ci_run_id")
-        or "42800374434"
+        or "42835602231"
     )
     active_pr_run_id = (
         pr_run_id
@@ -460,7 +460,7 @@ def build_handoff_payload(
         or existing_facts.get("pr_run_id")
         or (ci_run_override.get("run_id") if ci_run_override else None)
         or existing_facts.get("ci_run_id")
-        or "42800383714"
+        or "42835611644"
     )
     active_run_id = active_push_run_id or active_pr_run_id
     ci_commit_val = effective_ci_commit or (local_head if local_head else "NOT_RUN")
@@ -625,8 +625,10 @@ def build_handoff_payload(
         hist_ci_text = "Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074"
     elif task_id.startswith("Std-013"):
         hist_ci_text = "Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258"
-    else:
+    elif task_id.startswith("Std-014"):
         hist_ci_text = "Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714"
+    else:
+        hist_ci_text = "Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644"
 
     md_lines = [
         "---",
@@ -919,7 +921,7 @@ def main() -> None:
         else True
     )
 
-    task_id_val = args.task_id or "Std-013-V3-0-0-REISSUE-VERIFY-ONLY-INTEGRITY"
+    task_id_val = args.task_id or "Std-015-V3-0-0-REISSUE-MAIN-CI-BRANCH-BINDING"
     ok, errors, payload, md_text = build_handoff_payload(
         project_root=project_root,
         task_id=task_id_val,
@@ -984,7 +986,7 @@ def main() -> None:
         if args.task_id and args.task_id != "STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001":
             expected_task_id = args.task_id
         else:
-            expected_task_id = release_evidence.get("task_id", "Std-013-V3-0-0-REISSUE-VERIFY-ONLY-INTEGRITY")
+            expected_task_id = release_evidence.get("task_id", "Std-015-V3-0-0-REISSUE-MAIN-CI-BRANCH-BINDING")
 
         expected_semantic_facts = {
             "task_id": expected_task_id,

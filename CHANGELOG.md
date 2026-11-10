@@ -14,6 +14,11 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 > - 严禁提前标记 RELEASED 或在正式合入与 Tag 重建前变更发布状态。
 
 ### Added
+- **主干 CI 分支误判修复与发布证据分支严格绑定 (STD-015 / STD-034 / STD-035 / Std-015)**:
+  - 在 `schemas/release-evidence.schema.json` 中新增必填字段 `push_head_branch`（类型 `string`，`minLength=1`），严格绑定历史 Push Run 真实所属分支，从契约层面防止环境分支覆盖 (P1-A)。
+  - 修复 `tools/release_evidence.py` 中的 `verify_github_ci_runs()`：Push Run 的 `expected_head_branch` 必须且直接取自 `evidence["push_head_branch"]`，彻底消除 `effective_target_branch` 从 `GITHUB_REF_NAME` 错误推断导致 main Push CI 误判功能分支的历史缺陷；禁止缺少字段时回退默认分支；禁止模拟绕过生产验证 (P1-B)。
+  - 补充关键回归测试用例 `test_b14`，在 `GITHUB_REF_NAME=main` 模拟环境中验证历史功能分支 Push Run（`head_branch=feat/standards-baseline-sync-governance`）验证通过，并覆盖 11 类分支缺失、分支不一致、PR 错误、base 非 main、workflow path 错误、repo 不匹配、未完成、Job 失败及 API 不可达等负向拦截与离线降级场景 (P1-C)。
+  - 刷新独立发布证据、权威基线与跨会话交接中的历史 CI 事实至已验证 Commit `18a71b920c0dc162ae4f4c1ce35aad901bdba9d2`（Push Run 42835602231，PR Run 42835611644，全量 218 项测试双平台全绿），保留 Std-014 历史快照并生成 Std-015 新快照 (P1-D)。
 - **GitHub Actions 实时 CI 真实性门禁接入与身份绑定强化 (STD-014 / STD-034 / STD-035 / Std-014)**:
   - 将实时 GitHub CI 真实性验证正式接入 `.github/workflows/standards-ci.yml` 核心门禁（`python tools/release_evidence.py --project-root . --check-ci`），执行于 Schema 校验之后、Baseline/Handoff verify-only 之前 (P1-A)。
   - 在 CI 中配置最小只读权限 (`actions: read`、`contents: read`) 并通过 `GITHUB_TOKEN` 鉴权，严禁泄露 Token，在网络不可达时返回 `NOT_VERIFIABLE` 并阻断发布门禁。

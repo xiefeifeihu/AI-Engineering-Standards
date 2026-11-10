@@ -7,32 +7,32 @@ status: "IN_REVIEW"
 applies_to_release: "v3.0.0"
 last_updated: "2026-11-10"
 supersedes: null
-change_summary: "自动采集生成任务 Std-014-V3-0-0-REISSUE-CI-AUTHENTICITY-GATE 跨会话交接文档 (STD-020 v2.0.0)"
+change_summary: "自动采集生成任务 Std-015-V3-0-0-REISSUE-MAIN-CI-BRANCH-BINDING 跨会话交接文档 (STD-020 v2.0.0)"
 history_reference: null
 primary_entrypoint: true
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:0b8f0b8fcc14c314b9b98258cd348771d8a224b31687a52af1f8705f0ea1e3b6"
+content_sha256: "sha256:a8673e02252d72dee800eb8ef6589d42256c4ef649274f17baf1e3127bc72f9e"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
 
-# 跨会话工作交接 (Std-014-V3-0-0-REISSUE-CI-AUTHENTICITY-GATE)
+# 跨会话工作交接 (Std-015-V3-0-0-REISSUE-MAIN-CI-BRANCH-BINDING)
 
 ```text
-TASK_ID=Std-014-V3-0-0-REISSUE-CI-AUTHENTICITY-GATE
+TASK_ID=Std-015-V3-0-0-REISSUE-MAIN-CI-BRANCH-BINDING
 VERSION=v3.0.0
 HANDOFF_TYPE=DURABLE
 STATUS=IN_PROGRESS
-COMMIT_HASH=70f7554feacfaa6c61b0fa571454f468aaa6d844
+COMMIT_HASH=18a71b920c0dc162ae4f4c1ce35aad901bdba9d2
 CAPTURED_AT=2026-11-10T06:52:42Z
-CONTENT_SHA256=sha256:1e7a63b54890cc5a11ad6abf40d69e8fa6955bbf429bcf7f469567b2e18deea5
+CONTENT_SHA256=sha256:d14d15141da4341e92ca1b1cf0379db73c70b8a3810b7933394b0e6a43f2a9f5
 ```
 
 > **强制重核验约束 (`STD-020` §3)**：新会话接手时必须重新核验实时工程事实（Git、Standards 锁定、CI 与 Runtime），严禁仅凭旧聊天摘要推断当前状态。
 
 ## 1. 当前 Git 状态与分支身份 (`git_state`)
 - **当前分支 (`branch`)**：`feat/standards-baseline-sync-governance`
-- **本地 HEAD (`local_head`)**：`70f7554feacfaa6c61b0fa571454f468aaa6d844`
+- **本地 HEAD (`local_head`)**：`18a71b920c0dc162ae4f4c1ce35aad901bdba9d2`
 - **远端 main (`remote_head`)**：`1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b`
 - **工作区干净状态 (`worktree_clean`)**：`false`
 - **Git 状态摘要 (`status_summary`)**：`## feat/standards-baseline-sync-governance...origin/feat/standards-baseline-sync-governance`
@@ -48,30 +48,30 @@ CONTENT_SHA256=sha256:1e7a63b54890cc5a11ad6abf40d69e8fa6955bbf429bcf7f469567b2e1
 - **核验状态 (`verification_status`)**：`PASS`
 - **执行命令 (`command`)**：`python -m unittest discover -s tests -v`
 - **退出码 (`exit_code`)**：`0`
-- **通过 / 失败用例数**：`217 / 0`
+- **通过 / 失败用例数**：`218 / 0`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ## 4. 远端 CI 关联 (`ci_run`)
-- **Run ID (`run_id`)**：`42800374434`
-- **Push Run ID**：`42800374434`
-- **PR Run ID**：`42800383714`
+- **Run ID (`run_id`)**：`42835602231`
+- **Push Run ID**：`42835602231`
+- **PR Run ID**：`42835611644`
 - **工作流 (`workflow`)**：`.github/workflows/standards-ci.yml`
-- **关联 Commit (`commit`)**：`70f7554feacfaa6c61b0fa571454f468aaa6d844`
+- **关联 Commit (`commit`)**：`18a71b920c0dc162ae4f4c1ce35aad901bdba9d2`
 - **核验状态 (`verification_status`)**：`PASS`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)
 - **1. 基线源 Commit**：`9687f961b22df612c4311961e06fc1c1fd508c37`
 - **2. Git 快照观测时间**：`2026-11-10T06:52:42Z`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
-- **3. 最近一次已验证 CI Commit**：`70f7554feacfaa6c61b0fa571454f468aaa6d844`（Run 42800374434 Push / Run 42800383714 PR #9 双平台全绿，217 tests PASS）
-- **4. 当前候选 Commit**：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
+- **3. 最近一次已验证 CI Commit**：`18a71b920c0dc162ae4f4c1ce35aad901bdba9d2`（Run 42835602231 Push / Run 42835611644 PR #9 双平台全绿，218 tests PASS）
+- **4. 当前候选 Commit**：`18a71b920c0dc162ae4f4c1ce35aad901bdba9d2`
 - **5. 当前待验证事项**：PR CI 已通过，等待合并及 main CI 和 Tag 重建。
-- **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714（避免每次记录 CI 无限触发基线变更）
+- **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644（避免每次记录 CI 无限触发基线变更）
 
 ### 4.2 v3.0.0 一次性重发发布与 Tag 状态追踪
 - **PR 编号 (`pr_number`)**：`9`
 - **PR 状态 (`pr_status`)**：`DRAFT`
-- **PR HEAD (`pr_head`)**：`70f7554feacfaa6c61b0fa571454f468aaa6d844`
+- **PR HEAD (`pr_head`)**：`18a71b920c0dc162ae4f4c1ce35aad901bdba9d2`
 - **主干 HEAD (`main_head`)**：`1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b`
 - **旧 Tag 状态 (`old_tag`)**：`v3.0.0`
 - **旧 Tag 删除状态 (`old_tag_deleted`)**：`true`（已于远端删除，新 Tag 尚未创建）
@@ -81,17 +81,17 @@ CONTENT_SHA256=sha256:1e7a63b54890cc5a11ad6abf40d69e8fa6955bbf429bcf7f469567b2e1
 - **发布流程状态 (`release_flow_status`)**：`IN_PROGRESS`（待 Owner 最终合入 PR #9 后由 main CI 自动重建同名 Tag）
 
 ## 5. 已完成事项 (`completed_items`)
-- [x] 完善 tools/release_evidence.py 中的 verify_single_github_run()，严格绑定 Repository、Run ID、Event、Workflow Path (.github/workflows/standards-ci.yml)、CI Commit head_sha、status=completed、conclusion=success、Ubuntu/Windows Jobs 成功，并额外核验 Push head_branch 与 PR #9 base=main (P1-B)
-- [x] 将实时 GitHub Actions CI 真实性验证正式接入 .github/workflows/standards-ci.yml 核心门禁，配置最小只读权限 (actions: read, contents: read) 与 GITHUB_TOKEN (P1-A)
-- [x] 消除 tools/validate-schemas.py 内部重复执行的 unittest，保持职责分离并大幅缩短 CI 构建时间 (P2)
-- [x] 完善 12 项真实性负向测试，严格证明所有身份不匹配、未完成、非成功 conclusion、Job 缺失/失败及网络不可达均无法返回 PASS
-- [x] 对齐权威基线与交接文档中的最新已验证 CI 事实至已通过 Commit 70f7554 (Push Run 42800374434, PR Run 42800383714, 217 tests 双平台全绿)
+- [x] 在 schemas/release-evidence.schema.json 中新增必填字段 push_head_branch，并增加 minLength=1 校验 (P1-A)
+- [x] 修复 tools/release_evidence.py 中的 verify_github_ci_runs()，Push Run expected_head_branch 直接绑定 evidence['push_head_branch']，彻底消除 main CI 误判问题 (P1-B)
+- [x] 禁止从 GITHUB_REF_NAME 覆盖历史证据，禁止在缺少 push_head_branch 时回退默认分支，禁止模拟结果绕过生产验证 (P1-C)
+- [x] 新增关键回归测试 test_b14，在 GITHUB_REF_NAME=main 模拟环境下验证历史功能分支 Push Run 正常 PASS，并覆盖 11 类负向拦截与 API 异常 (P1-D)
+- [x] 对齐发布证据、权威基线与跨会话交接中的历史 CI 事实至已验证 Commit 18a71b9（Push Run 42835602231，PR Run 42835611644，218 tests PASS）(P1-E)
 
 ## 6. 未完成事项 (`pending_items`)
-- [ ] 保持 PR #9 Draft 状态，等待 ChatGPT 独立审核给出建议结论
-- [ ] Owner 批准并执行 PR #9 合入 main (GITHUB_PR_MERGE_EVENT)
-- [ ] main CI 运行并通过，触发 publish-version-tag 自动重建正式 Annotated Tag v3.0.0
-- [ ] 核验新 Tag Object SHA、Peeled Commit、main HEAD、VERSION 和 main CI Run 一致性
+- [ ] 完成本地全量测试与基线验证，提交代码至 feat/standards-baseline-sync-governance
+- [ ] 推送远端分支触发 GitHub Actions CI（Push CI 与 PR #9 CI 双平台验证）
+- [ ] 提交 ChatGPT 独立审核并等待结论
+- [ ] 保持 PR #9 Draft 状态，等待唯一 Owner 最终审查与批准
 
 ## 7. 阻断项 (`blockers`)
 - 当前无 `BLOCK` 阻断项。

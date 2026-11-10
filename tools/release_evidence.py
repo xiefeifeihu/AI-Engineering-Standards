@@ -34,6 +34,7 @@ REQUIRED_EVIDENCE_FIELDS: Tuple[str, ...] = (
     "snapshot_commit",
     "last_verified_ci_commit",
     "push_run_id",
+    "push_head_branch",
     "pr_run_id",
     "ci_status",
     "test_count",
@@ -146,6 +147,10 @@ def load_release_evidence(
     push_id = str(data.get("push_run_id", "")).strip()
     if not push_id.isdigit():
         errors.append(f"RELEASE_EVIDENCE_INVALID_RUN_ID: 'push_run_id' must be numeric (got '{push_id}')")
+
+    push_branch = data.get("push_head_branch")
+    if not isinstance(push_branch, str) or not push_branch.strip():
+        errors.append("RELEASE_EVIDENCE_INVALID_BRANCH: 'push_head_branch' must be a non-empty string")
 
     pr_id = str(data.get("pr_run_id", "")).strip()
     if not pr_id.isdigit():
@@ -461,13 +466,12 @@ def verify_github_ci_runs(
     """Verify both Push Run and PR Run recorded in release evidence.
     Returns (overall_status, errors, details).
     """
-    if simulate_status in ("PASS", "FAIL", "NOT_VERIFIABLE"):
-        if simulate_status == "PASS":
-            return "PASS", [], {"push_run": {"status": "PASS"}, "pr_run": {"status": "PASS"}}
-        elif simulate_status == "NOT_VERIFIABLE":
-            return "NOT_VERIFIABLE", ["SIMULATED_NOT_VERIFIABLE"], {"reason": "SIMULATED_OFFLINE"}
-        else:
-            return "FAIL", ["SIMULATED_CI_FAILURE"], {"reason": "SIMULATED_FAILURE"}
+    if simulate_status is not None:
+        return (
+            "FAIL",
+            ["SIMULATION_DISALLOWED: Simulated status bypass is not permitted in production verification path"],
+            {"reason": "SIMULATION_DISALLOWED"},
+        )
 
     repo = evidence["repository"]
     head_sha = evidence["last_verified_ci_commit"]
@@ -475,26 +479,21 @@ def verify_github_ci_runs(
     pr_id = str(evidence["pr_run_id"])
     pr_number = evidence.get("pr_number", 9)
 
-    effective_target_branch = target_branch
-    if not effective_target_branch:
-        candidate = os.environ.get("GITHUB_HEAD_REF")
-        if not candidate:
-            ref_name = os.environ.get("GITHUB_REF_NAME", "")
-            if not ref_name.endswith("/merge") and not ref_name.endswith("/head"):
-                candidate = ref_name
-        if not candidate:
-            try:
-                res = subprocess.run(
-                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                    capture_output=True,
-                    text=True,
-                    timeout=3,
-                )
-                if res.returncode == 0 and res.stdout.strip() and res.stdout.strip() != "HEAD":
-                    candidate = res.stdout.strip()
-            except Exception:
-                pass
-        effective_target_branch = candidate or "feat/standards-baseline-sync-governance"
+    push_head_branch = evidence.get("push_head_branch")
+    if not push_head_branch or not isinstance(push_head_branch, str) or not push_head_branch.strip():
+        return (
+            "FAIL",
+            ["RELEASE_EVIDENCE_MISSING_FIELD: 'push_head_branch' is required in release evidence and cannot be empty"],
+            {
+                "reason": "MISSING_PUSH_HEAD_BRANCH",
+                "push_run": {"verification_status": "FAIL", "errors": ["Missing or empty push_head_branch in release evidence"]},
+                "pr_run": {"verification_status": "NOT_RUN"},
+                "repository": repo,
+                "last_verified_ci_commit": head_sha,
+            },
+        )
+
+    expected_push_branch = push_head_branch.strip()
 
     sim_push = simulate_data_map.get(push_id) if simulate_data_map else None
     sim_pr = simulate_data_map.get(pr_id) if simulate_data_map else None
@@ -504,7 +503,7 @@ def verify_github_ci_runs(
         run_id=push_id,
         expected_event="push",
         expected_head_sha=head_sha,
-        expected_head_branch=effective_target_branch,
+        expected_head_branch=expected_push_branch,
         expected_workflow_path=".github/workflows/standards-ci.yml",
         timeout=timeout,
         simulate_data=sim_push,
@@ -528,7 +527,7 @@ def verify_github_ci_runs(
         "pr_run": pr_meta,
         "last_verified_ci_commit": head_sha,
         "repository": repo,
-        "target_branch": effective_target_branch,
+        "push_head_branch": expected_push_branch,
         "pr_number": pr_number,
         "base_ref": "main",
     }

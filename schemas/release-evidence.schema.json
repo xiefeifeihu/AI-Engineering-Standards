@@ -14,6 +14,7 @@
     "snapshot_commit",
     "last_verified_ci_commit",
     "push_run_id",
+    "push_head_branch",
     "pr_run_id",
     "ci_status",
     "test_count",
@@ -79,6 +80,10 @@
           "minimum": 1
         }
       ]
+    },
+    "push_head_branch": {
+      "type": "string",
+      "minLength": 1
     },
     "pr_run_id": {
       "oneOf": [

@@ -896,6 +896,192 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         self.assertNotIn("ghp_", str(meta12))
         self.assertNotIn("ghs_", str(meta12))
 
+    def test_b14_github_ci_runs_main_workflow_branch_binding_and_regression_tests(self) -> None:
+        """STD-015 / STD-034: Verify push_head_branch binding under main workflow context,
+        proving main CI no longer mistakenly requires historical feature branch Push Run to be on main,
+        and regression tests for all 11 failure/offline paths on verify_github_ci_runs().
+        """
+        canonical_repo = "xiefeifeihu/AI-Engineering-Standards"
+        push_id = "42835602231"
+        pr_id = "42835611644"
+        head_sha = "18a71b920c0dc162ae4f4c1ce35aad901bdba9d2"
+        feat_branch = "feat/standards-baseline-sync-governance"
+        workflow_path = ".github/workflows/standards-ci.yml"
+
+        valid_evidence = {
+            "repository": canonical_repo,
+            "version": "3.0.0",
+            "pr_number": 9,
+            "pr_status": "DRAFT",
+            "main_head": "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b",
+            "candidate_commit": head_sha,
+            "snapshot_commit": head_sha,
+            "last_verified_ci_commit": head_sha,
+            "push_run_id": push_id,
+            "push_head_branch": feat_branch,
+            "pr_run_id": pr_id,
+            "ci_status": "PASS",
+            "test_count": 218,
+            "test_failed": 0,
+            "test_skipped": 0,
+            "windows_status": "PASS",
+            "ubuntu_status": "PASS",
+            "old_tag_deleted": True,
+            "old_tag_object": "325008af90a1e6dcc88ff714c9ec4e7ecee86ec6",
+            "old_tag_peeled_commit": "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b",
+            "old_tag_bundle_sha256": "45bc3e455fc06b96a669ba9d7c44195f5dfb4e42e55397d795200942e434ebfc",
+            "release_flow_status": "IN_PROGRESS",
+            "task_id": "Std-015-V3-0-0-REISSUE-MAIN-CI-BRANCH-BINDING",
+        }
+
+        base_push_sim = {
+            "id": int(push_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": head_sha,
+            "headSha": head_sha,
+            "event": "push",
+            "status": "completed",
+            "conclusion": "success",
+            "path": workflow_path,
+            "head_branch": feat_branch,
+            "headBranch": feat_branch,
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "jobs": [
+                {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+            ],
+        }
+
+        base_pr_sim = {
+            "id": int(pr_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": head_sha,
+            "headSha": head_sha,
+            "event": "pull_request",
+            "status": "completed",
+            "conclusion": "success",
+            "path": workflow_path,
+            "head_branch": feat_branch,
+            "headBranch": feat_branch,
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "pull_requests": [
+                {
+                    "number": 9,
+                    "head": {"ref": feat_branch, "sha": head_sha},
+                    "base": {"ref": "main", "sha": "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b"},
+                }
+            ],
+            "jobs": [
+                {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+            ],
+        }
+
+        sim_map = {push_id: base_push_sim, pr_id: base_pr_sim}
+
+        # --- Primary Test: GITHUB_REF_NAME=main context ---
+        # When workflow runs on main, historical Push Run has head_branch=feat/standards-baseline-sync-governance
+        # Expected: PASS (proving main workflow no longer mistakenly requires historical Push Run to be on main)
+        orig_ref_name = os.environ.get("GITHUB_REF_NAME")
+        orig_head_ref = os.environ.get("GITHUB_HEAD_REF")
+        try:
+            os.environ["GITHUB_REF_NAME"] = "main"
+            os.environ["GITHUB_HEAD_REF"] = ""
+            st_main, errs_main, meta_main = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map)
+            self.assertEqual(st_main, "PASS", f"main workflow context verification must PASS, got: {errs_main}")
+            self.assertEqual(errs_main, [])
+            self.assertEqual(meta_main["push_head_branch"], feat_branch)
+        finally:
+            if orig_ref_name is not None:
+                os.environ["GITHUB_REF_NAME"] = orig_ref_name
+            else:
+                os.environ.pop("GITHUB_REF_NAME", None)
+            if orig_head_ref is not None:
+                os.environ["GITHUB_HEAD_REF"] = orig_head_ref
+            else:
+                os.environ.pop("GITHUB_HEAD_REF", None)
+
+        # --- 1. push_head_branch 缺失 -> FAIL ---
+        ev_no_branch = dict(valid_evidence)
+        del ev_no_branch["push_head_branch"]
+        st1, errs1, _ = verify_github_ci_runs(ev_no_branch, simulate_data_map=sim_map)
+        self.assertEqual(st1, "FAIL")
+        self.assertTrue(any("push_head_branch" in e.lower() for e in errs1))
+
+        # --- 2. push_head_branch 错误 (空串/None) -> FAIL ---
+        ev_empty_branch = dict(valid_evidence, push_head_branch="")
+        st2, errs2, _ = verify_github_ci_runs(ev_empty_branch, simulate_data_map=sim_map)
+        self.assertEqual(st2, "FAIL")
+        self.assertTrue(any("push_head_branch" in e.lower() for e in errs2))
+
+        # --- 3. 实际 Push Run 分支与证据不一致 -> FAIL ---
+        sim_push_wrong_branch = dict(base_push_sim, head_branch="feat/other-unrelated-branch", headBranch="feat/other-unrelated-branch")
+        sim_map_wrong_branch = {push_id: sim_push_wrong_branch, pr_id: base_pr_sim}
+        st3, errs3, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_wrong_branch)
+        self.assertEqual(st3, "FAIL")
+        self.assertTrue(any("head_branch mismatch" in e.lower() for e in errs3))
+
+        # --- 4. PR #9 错误 -> FAIL ---
+        sim_pr_wrong_num = dict(base_pr_sim, pull_requests=[{"number": 999, "head": {"ref": feat_branch}, "base": {"ref": "main"}}])
+        sim_map_wrong_pr = {push_id: base_push_sim, pr_id: sim_pr_wrong_num}
+        st4, errs4, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_wrong_pr)
+        self.assertEqual(st4, "FAIL")
+        self.assertTrue(any("pr number mismatch" in e.lower() for e in errs4))
+
+        # --- 5. PR base 非 main -> FAIL ---
+        sim_pr_wrong_base = dict(base_pr_sim, pull_requests=[{"number": 9, "head": {"ref": feat_branch}, "base": {"ref": "develop"}}])
+        sim_map_wrong_base = {push_id: base_push_sim, pr_id: sim_pr_wrong_base}
+        st5, errs5, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_wrong_base)
+        self.assertEqual(st5, "FAIL")
+        self.assertTrue(any("base ref mismatch" in e.lower() for e in errs5))
+
+        # --- 6. Workflow path 错误 -> FAIL ---
+        sim_push_wrong_path = dict(base_push_sim, path=".github/workflows/other.yml")
+        sim_map_wrong_path = {push_id: sim_push_wrong_path, pr_id: base_pr_sim}
+        st6, errs6, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_wrong_path)
+        self.assertEqual(st6, "FAIL")
+        self.assertTrue(any("workflow path mismatch" in e.lower() for e in errs6))
+
+        # --- 7. Repository 错误 -> FAIL ---
+        sim_push_wrong_repo = dict(base_push_sim, repository={"full_name": "malicious/AI-Engineering-Standards"})
+        sim_map_wrong_repo = {push_id: sim_push_wrong_repo, pr_id: base_pr_sim}
+        st7, errs7, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_wrong_repo)
+        self.assertEqual(st7, "FAIL")
+        self.assertTrue(any("repository mismatch" in e.lower() for e in errs7))
+
+        # --- 8. Run 未完成 -> FAIL ---
+        sim_push_in_progress = dict(base_push_sim, status="in_progress")
+        sim_map_in_progress = {push_id: sim_push_in_progress, pr_id: base_pr_sim}
+        st8, errs8, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_in_progress)
+        self.assertEqual(st8, "FAIL")
+        self.assertTrue(any("status was 'in_progress'" in e.lower() for e in errs8))
+
+        # --- 9. Ubuntu Job 失败 -> FAIL ---
+        sim_push_ubuntu_fail = dict(base_push_sim, jobs=[
+            {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "failure"},
+            {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+        ])
+        sim_map_u_fail = {push_id: sim_push_ubuntu_fail, pr_id: base_pr_sim}
+        st9, errs9, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_u_fail)
+        self.assertEqual(st9, "FAIL")
+        self.assertTrue(any("ubuntu job conclusion was 'failure'" in e.lower() for e in errs9))
+
+        # --- 10. Windows Job 失败 -> FAIL ---
+        sim_push_windows_fail = dict(base_push_sim, jobs=[
+            {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+            {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "failure"},
+        ])
+        sim_map_w_fail = {push_id: sim_push_windows_fail, pr_id: base_pr_sim}
+        st10, errs10, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_w_fail)
+        self.assertEqual(st10, "FAIL")
+        self.assertTrue(any("windows job conclusion was 'failure'" in e.lower() for e in errs10))
+
+        # --- 11. API 不可达 -> NOT_VERIFIABLE ---
+        ev_unreachable = dict(valid_evidence, push_run_id="99999999999", pr_run_id="99999999998")
+        st11, errs11, _ = verify_github_ci_runs(ev_unreachable, timeout=1, simulate_data_map=None)
+        self.assertEqual(st11, "NOT_VERIFIABLE")
+        self.assertTrue(any("not accessible" in e.lower() for e in errs11))
+
     # =========================================================================
     # C. Standards Sync Tool Tests
     # =========================================================================
