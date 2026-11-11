@@ -11,7 +11,7 @@ change_summary: "自动采集生成任务 Std-018-V3-0-0-REISSUE-CURRENT-BASELIN
 history_reference: null
 primary_entrypoint: true
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:4bd52f6713affeae8e66d5006a6deed75cd75dd3b9297d9312816b1d5be1c773"
+content_sha256: "sha256:00591a2f41bbb34fa20ed59af115afa64ec81eaef4931ed8039891625a2b9329"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
@@ -23,7 +23,9 @@ TASK_ID=Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT
 VERSION=v3.0.0
 HANDOFF_TYPE=DURABLE
 STATUS=COMPLETED
-COMMIT_HASH=336114861b2c720106a6076956eef08c9cd6ded7
+PR9_CANDIDATE_COMMIT=336114861b2c720106a6076956eef08c9cd6ded7
+SNAPSHOT_SOURCE_COMMIT=94faab425899f7b3ade85112c8405679df46dfe3
+FINAL_OUTPUT_COMMIT=f4cee41306cff68be2743036d64bb37d5b8c1b25
 CAPTURED_AT=2026-11-11T03:20:00Z
 CONTENT_SHA256=sha256:6d2b38f05d21d6cd82e42a04a568f5e4bb6bb988cc3757c29b7ba369a7b7f389
 ```
@@ -32,7 +34,8 @@ CONTENT_SHA256=sha256:6d2b38f05d21d6cd82e42a04a568f5e4bb6bb988cc3757c29b7ba369a7
 
 ## 1. 当前 Git 状态与分支身份 (`git_state`)
 - **当前分支 (`branch`)**：`fix/std-016-merged-pr-run-evidence`
-- **本地 HEAD (`local_head`)**：`336114861b2c720106a6076956eef08c9cd6ded7`
+- **Std-018 源快照 Commit (`snapshot_source_commit`)**：`94faab425899f7b3ade85112c8405679df46dfe3`（生成交接时观察到的分支快照，非生成交接自身 Commit）
+- **Std-018 最终输出 Commit (`final_output_commit`)**：`f4cee41306cff68be2743036d64bb37d5b8c1b25`
 - **远端 main (`remote_head`)**：`3cd42b69049b148bceea1324d4f8212393cb96df`
 - **工作区干净状态 (`worktree_clean`)**：`true`
 - **Git 状态摘要 (`status_summary`)**：`## fix/std-016-merged-pr-run-evidence...origin/fix/std-016-merged-pr-run-evidence`
@@ -48,36 +51,49 @@ CONTENT_SHA256=sha256:6d2b38f05d21d6cd82e42a04a568f5e4bb6bb988cc3757c29b7ba369a7
 - **核验状态 (`verification_status`)**：`PASS`
 - **执行命令 (`command`)**：`python -m unittest discover -s tests -v`
 - **退出码 (`exit_code`)**：`0`
-- **通过 / 失败用例数**：`219 / 0`
+- **Std-018 全量测试用例数**：`220 / 0`（PASS: 220, FAILED: 0, SKIPPED: 0）
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ## 4. 远端 CI 关联 (`ci_run`)
-- **Run ID (`run_id`)**：`42843755347`
-- **Push Run ID**：`42843755347`
-- **PR Run ID**：`42843964061`
-- **工作流 (`workflow`)**：`.github/workflows/standards-ci.yml`
-- **关联 Commit (`commit`)**：`336114861b2c720106a6076956eef08c9cd6ded7`
 - **核验状态 (`verification_status`)**：`PASS`
-- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
+- **Std-018 最终输出 CI (Commit: `f4cee41306cff68be2743036d64bb37d5b8c1b25`)**：
+  - Push Run ID：`42969139490`（Windows: PASS, Ubuntu: PASS, 220 tests PASS）
+  - PR Run ID：`42969143389`（Windows: PASS, Ubuntu: PASS, 220 tests PASS）
+- **Std-018 源快照 CI (Commit: `94faab425899f7b3ade85112c8405679df46dfe3`)**：
+  - Push Run ID：`42953706511`（Windows: PASS, Ubuntu: PASS, 220 tests PASS）
+  - PR Run ID：`42953714846`（Windows: PASS, Ubuntu: PASS, 220 tests PASS）
+- **当前主干与 PR 状态**：
+  - `PR9=MERGED`
+  - `PR10=OPEN/DRAFT`
+  - `MAIN_CI_STATUS=WAITING_FOR_PR10_MERGE`
 
 ### 4.0 七项核心 Commit 身份定义 (STD-034 / STD-035)
 1. **PR9 发布候选 (`candidate_commit`)**：`336114861b2c720106a6076956eef08c9cd6ded7`
 2. **Std-016 输出**：`fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7`
 3. **Std-017 输出**：`d00821e251bfe3c1495163b6af8af6c01210d5f4`
 4. **Std-018 输入**：`d00821e251bfe3c1495163b6af8af6c01210d5f4`
-5. **Std-018 已验证输出**：`94faab425899f7b3ade85112c8405679df46dfe3`
-6. **当前 main**：`3cd42b69049b148bceea1324d4f8212393cb96df`
-7. **当前 PR**：`PR9=MERGED`, `PR10=OPEN/DRAFT`
+5. **Std-018 源快照**：`94faab425899f7b3ade85112c8405679df46dfe3`
+6. **Std-018 最终输出**：`f4cee41306cff68be2743036d64bb37d5b8c1b25`
+7. **当前 main HEAD**：`3cd42b69049b148bceea1324d4f8212393cb96df`
+8. **当前 PR HEAD**：`f4cee41306cff68be2743036d64bb37d5b8c1b25` (PR9=MERGED, PR10=OPEN/DRAFT)
 
 ### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)
 - **1. 基线源 Commit**：`9687f961b22df612c4311961e06fc1c1fd508c37`
 - **2. Git 快照观测时间**：`2026-11-10T06:52:42Z`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
-- **3. 最近一次已验证 CI Commit**：`336114861b2c720106a6076956eef08c9cd6ded7`（Run 42843755347 Push / Run 42843964061 PR #9 双平台全绿，219 tests PASS）
+- **3. 最近一次已验证 CI Commit**：`336114861b2c720106a6076956eef08c9cd6ded7`（PR9 历史发布凭证：Run 42843755347 Push / Run 42843964061 PR #9 双平台全绿，219 tests PASS）
 - **4. 当前候选 Commit**：`336114861b2c720106a6076956eef08c9cd6ded7`
 - **5. 当前待验证事项**：PR CI 已通过，等待合并及 main CI 和 Tag 重建。
 - **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644, 42843755347, 42843964061（避免每次记录 CI 无限触发基线变更）
 
-### 4.2 v3.0.0 一次性重发发布与 Tag 状态追踪
+### 4.2 PR9 历史发布凭证与一次性重发发布与 Tag 状态追踪
+- **PR9 发布凭证快照**：COMMIT_HASH=336114861b2c720106a6076956eef08c9cd6ded7
+- **本地 HEAD (`local_head`)**：`336114861b2c720106a6076956eef08c9cd6ded7`
+- **Run ID (`run_id`)**：`42843755347`
+- **Push Run ID**：`42843755347`
+- **PR Run ID**：`42843964061`
+- **通过 / 失败用例数**：`219 / 0`
+- **工作流 (`workflow`)**：`.github/workflows/standards-ci.yml`
+- **关联 Commit (`commit`)**：`336114861b2c720106a6076956eef08c9cd6ded7`
 - **PR 编号 (`pr_number`)**：`9`
 - **PR 状态 (`pr_status`)**：`MERGED`
 - **PR HEAD (`pr_head`)**：`336114861b2c720106a6076956eef08c9cd6ded7`
@@ -113,14 +129,15 @@ CONTENT_SHA256=sha256:6d2b38f05d21d6cd82e42a04a568f5e4bb6bb988cc3757c29b7ba369a7
   - `TASK_ID`: `Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT`
   - `STATUS`: `COMPLETED`
   - `INPUT_COMMIT`: `d00821e251bfe3c1495163b6af8af6c01210d5f4`
-  - `OUTPUT_COMMIT`: `94faab425899f7b3ade85112c8405679df46dfe3`
+  - `OUTPUT_COMMIT`: `f4cee41306cff68be2743036d64bb37d5b8c1b25`
+  - `SNAPSHOT_SOURCE_COMMIT`: `94faab425899f7b3ade85112c8405679df46dfe3`
+  - `FINAL_OUTPUT_COMMIT`: `f4cee41306cff68be2743036d64bb37d5b8c1b25`
   - `当前分支`: `fix/std-016-merged-pr-run-evidence`
   - `main`: `3cd42b69049b148bceea1324d4f8212393cb96df`
   - `PR9`: `MERGED`
   - `PR10`: `OPEN/DRAFT`
-  - `最近已验证 CI Commit`: `94faab425899f7b3ade85112c8405679df46dfe3`
-  - `Push Run`: `42953706511`
-  - `PR Run`: `42953714846`
+  - `源快照已验证 CI`: `94faab425899f7b3ade85112c8405679df46dfe3` (Push Run: `42953706511` / PR Run: `42953714846`, 220 tests PASS)
+  - `最终文档已验证 CI`: `f4cee41306cff68be2743036d64bb37d5b8c1b25` (Push Run: `42969139490` / PR Run: `42969143389`, 220 tests PASS)
   - `TEST_COUNT`: `220` (PASS: 220, FAILED: 0, SKIPPED: 0)
   - `WINDOWS_CI`: `PASS`
   - `UBUNTU_CI`: `PASS`
@@ -132,7 +149,7 @@ CONTENT_SHA256=sha256:6d2b38f05d21d6cd82e42a04a568f5e4bb6bb988cc3757c29b7ba369a7
 ## 5. 已完成事项 (`completed_items`)
 - [x] 纠正 Std-016 历史交接快照 (OUTPUT_COMMIT=fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7, PUSH_RUN=42938147072, PR_RUN=42938186969, 220 tests PASS)
 - [x] 创建 Std-017 验收证据历史快照 handoff/Std-017-V3-0-0-REISSUE-ACCEPTANCE-EVIDENCE-CLOSEOUT-v3.0.0-handoff.md
-- [x] 更新权威基线 docs/当前权威基线.md，严格区分六大核心 Commit 事实边界，记录 local_head=d00821e251bfe3c1495163b6af8af6c01210d5f4 与 MAIN_CI_STATUS=FAIL_PREVIOUS_RUN_PENDING_NEW_MAIN_VALIDATION
+- [x] 更新权威基线 docs/当前权威基线.md，严格区分核心 Commit 事实边界，记录 MAIN_CI_STATUS=WAITING_FOR_PR10_MERGE
 - [x] 保护 release-evidence/v3.0.0-reissue.json 历史 PR9 发布凭证
 - [x] 更新跨会话交接入口 docs/CROSS-SESSION-HANDOFF.md 为 Std-018，对齐实时工程基线
 
@@ -174,5 +191,5 @@ CONTENT_SHA256=sha256:6d2b38f05d21d6cd82e42a04a568f5e4bb6bb988cc3757c29b7ba369a7
    - `python tools/validate-schemas.py`
 
 ### 10.3 立即执行事项 (`immediate_next_steps`)
-   - 核验远端 Draft PR CI 状态（Push Run 42942640853 / PR Run 42942649996 双平台 PASS）与 ChatGPT 独立审核结论
+   - 核验远端 Draft PR CI 状态（Push Run 42969139490 / PR Run 42969143389 双平台 PASS）与 ChatGPT 独立审核结论
    - 严禁仅凭旧会话聊天摘要推断当前 Git、CI 或 Runtime 状态
