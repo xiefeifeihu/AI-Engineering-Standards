@@ -11,7 +11,7 @@ change_summary: "自动采集生成任务 Std-016-V3-0-0-REISSUE-MERGED-PR-RUN-F
 history_reference: null
 primary_entrypoint: true
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:33621ed7fc05d489e7e40942f2e6b4f53be02fe46ce36b1eff7b565577a0c1fa"
+content_sha256: "sha256:205cc8ecf72545da215bfb2b44d2cc1e754064fa28c739ff32be0a6f2f5d57ca"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
@@ -22,7 +22,7 @@ approval_status: "IN_REVIEW"
 TASK_ID=Std-016-V3-0-0-REISSUE-MERGED-PR-RUN-FALLBACK
 VERSION=v3.0.0
 HANDOFF_TYPE=DURABLE
-STATUS=IN_PROGRESS
+STATUS=COMPLETED
 COMMIT_HASH=336114861b2c720106a6076956eef08c9cd6ded7
 CAPTURED_AT=2026-11-10T06:52:42Z
 CONTENT_SHA256=sha256:3a5470d874214721883e6813d8ab06f056f050c2a004aaa88d80cba0765dffef
@@ -79,6 +79,18 @@ CONTENT_SHA256=sha256:3a5470d874214721883e6813d8ab06f056f050c2a004aaa88d80cba076
 - **原 Peeled Commit (`old_tag_peeled_commit`)**：`1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b`
 - **旧 Tag 本地 Bundle 备份 SHA256 (`old_tag_bundle_sha256`)**：`45bc3e455fc06b96a669ba9d7c44195f5dfb4e42e55397d795200942e434ebfc`
 - **发布流程状态 (`release_flow_status`)**：`IN_PROGRESS`（PR #9 已合入 main；待修复 main CI 历史 PR Run 关联后由 main CI 自动重建同名 Tag）
+- **PR9 与 PR10 状态**：`PR9=MERGED`，`PR10=OPEN/DRAFT`
+- **Std-016 修复与远端 CI 事实**：
+  - `INPUT_COMMIT`: `3cd42b69049b148bceea1324d4f8212393cb96df`
+  - `OUTPUT_COMMIT`: `fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7`
+  - `PUSH_RUN`: `42938147072` (Windows CI: PASS, Ubuntu CI: PASS)
+  - `PR_RUN`: `42938186969` (Windows CI: PASS, Ubuntu CI: PASS)
+  - `TEST_COUNT`: `220` (PASS: 220, FAILED: 0, SKIPPED: 0)
+  - `WINDOWS_CI`: `PASS`
+  - `UBUNTU_CI`: `PASS`
+  - `PR10 当前待独立复核`
+  - `PR10 合并后仍须执行 main CI。main CI 全绿后才允许重建 v3.0.0。`
+- **任务状态治理约束**：Std-016 代码修复任务标记 COMPLETED；整体 v3.0.0 发布流程继续保持 IN_PROGRESS；不得把 PR10 尚未合并写成已经合并；不得把 main CI 标记为 PASS；保留 Std-009 至 Std-016 所有历史快照；不得覆盖历史测试数和历史 CI 事实；不得产生 Commit 自引用。
 
 ## 5. 已完成事项 (`completed_items`)
 - [x] 在 .github/workflows/standards-ci.yml 的 validate-standards Job 中增加 pull-requests: read 权限，保持最小只读原则与零密钥安全 (P1-A)
@@ -86,13 +98,14 @@ CONTENT_SHA256=sha256:3a5470d874214721883e6813d8ab06f056f050c2a004aaa88d80cba076
 - [x] 严格校验 6 大 PR 身份契约：PR number 一致、base.ref=main、head.ref 与历史 Run head_branch 一致、head.sha 与历史 Run head_sha 一致、当 pr_status=MERGED 时 merged=true 且 merged_at 非空；网络异常标记 NOT_VERIFIABLE，身份不符判定 FAIL，严禁伪造 PASS (P1-C)
 - [x] 更新单一发布证据源 docs/release-evidence/v3.0.0-reissue.json，绑定 PR #9 最终 HEAD 336114861b2c720106a6076956eef08c9cd6ded7、Push Run 42843755347、PR Run 42843964061、pr_status=MERGED、main_head=3cd42b69049b148bceea1324d4f8212393cb96df 与 219 项全量用例事实 (P1-D)
 - [x] 新增单元与集成测试 test_b15，覆盖 9 大正负向场景，并在 GITHUB_REF_NAME=main 模拟环境下真实核验已合并 PR #9 历史 Run 通过 (P1-E)
-- [x] 对齐权威基线与跨会话交接文档中的实时事实，准确记录 PR #9 已合入 main 及 main CI 失败与修复状态 (P1-F)
+- [x] 推送 fix/std-016-merged-pr-run-evidence 分支到 GitHub 远端触发双平台 CI (Push Run 42938147072, Windows/Ubuntu PASS, 220 tests PASS)
+- [x] 创建 PR #10（Draft 状态，目标分支 main），触发双平台 PR CI (PR Run 42938186969, Windows/Ubuntu PASS, 220 tests PASS)
+- [x] 对齐权威基线与跨会话交接文档中的实时事实，准确记录 PR9=MERGED、PR10=OPEN/DRAFT 及真实 CI 运行事实，完成 Std-016 最终文档和验收制品收口 (P1-F)
 
 ## 6. 未完成事项 (`pending_items`)
-- [ ] 推送 fix/std-016-merged-pr-run-evidence 分支到 GitHub 远端触发双平台 CI
-- [ ] 创建 PR #10（Draft 状态，目标分支 main）
-- [ ] 提交 ChatGPT 独立复核并等待复核通过
-- [ ] 由 ChatGPT 或 Owner 将 PR #10 转为 Ready 并合入 main，触发 main CI 自动发布 v3.0.0 规范标签
+- [ ] PR #10 提交 ChatGPT 独立复核并等待复核通过（PR10 当前待独立复核）
+- [ ] ChatGPT 复核通过后由 Owner 将 PR #10 转为 Ready 并合入 main（PR10 合并前不得标记 MERGED）
+- [ ] PR #10 合并后在 main 执行 main CI，main CI 全绿后自动发布重建 Annotated Tag v3.0.0（不得把 main CI 标记为 PASS）
 
 ## 7. 阻断项 (`blockers`)
 - 当前无 `BLOCK` 阻断项。
@@ -126,5 +139,5 @@ CONTENT_SHA256=sha256:3a5470d874214721883e6813d8ab06f056f050c2a004aaa88d80cba076
    - `python tools/validate-schemas.py`
 
 ### 10.3 立即执行事项 (`immediate_next_steps`)
-   - 核验远端 Draft PR CI 状态与 ChatGPT 独立审核结论
+   - 核验远端 Draft PR CI 状态（Push Run 42938147072 / PR Run 42938186969 双平台 PASS）与 ChatGPT 独立审核结论
    - 严禁仅凭旧会话聊天摘要推断当前 Git、CI 或 Runtime 状态

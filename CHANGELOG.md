@@ -10,8 +10,11 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 > - PR #9 已由 Owner 正式合入官方 main（Merge Commit: `3cd42b69049b148bceea1324d4f8212393cb96df`）。
 > - main CI 运行失败（Run 42933692363: `Run 42835611644 has no associated pull requests`），原因为 PR 合并后 GitHub Actions API 历史 Run 的 `pull_requests` 字段返回空列表。
 > - Std-016 增加 PR REST API fallback 真实性身份核验机制，通过 PR #10 修复此问题并重新触发 main CI 自动重建同名 Annotated Tag `v3.0.0`。
+> - Std-016 代码修复与验收制品收口任务已完成 (`STATUS=COMPLETED`，220 项测试全量通过，本地与独立审查通过)。
+> - 修复分支 `fix/std-016-merged-pr-run-evidence` (OUTPUT_COMMIT: `fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7`) 已推送并创建 PR #10 (`PR10=OPEN/DRAFT`)；远端 CI 真实运行通过：Push Run `42938147072` (Windows/Ubuntu PASS)，PR Run `42938186969` (Windows/Ubuntu PASS)。
+> - PR #10 当前处于 OPEN/DRAFT 状态，待 ChatGPT 独立复核及 Owner 批准；合入 main 后仍须执行 main CI，main CI 全绿后才允许重建 Annotated Tag `v3.0.0`。
 > - 远端旧 `v3.0.0` Annotated Tag 已按 Owner 授权在本地完整备份后清理（`OLD_TAG_DELETED=true`），正式 Tag 尚未重建。
-> - 严禁提前标记 RELEASED 或在正式合入与 Tag 重建前变更发布状态。
+> - 整体发布流程继续保持 `IN_PROGRESS`，严禁提前标记 RELEASED 或将 PR #10 标记为 MERGED，严禁把 main CI 标记为 PASS。
 
 ### Added
 - **合并后历史 PR Run 关联信息丢失修复与 PR API Fallback 真实性核验 (STD-016 / STD-034 / STD-035 / Std-016)**:
