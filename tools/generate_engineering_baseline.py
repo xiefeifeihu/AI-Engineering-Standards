@@ -189,22 +189,72 @@ def query_remote_main_head(project_root: Path, timeout: int = 8) -> str:
         return "NOT_VERIFIABLE"
 
 
+def extract_scope_content(content: str, scope_tag: str) -> str:
+    """Extract content under markdown headings corresponding to scope_tag.
+
+    Supported scope tags:
+      - 'PR9_HISTORICAL_RELEASE_EVIDENCE' (matches headings containing 'PR9_HISTORICAL_RELEASE_EVIDENCE' or 'PR9 历史发布' or 'PR9 历史')
+      - 'STD018_CURRENT_SNAPSHOT' (matches headings containing 'STD018_CURRENT_SNAPSHOT' or 'Std-018 当前工程快照' or 'Std-018 当前快照' or 'Std018')
+    """
+    lines = content.splitlines()
+    scoped_lines: List[str] = []
+    in_scope = False
+    current_level = 0
+
+    def heading_matches_scope(h_text: str, tag: str) -> bool:
+        if tag == "PR9_HISTORICAL_RELEASE_EVIDENCE":
+            return tag in h_text or "PR9 历史发布" in h_text or "PR9 历史" in h_text
+        if tag == "STD018_CURRENT_SNAPSHOT":
+            return tag in h_text or "Std-018 当前工程快照" in h_text or "Std-018 当前快照" in h_text or "Std018" in h_text
+        return tag in h_text
+
+    for line in lines:
+        m = re.match(r'^(#{1,6})\s+(.*)$', line)
+        if m:
+            level = len(m.group(1))
+            heading_text = m.group(2)
+            if heading_matches_scope(heading_text, scope_tag):
+                in_scope = True
+                current_level = level
+                scoped_lines.append(line)
+            else:
+                if in_scope and level <= current_level:
+                    in_scope = False
+        else:
+            if in_scope:
+                scoped_lines.append(line)
+
+    return "\n".join(scoped_lines)
+
+
 def verify_baseline_semantic_facts(
     content: str,
     expected_facts: Dict[str, Any],
+    scope: Optional[str] = None,
 ) -> List[str]:
     """Verify semantic facts inside committed docs/当前权威基线.md body.
     Checks: candidate_commit, snapshot_commit, last_verified_ci_commit,
     CI Run ID, CI Commit, CI verification_status, TEST_COUNT, PR status,
-    release_flow_status, OLD_TAG_DELETED.
+    release_flow_status, OLD_TAG_DELETED, main_head.
     """
+    if scope:
+        target_text = extract_scope_content(content, scope)
+        if not target_text.strip():
+            return [f"SCOPE_SECTION_MISSING: Scope section '{scope}' not found in baseline document"]
+    else:
+        target_text = content
+
     mismatches: List[str] = []
 
     # 1. candidate_commit
     exp_cand = expected_facts.get("candidate_commit")
     if exp_cand:
-        m_cand = re.search(r'代码候选 Commit.*?`([0-9a-f]{40})`', content) or re.search(
-            r'当前候选 Commit.*?`([0-9a-f]{40})`', content
+        m_cand = (
+            re.search(r'代码候选 Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'当前候选 Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'当前工程候选 Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'PR9 发布候选 Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'candidate_commit.*?`([0-9a-f]{40})`', target_text)
         )
         if not m_cand:
             mismatches.append(f"candidate_commit missing from baseline text (expected '{exp_cand}')")
@@ -214,8 +264,12 @@ def verify_baseline_semantic_facts(
     # 2. snapshot_commit
     exp_snap = expected_facts.get("snapshot_commit")
     if exp_snap:
-        m_snap = re.search(r'文档快照 Commit.*?`([0-9a-f]{40})`', content) or re.search(
-            r'本地 HEAD \(`local_head`\)\*\*：`([0-9a-f]{40})`', content
+        m_snap = (
+            re.search(r'当前文档快照 Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'PR9 文档快照 Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'文档快照 Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'本地 HEAD \(`local_head`\)\*\*：`([0-9a-f]{40})`', target_text)
+            or re.search(r'snapshot_commit.*?`([0-9a-f]{40})`', target_text)
         )
         if not m_snap:
             mismatches.append(f"snapshot_commit missing from baseline text (expected '{exp_snap}')")
@@ -225,8 +279,12 @@ def verify_baseline_semantic_facts(
     # 3. last_verified_ci_commit
     exp_ci_commit = expected_facts.get("last_verified_ci_commit") or expected_facts.get("ci_commit")
     if exp_ci_commit:
-        m_ci = re.search(r'最近一次已验证 CI Commit.*?`([0-9a-f]{40})`', content) or re.search(
-            r'最近一次已经验证的 CI Commit.*?`([0-9a-f]{40})`', content
+        m_ci = (
+            re.search(r'最新已验证 CI Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'PR9 最近一次已验证 CI Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'最近一次已验证 CI Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'最近一次已经验证的 CI Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'last_verified_ci_commit.*?`([0-9a-f]{40})`', target_text)
         )
         if not m_ci:
             mismatches.append(f"last_verified_ci_commit missing from baseline text (expected '{exp_ci_commit}')")
@@ -237,19 +295,26 @@ def verify_baseline_semantic_facts(
     exp_run_id = expected_facts.get("ci_run_id") or expected_facts.get("push_run_id")
     if exp_run_id:
         str_run_id = str(exp_run_id)
-        m_run = re.search(r'最近一次已经验证的 CI Commit.*?Run\s+(\d+)', content) or re.search(
-            r'PR CI 已通过 \(Run:\s+(\d+)', content
-        ) or re.search(r'Run\s+(\d+)\s+Push', content)
+        m_run = (
+            re.search(r'Push Run ID\*\*：`([0-9]+)`', target_text)
+            or re.search(r'最近一次已经验证的 CI Commit.*?Run\s+(\d+)', target_text)
+            or re.search(r'PR CI 已通过 \(Run:\s+(\d+)', target_text)
+            or re.search(r'Run\s+(\d+)\s+Push', target_text)
+            or re.search(r'Run\s+(\d+)', target_text)
+        )
         if m_run and m_run.group(1) != str_run_id:
             mismatches.append(f"ci_run_id committed='{m_run.group(1)}' != expected='{str_run_id}'")
-        elif str_run_id not in content:
+        elif str_run_id not in target_text:
             mismatches.append(f"ci_run_id '{str_run_id}' not found in baseline text")
 
     # 4b. PR Run ID
     exp_pr_run = expected_facts.get("pr_run_id")
     if exp_pr_run:
         str_pr_run = str(exp_pr_run)
-        m_pr_run = re.search(r'Run\s+(\d+)\s+PR', content)
+        m_pr_run = (
+            re.search(r'PR Run ID\*\*：`([0-9]+)`', target_text)
+            or re.search(r'Run\s+(\d+)\s+PR', target_text)
+        )
         if not m_pr_run:
             mismatches.append(f"pr_run_id missing from baseline text (expected '{str_pr_run}')")
         elif m_pr_run.group(1) != str_pr_run:
@@ -257,16 +322,23 @@ def verify_baseline_semantic_facts(
 
     # 5. CI Commit
     if exp_ci_commit:
-        m_ci_com = re.search(r'最近一次已经验证的 CI Commit.*?`([0-9a-f]{40})`', content)
+        m_ci_com = (
+            re.search(r'最新已验证 CI Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'最近一次已经验证的 CI Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'最近一次已验证 CI Commit.*?`([0-9a-f]{40})`', target_text)
+        )
         if m_ci_com and m_ci_com.group(1) != exp_ci_commit:
             mismatches.append(f"ci_commit committed='{m_ci_com.group(1)}' != expected='{exp_ci_commit}'")
 
     # 6. CI verification_status
     exp_st = expected_facts.get("ci_status")
     if exp_st:
-        m_st = re.search(
-            r'## 9\. 最近 CI 事实[^\n]*\n-\s*\*\*核验状态 \(`verification_status`\)\*\*：`([A-Z_]+)`',
-            content,
+        m_st = (
+            re.search(r'核验状态 \(`verification_status`\)\*\*：`([A-Z_]+)`', target_text)
+            or re.search(
+                r'## 9\. 最近 CI 事实[^\n]*\n-\s*\*\*核验状态 \(`verification_status`\)\*\*：`([A-Z_]+)`',
+                target_text,
+            )
         )
         if not m_st:
             mismatches.append(f"ci verification_status missing from baseline text (expected '{exp_st}')")
@@ -276,7 +348,11 @@ def verify_baseline_semantic_facts(
     # 7. TEST_COUNT
     exp_tests = expected_facts.get("test_count") or expected_facts.get("test_passed")
     if exp_tests is not None:
-        m_tests = re.search(r'(\d+)\s+tests\s+PASS', content) or re.search(r'(\d+)\s+tests', content)
+        m_tests = (
+            re.search(r'测试用例数\*\*：`(\d+)\s+tests\s+PASS`', target_text)
+            or re.search(r'(\d+)\s+tests\s+PASS', target_text)
+            or re.search(r'(\d+)\s+tests', target_text)
+        )
         if not m_tests:
             mismatches.append(f"test count missing from baseline text (expected {exp_tests})")
         elif int(m_tests.group(1)) != int(exp_tests):
@@ -285,20 +361,43 @@ def verify_baseline_semantic_facts(
     # 8. PR 状态
     exp_pr_st = expected_facts.get("pr_status")
     if exp_pr_st:
-        if exp_pr_st not in content:
+        m_pr_st = (
+            re.search(r'PR #\d+（状态：`([A-Za-z_]+)`）', target_text)
+            or re.search(r'PR 状态.*?`([A-Za-z_]+)`', target_text)
+            or re.search(r'状态：`([A-Za-z_]+)`', target_text)
+        )
+        if not m_pr_st and exp_pr_st not in target_text:
             mismatches.append(f"pr_status '{exp_pr_st}' not found in baseline text")
+        elif m_pr_st and m_pr_st.group(1) != exp_pr_st:
+            mismatches.append(f"pr_status committed='{m_pr_st.group(1)}' != expected='{exp_pr_st}'")
+
+    # 8b. main_head
+    exp_main = expected_facts.get("main_head")
+    if exp_main:
+        m_main = (
+            re.search(r'主干 HEAD \(`main_head`\)\*\*：`([0-9a-f]{40})`', target_text)
+            or re.search(r'main_head=([0-9a-f]{40})', target_text)
+            or re.search(r'Merge Commit:\s*`([0-9a-f]{8,40})`', target_text)
+        )
+        if not m_main:
+            mismatches.append(f"main_head missing from baseline text (expected '{exp_main}')")
+        elif not exp_main.startswith(m_main.group(1)) and m_main.group(1) != exp_main:
+            mismatches.append(f"main_head committed='{m_main.group(1)}' != expected='{exp_main}'")
 
     # 9. release_flow_status
     exp_rf_st = expected_facts.get("release_flow_status")
     if exp_rf_st:
-        if exp_rf_st not in content and "待执行发布流程" not in content:
+        if exp_rf_st not in target_text and "待执行发布流程" not in target_text:
             mismatches.append(f"release_flow_status '{exp_rf_st}' not found in baseline text")
 
     # 10. OLD_TAG_DELETED
     exp_ot_del = expected_facts.get("old_tag_deleted")
     if exp_ot_del is not None:
         expected_str = str(exp_ot_del).lower()
-        m_ot = re.search(r'OLD_TAG_DELETED=(true|false)', content)
+        m_ot = (
+            re.search(r'OLD_TAG_DELETED=(true|false)', target_text)
+            or re.search(r'旧 Tag 删除状态.*?`(true|false)`', target_text)
+        )
         if not m_ot:
             mismatches.append(f"OLD_TAG_DELETED missing from baseline text (expected '{expected_str}')")
         elif m_ot.group(1) != expected_str:
@@ -1192,6 +1291,7 @@ def main() -> None:
     parser.add_argument("--pr-number", type=int, default=9, help="PR number")
     parser.add_argument("--old-tag-deleted", default=None, help="Expected old tag deleted state (true/false)")
     parser.add_argument("--release-evidence", default=None, help="Path to release evidence JSON file")
+    parser.add_argument("--snapshot-evidence", default=None, help="Path to snapshot evidence JSON file")
     parser.add_argument("--verify-only", action="store_true", help="Verify generation succeeds against committed baseline")
     args = parser.parse_args()
 
@@ -1263,7 +1363,19 @@ def main() -> None:
                 print(f"  - {e}")
             sys.exit(1)
 
-        expected_semantic_facts = {
+        snapshot_ev_path = (
+            Path(args.snapshot_evidence).resolve()
+            if args.snapshot_evidence
+            else project_root / "docs" / "release-evidence" / "std018-current-snapshot.json"
+        )
+        ok_snap, snap_errors, snapshot_evidence = load_release_evidence(project_root, snapshot_ev_path)
+        if not ok_snap or snapshot_evidence is None:
+            print(f"[FAIL] Baseline verification blocked: snapshot evidence error ({len(snap_errors)} issues):")
+            for e in snap_errors:
+                print(f"  - {e}")
+            sys.exit(1)
+
+        expected_pr9_facts = {
             "candidate_commit": args.candidate_commit or release_evidence["candidate_commit"],
             "snapshot_commit": args.snapshot_commit or release_evidence["snapshot_commit"],
             "last_verified_ci_commit": args.last_verified_ci_commit or args.ci_commit or release_evidence["last_verified_ci_commit"],
@@ -1274,11 +1386,35 @@ def main() -> None:
             "ci_status": args.ci_status or release_evidence["ci_status"],
             "test_count": args.test_count if args.test_count is not None else release_evidence["test_count"],
             "pr_status": args.pr_status if (args.pr_status != "DRAFT" or "pr_status" not in release_evidence) else release_evidence["pr_status"],
+            "main_head": release_evidence.get("main_head"),
             "release_flow_status": release_evidence["release_flow_status"],
             "old_tag_deleted": release_evidence["old_tag_deleted"],
         }
-        semantic_mismatches = verify_baseline_semantic_facts(actual_content, expected_semantic_facts)
-        mismatches.extend(semantic_mismatches)
+        pr9_mismatches = verify_baseline_semantic_facts(
+            actual_content, expected_pr9_facts, scope="PR9_HISTORICAL_RELEASE_EVIDENCE"
+        )
+        mismatches.extend([f"[PR9_SCOPE] {m}" for m in pr9_mismatches])
+
+        expected_snapshot_facts = {
+            "task_id": snapshot_evidence.get("task_id", "Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT"),
+            "candidate_commit": snapshot_evidence["candidate_commit"],
+            "snapshot_commit": snapshot_evidence["snapshot_commit"],
+            "last_verified_ci_commit": snapshot_evidence["last_verified_ci_commit"],
+            "ci_run_id": snapshot_evidence["push_run_id"],
+            "push_run_id": snapshot_evidence["push_run_id"],
+            "pr_run_id": snapshot_evidence["pr_run_id"],
+            "ci_commit": snapshot_evidence["last_verified_ci_commit"],
+            "ci_status": snapshot_evidence["ci_status"],
+            "test_count": snapshot_evidence["test_count"],
+            "pr_status": snapshot_evidence["pr_status"],
+            "main_head": snapshot_evidence.get("main_head"),
+            "release_flow_status": snapshot_evidence["release_flow_status"],
+            "old_tag_deleted": snapshot_evidence["old_tag_deleted"],
+        }
+        snap_mismatches = verify_baseline_semantic_facts(
+            actual_content, expected_snapshot_facts, scope="STD018_CURRENT_SNAPSHOT"
+        )
+        mismatches.extend([f"[STD018_SCOPE] {m}" for m in snap_mismatches])
 
         if mismatches:
             print(f"[FAIL] Committed baseline mismatches generated facts ({len(mismatches)} issues):")

@@ -11,8 +11,7 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 > - main CI 历史运行失败（Run 42933692363: `Run 42835611644 has no associated pull requests`），原因为 PR 合并后 GitHub Actions API 历史 Run 的 `pull_requests` 字段返回空列表。
 > - Std-016 已完成：OUTPUT_COMMIT=`fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7`，Push Run `42938147072` (Windows/Ubuntu PASS)，PR Run `42938186969` (Windows/Ubuntu PASS)，TEST_COUNT=220，STATUS=COMPLETED。
 > - Std-017 已完成：OUTPUT_COMMIT=`d00821e251bfe3c1495163b6af8af6c01210d5f4`，Push Run `42942640853` (Windows/Ubuntu PASS)，PR Run `42942649996` (Windows/Ubuntu PASS)，TEST_COUNT=220，STATUS=COMPLETED，交付包 SHA256: `97d90be32a5dad6a5fa415eaea8c941248c2cecdae45491263f433cc6d40a0bd`。
-> - Std-018 初始阶段：源快照 Commit `94faab425899f7b3ade85112c8405679df46dfe3`，Push Run `42953706511` (Windows/Ubuntu PASS)，PR Run `42953714846` (Windows/Ubuntu PASS)，TEST_COUNT=220。
-> - Std-018 最终收口：最终输出 Commit `f4cee41306cff68be2743036d64bb37d5b8c1b25`，Push Run `42969139490` (Windows/Ubuntu PASS)，PR Run `42969143389` (Windows/Ubuntu PASS)，TEST_COUNT=220，STD018=COMPLETED。当前权威基线与跨会话交接事实对齐，严格区分核心 Commit 事实边界，保护 PR9 历史发布证据。
+> - Std-018 最终收口：当前快照 Commit `09940874a1bf539f53c22426add0757667c040a0`，Push Run `42975158868` (Windows/Ubuntu PASS)，PR Run `42975171044` (Windows/Ubuntu PASS)，TEST_COUNT=220，STD018=COMPLETED。实现 PR9 历史发布证据与 Std-018 当前工程快照双证据双作用域独立核验，权威基线与跨会话交接严格分界。
 > - PR #10 关联分支 `fix/std-016-merged-pr-run-evidence`，状态：`PR10=OPEN/DRAFT`；当前处于 OPEN/DRAFT 状态，待 ChatGPT 独立复核及 Owner 批准；合入 main 后仍须执行 main CI，main CI 全绿后才允许重建 Annotated Tag `v3.0.0`。
 > - 远端旧 `v3.0.0` Annotated Tag 已按 Owner 授权在本地完整备份后清理（`OLD_TAG_DELETED=true`），正式 Tag 尚未重建。
 > - 整体发布流程继续保持 `IN_PROGRESS`，严禁提前标记 RELEASED 或将 PR #10 标记为 MERGED，严禁把 main CI 标记为 PASS。

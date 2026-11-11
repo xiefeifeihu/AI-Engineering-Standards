@@ -1358,6 +1358,147 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             else:
                 os.environ.pop("GITHUB_HEAD_REF", None)
 
+    def test_b16_dual_evidence_dual_scope_12_negative_tests(self) -> None:
+        """STD-034 / STD-035 (Std-018): 12 negative test cases for independent dual-evidence and
+        dual-scope verification (PR9 historical release evidence vs Std-018 current engineering snapshot).
+        Ensures:
+          1. PR9 historical evidence correctness cannot mask Std-018 current errors.
+          2. Std-018 current snapshot correctness cannot mask PR9 historical errors.
+          3. Missing current snapshot evidence blocks execution.
+          4. Tampering Markdown and recomputing content_sha256 still fails semantic verification.
+        """
+        pr9_file = ROOT / "docs" / "release-evidence" / "v3.0.0-reissue.json"
+        std018_file = ROOT / "docs" / "release-evidence" / "std018-current-snapshot.json"
+        self.assertTrue(pr9_file.exists(), f"PR9 evidence file missing: {pr9_file}")
+        self.assertTrue(std018_file.exists(), f"Std-018 evidence file missing: {std018_file}")
+
+        pr9_data = json.loads(pr9_file.read_text(encoding="utf-8"))
+        std018_data = json.loads(std018_file.read_text(encoding="utf-8"))
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+
+            def run_baseline_verify(pr9_p: Path, std_p: Path, extra: list[str] | None = None) -> subprocess.CompletedProcess:
+                cmd = [
+                    sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"),
+                    "--project-root", str(ROOT),
+                    "--release-evidence", str(pr9_p),
+                    "--snapshot-evidence", str(std_p),
+                    "--verify-only",
+                ]
+                if extra:
+                    cmd.extend(extra)
+                return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+
+            def run_handoff_verify(pr9_p: Path, std_p: Path, extra: list[str] | None = None) -> subprocess.CompletedProcess:
+                cmd = [
+                    sys.executable, str(ROOT / "tools" / "generate_handoff.py"),
+                    "--project-root", str(ROOT),
+                    "--release-evidence", str(pr9_p),
+                    "--snapshot-evidence", str(std_p),
+                    "--verify-only",
+                ]
+                if extra:
+                    cmd.extend(extra)
+                return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+
+            # --- Negative 1: 修改 PR9 candidate_commit -> FAIL ---
+            # Std-018 current snapshot is valid, but PR9 historical error MUST NOT be masked
+            p1 = tmp / "pr9_neg1.json"
+            p1.write_text(json.dumps(dict(pr9_data, candidate_commit="0000000000000000000000000000000000000000")), encoding="utf-8")
+            res1 = run_baseline_verify(p1, std018_file)
+            self.assertNotEqual(res1.returncode, 0)
+            self.assertIn("candidate_commit", res1.stdout)
+
+            # --- Negative 2: 修改 PR9 historical Run ID -> FAIL ---
+            p2 = tmp / "pr9_neg2.json"
+            p2.write_text(json.dumps(dict(pr9_data, push_run_id="99999999991")), encoding="utf-8")
+            res2 = run_baseline_verify(p2, std018_file)
+            self.assertNotEqual(res2.returncode, 0)
+            self.assertTrue("push_run_id" in res2.stdout or "ci_run_id" in res2.stdout)
+
+            # --- Negative 3: 修改 PR9 test_count -> FAIL ---
+            p3 = tmp / "pr9_neg3.json"
+            p3.write_text(json.dumps(dict(pr9_data, test_count=999)), encoding="utf-8")
+            res3 = run_baseline_verify(p3, std018_file)
+            self.assertNotEqual(res3.returncode, 0)
+            self.assertTrue("test count" in res3.stdout or "test_count" in res3.stdout)
+
+            # --- Negative 4: 修改 Std018 snapshot_commit -> FAIL ---
+            # PR9 historical evidence is valid, but Std-018 error MUST NOT be masked
+            s4 = tmp / "std_neg4.json"
+            s4.write_text(json.dumps(dict(std018_data, snapshot_commit="1111111111111111111111111111111111111111")), encoding="utf-8")
+            res4_b = run_baseline_verify(pr9_file, s4)
+            self.assertNotEqual(res4_b.returncode, 0)
+            self.assertIn("snapshot_commit", res4_b.stdout)
+            res4_h = run_handoff_verify(pr9_file, s4)
+            self.assertNotEqual(res4_h.returncode, 0)
+            self.assertIn("snapshot_commit", res4_h.stdout)
+
+            # --- Negative 5: 修改 Std018 latest CI Commit -> FAIL ---
+            s5 = tmp / "std_neg5.json"
+            s5.write_text(json.dumps(dict(std018_data, last_verified_ci_commit="2222222222222222222222222222222222222222")), encoding="utf-8")
+            res5 = run_baseline_verify(pr9_file, s5)
+            self.assertNotEqual(res5.returncode, 0)
+            self.assertTrue("last_verified_ci_commit" in res5.stdout or "ci_commit" in res5.stdout)
+
+            # --- Negative 6: 修改 Std018 Push Run -> FAIL ---
+            s6 = tmp / "std_neg6.json"
+            s6.write_text(json.dumps(dict(std018_data, push_run_id="99999999993")), encoding="utf-8")
+            res6 = run_baseline_verify(pr9_file, s6)
+            self.assertNotEqual(res6.returncode, 0)
+            self.assertTrue("push_run_id" in res6.stdout or "ci_run_id" in res6.stdout)
+
+            # --- Negative 7: 修改 Std018 PR Run -> FAIL ---
+            s7 = tmp / "std_neg7.json"
+            s7.write_text(json.dumps(dict(std018_data, pr_run_id="99999999994")), encoding="utf-8")
+            res7 = run_baseline_verify(pr9_file, s7)
+            self.assertNotEqual(res7.returncode, 0)
+            self.assertIn("pr_run_id", res7.stdout)
+
+            # --- Negative 8: 修改 Std018 TEST_COUNT -> FAIL ---
+            s8 = tmp / "std_neg8.json"
+            s8.write_text(json.dumps(dict(std018_data, test_count=999)), encoding="utf-8")
+            res8 = run_baseline_verify(pr9_file, s8)
+            self.assertNotEqual(res8.returncode, 0)
+            self.assertTrue("test count" in res8.stdout or "test_count" in res8.stdout)
+
+            # --- Negative 9: 修改 Std018 PR 状态 -> FAIL ---
+            s9 = tmp / "std_neg9.json"
+            s9.write_text(json.dumps(dict(std018_data, pr_status="MERGED")), encoding="utf-8")
+            res9 = run_baseline_verify(pr9_file, s9)
+            self.assertNotEqual(res9.returncode, 0)
+            self.assertTrue("pr_status" in res9.stdout or "PR status" in res9.stdout)
+
+            # --- Negative 10: 修改 Std018 main_head -> FAIL ---
+            s10 = tmp / "std_neg10.json"
+            s10.write_text(json.dumps(dict(std018_data, main_head="4444444444444444444444444444444444444444")), encoding="utf-8")
+            res10 = run_baseline_verify(pr9_file, s10)
+            self.assertNotEqual(res10.returncode, 0)
+            self.assertIn("main_head", res10.stdout)
+
+            # --- Negative 11: 删除 Std018 current evidence -> BLOCK ---
+            missing_snapshot_ev = tmp / "missing-std018-snapshot.json"
+            res11_b = run_baseline_verify(pr9_file, missing_snapshot_ev)
+            self.assertNotEqual(res11_b.returncode, 0)
+            self.assertTrue("RELEASE_EVIDENCE_NOT_FOUND" in (res11_b.stdout + res11_b.stderr) or "snapshot evidence error" in res11_b.stdout)
+            res11_h = run_handoff_verify(pr9_file, missing_snapshot_ev)
+            self.assertNotEqual(res11_h.returncode, 0)
+            self.assertTrue("RELEASE_EVIDENCE_NOT_FOUND" in (res11_h.stdout + res11_h.stderr) or "snapshot evidence error" in res11_h.stdout)
+
+            # --- Negative 12: 篡改 Markdown 并重新计算 SHA256 -> FAIL ---
+            from tools.validate_approval_contract import compute_canonical_document_sha256
+            base_md = (ROOT / "docs" / "当前权威基线.md").read_text(encoding="utf-8")
+            tampered_base_md = base_md.replace(str(std018_data["push_run_id"]), "99999999995")
+            new_sha_base = compute_canonical_document_sha256(tampered_base_md)
+            tampered_base_md = re.sub(r'content_sha256:\s*"[^"]+"', f'content_sha256: "{new_sha_base}"', tampered_base_md)
+            tampered_base_path = tmp / "tampered_baseline.md"
+            tampered_base_path.write_text(tampered_base_md, encoding="utf-8")
+
+            res12 = run_baseline_verify(pr9_file, std018_file, extra=["--output", str(tampered_base_path)])
+            self.assertNotEqual(res12.returncode, 0, "Tampered baseline MUST fail verify-only even with matching content_sha256")
+            self.assertIn("mismatches", res12.stdout)
+
     # =========================================================================
     # C. Standards Sync Tool Tests
     # =========================================================================
