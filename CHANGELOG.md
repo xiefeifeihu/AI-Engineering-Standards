@@ -20,6 +20,7 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 - **基线与交接作用域/字段唯一性校验与防绕过门禁强化 (STD-020 / STD-034 / STD-035 / Std-018)**:
   - 彻底消除 `generate_engineering_baseline.py` 与 `generate_handoff.py` 的首匹配绕过隐患：实现作用域标题唯一性提取器 (`extract_scope_content`)，规范作用域标题出现 0 次报错 `SCOPE_SECTION_MISSING`，>1 次报错 `DUPLICATE_SCOPE_SECTION`。
   - 实现基于行匹配集合的字段唯一性校验器 (`extract_line_field_matches` / `verify_scoped_field`)：规范字段出现 0 次报错 `MISSING_FIELD`，>1 次（无论是相同值还是冲突值）报错 `DUPLICATE_FIELD`，恰好 1 次时执行值校验。
+  - 同行多次出现同一字段时逐个扫描捕获值，并仅对字段别名的重叠捕获去重；所有独立期望字段必须有显式校验规则，未配置时 fail-closed。
   - 整理 `docs/当前权威基线.md` 与 `docs/CROSS-SESSION-HANDOFF.md` 结构，确保机器校验标记 `(PR9_HISTORICAL_RELEASE_EVIDENCE)` 与 `(STD018_CURRENT_SNAPSHOT)` 全文各仅出现一次。
   - 新增双生成器 12 类负向测试用例 `test_b17`，严格覆盖重复作用域、重复字段、冲突字段、后置追加字段、字段缺失及文件篡改等拦截场景。
 - **权威基线与交接事实对齐及核心 Commit 边界明确 (STD-020 / STD-034 / STD-035 / Std-018)**:

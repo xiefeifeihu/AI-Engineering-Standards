@@ -221,17 +221,20 @@ def extract_scope_content(content: str, scope_tag: str) -> Tuple[str, List[str]]
 
 def extract_line_field_matches(target_text: str, patterns: List[str]) -> List[str]:
     matches: List[str] = []
-    for line in target_text.splitlines():
-        line = line.strip()
+    seen_capture_spans: set[Tuple[int, int, int]] = set()
+    for line_index, raw_line in enumerate(target_text.splitlines()):
+        line = raw_line.strip()
         if not (line.startswith("- **") or line.startswith("**") or line.startswith("- PR9_") or line.startswith("PR9_") or line.startswith("- ")):
             continue
         for pat in patterns:
-            m = re.search(pat, line)
-            if m:
-                matches.append(m.group(1))
-                break
+            for match in re.finditer(pat, line):
+                start, end = match.span(1)
+                capture_key = (line_index, start, end)
+                if capture_key in seen_capture_spans:
+                    continue
+                seen_capture_spans.add(capture_key)
+                matches.append(match.group(1))
     return matches
-
 
 def verify_scoped_field(
     target_text: str,
@@ -275,24 +278,38 @@ def verify_baseline_semantic_facts(
             return scope_errs
 
         field_rules: Dict[str, List[str]] = {
-            "task_id": [r'(?:task_id|任务编号)[^:：\n]*[:：]\s*`([A-Za-z0-9_-]+)`'],
-            "candidate_commit": [r'(?:candidate_commit|代码候选 Commit|当前工程候选 Commit|当前候选 Commit)[^:：\n]*[:：]\s*`([0-9a-f]{40})`'],
-            "snapshot_commit": [r'(?:snapshot_commit|文档快照 Commit|本地 HEAD)[^:：\n]*[:：]\s*`([0-9a-f]{40})`'],
-            "last_verified_ci_commit": [r'(?:last_verified_ci_commit|已验证 CI Commit)[^:：\n]*[:：]\s*`([0-9a-f]{40})`'],
-            "push_run_id": [r'Push Run ID[^:：\n]*[:：]\s*`([0-9]+)`', r'Run ID \(`run_id`\)[^:：\n]*[:：]\s*`([0-9]+)`'],
-            "pr_run_id": [r'PR Run ID[^:：\n]*[:：]\s*`([0-9]+)`'],
-            "ci_status": [r'(?:verification_status|核验状态)[^:：\n]*[:：]\s*`([A-Z_]+)`'],
-            "test_count": [r'(?:测试用例数|通过 / 失败用例数)[^:：\n]*[:：]\s*`(\d+)\s+tests', r'(?:通过 / 失败用例数)[^:：\n]*[:：]\s*`(\d+)\s*/'],
-            "pr_number": [r'(?:PR 编号|pr_number|PR 编号与状态)[^:：\n]*[:：]\s*(?:PR\s*#)?`?(\d+)`?'],
-            "pr_status": [r'状态[：:]\s*`([A-Za-z_]+)`', r'pr_status[^:：\n]*[:：]\s*`([A-Za-z_]+)`'],
-            "main_head": [r'(?:main_head|主干 HEAD)[^:：\n]*[:：]\s*`([0-9a-f]{40})`'],
-            "old_tag_deleted": [r'OLD_TAG_DELETED=(true|false)', r'old_tag_deleted[^:：\n]*[:：]\s*`(true|false)`'],
+            "task_id": [r'(?:task_id|任务编号)[^:：\n]*?[:：]\s*`([A-Za-z0-9_-]+)`'],
+            "candidate_commit": [r'(?:candidate_commit|代码候选 Commit|当前工程候选 Commit|当前候选 Commit)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "snapshot_commit": [r'(?:snapshot_commit|文档快照 Commit|本地 HEAD)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "last_verified_ci_commit": [r'(?:last_verified_ci_commit|已验证 CI Commit)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "push_run_id": [r'Push Run ID[^:：\n]*?[:：]\s*`([0-9]+)`', r'Run ID \(`run_id`\)[^:：\n]*?[:：]\s*`([0-9]+)`'],
+            "pr_run_id": [r'PR Run ID[^:：\n]*?[:：]\s*`([0-9]+)`'],
+            "ci_status": [r'(?:verification_status|核验状态)[^:：\n]*?[:：]\s*`([A-Z_]+)`'],
+            "test_count": [r'(?:测试用例数|通过 / 失败用例数)[^:：\n]*?[:：]\s*`(\d+)\s+tests', r'(?:通过 / 失败用例数)[^:：\n]*?[:：]\s*`(\d+)\s*/'],
+            "pr_number": [r'(?:PR 编号|pr_number|PR 编号与状态)[^:：\n]*?[:：]\s*(?:PR\s*#)?`?(\d+)`?'],
+            "pr_status": [r'状态[：:]\s*`([A-Za-z_]+)`', r'pr_status[^:：\n]*?[:：]\s*`([A-Za-z_]+)`'],
+            "main_head": [r'(?:main_head|主干 HEAD)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "release_flow_status": [r'发布流程状态[^:：\n]*?[:：]\s*`([A-Za-z_]+)`'],
+            "old_tag_deleted": [r'OLD_TAG_DELETED=(true|false)', r'old_tag_deleted[^:：\n]*?[:：]\s*`(true|false)`'],
         }
 
         mismatches: List[str] = []
+        field_aliases = {
+            "ci_run_id": "push_run_id",
+            "ci_commit": "last_verified_ci_commit",
+        }
         for fld, exp_val in expected_facts.items():
-            if fld in field_rules and exp_val is not None:
-                mismatches.extend(verify_scoped_field(target_text, fld, field_rules[fld], exp_val, scope))
+            if exp_val is None:
+                continue
+            canonical_field = field_aliases.get(fld, fld)
+            if canonical_field not in field_rules:
+                mismatches.append(
+                    f"UNSUPPORTED_EXPECTED_FIELD: '{fld}' has no scoped verifier for scope '{scope}'"
+                )
+                continue
+            mismatches.extend(
+                verify_scoped_field(target_text, canonical_field, field_rules[canonical_field], exp_val, scope)
+            )
         return mismatches
 
     target_text = content

@@ -1502,19 +1502,10 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
     def test_b17_duplicate_scope_and_field_uniqueness_negative_tests(self) -> None:
         """STD-034 / STD-035 (Std-018): 12 negative test cases for scope and field uniqueness enforcement
         in generate_engineering_baseline.py and generate_handoff.py.
-        Ensures:
-          1. PR9 scope heading duplicated in baseline -> FAIL (DUPLICATE_SCOPE_SECTION)
-          2. Std018 scope heading duplicated in baseline -> FAIL (DUPLICATE_SCOPE_SECTION)
-          3. PR9 field duplicated with conflicting value in baseline -> FAIL (DUPLICATE_FIELD)
-          4. Std018 field duplicated with conflicting value in baseline -> FAIL (DUPLICATE_FIELD)
-          5. Valid field followed by appended erroneous field -> FAIL (DUPLICATE_FIELD)
-          6. Delete PR9 required field in baseline -> FAIL (MISSING_FIELD)
-          7. Delete Std018 required field in baseline -> FAIL (MISSING_FIELD)
-          8. Cross-scope isolation: PR9 valid, Std018 invalid in Handoff -> FAIL
-          9. Cross-scope isolation: Std018 valid, PR9 invalid in Handoff -> FAIL
-          10. Baseline tampered then recomputed SHA256 -> FAIL
-          11. Handoff tampered then recomputed SHA256 -> FAIL
-          12. Missing Std018 evidence file -> BLOCK
+        Ensures dual-generator rejection of duplicate scope headings, duplicate fields
+        (including same-line duplicates), missing fields, appended conflicting values,
+        cross-scope evidence substitution, tampering after hash recomputation, missing
+        evidence files, and release-flow status tampering.
         """
         pr9_file = ROOT / "docs" / "release-evidence" / "v3.0.0-reissue.json"
         std018_file = ROOT / "docs" / "release-evidence" / "std018-current-snapshot.json"
@@ -1641,6 +1632,88 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             self.assertNotEqual(res11.returncode, 0)
             self.assertIn("mismatches", res11.stdout)
 
+            # Handoff parity: duplicate PR9 and Std-018 scope headings must both block.
+            h12 = handoff_raw + "\n\n### 4.9 Duplicate PR9 scope (PR9_HISTORICAL_RELEASE_EVIDENCE)\n- duplicate\n"
+            p12 = write_with_sha(h12, tmp / "h_neg12.md")
+            res12 = run_handoff_verify(["--output", str(p12)])
+            self.assertNotEqual(res12.returncode, 0)
+            self.assertIn("DUPLICATE_SCOPE_SECTION", res12.stdout)
+
+            h13 = handoff_raw + "\n\n### 4.10 Duplicate Std018 scope (STD018_CURRENT_SNAPSHOT)\n- duplicate\n"
+            p13 = write_with_sha(h13, tmp / "h_neg13.md")
+            res13 = run_handoff_verify(["--output", str(p13)])
+            self.assertNotEqual(res13.returncode, 0)
+            self.assertIn("DUPLICATE_SCOPE_SECTION", res13.stdout)
+
+            h14 = handoff_raw.replace(
+                "- **Push Run ID**：`42843755347`",
+                "- **Push Run ID**：`42843755347`\n- **Push Run ID**：`99999999998`",
+                1,
+            )
+            p14 = write_with_sha(h14, tmp / "h_neg14.md")
+            res14 = run_handoff_verify(["--output", str(p14)])
+            self.assertNotEqual(res14.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res14.stdout)
+
+            h15 = handoff_raw.replace(
+                "- **Push Run ID**：`42983601133`",
+                "- **Push Run ID**：`42983601133`\n- **Push Run ID**：`99999999999`",
+                1,
+            )
+            p15 = write_with_sha(h15, tmp / "h_neg15.md")
+            res15 = run_handoff_verify(["--output", str(p15)])
+            self.assertNotEqual(res15.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res15.stdout)
+
+            b16 = baseline_raw.replace(
+                "- **Push Run ID**：`42983601133`",
+                "- **Push Run ID**：`42983601133`；**Push Run ID**：`99999999999`",
+                1,
+            )
+            p16 = write_with_sha(b16, tmp / "b_neg16.md")
+            res16 = run_baseline_verify(["--output", str(p16)])
+            self.assertNotEqual(res16.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res16.stdout)
+
+            h17 = handoff_raw.replace(
+                "- **Push Run ID**：`42983601133`",
+                "- **Push Run ID**：`42983601133`；**Push Run ID**：`99999999999`",
+                1,
+            )
+            p17 = write_with_sha(h17, tmp / "h_neg17.md")
+            res17 = run_handoff_verify(["--output", str(p17)])
+            self.assertNotEqual(res17.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res17.stdout)
+
+            h18 = handoff_raw.replace(
+                "- **发布流程状态 (`release_flow_status`)**：`IN_PROGRESS`",
+                "- **发布流程状态 (`release_flow_status`)**：`RELEASED`",
+                1,
+            )
+            p18 = write_with_sha(h18, tmp / "h_neg18.md")
+            res18 = run_handoff_verify(["--output", str(p18)])
+            self.assertNotEqual(res18.returncode, 0)
+            self.assertIn("release_flow_status", res18.stdout)
+
+            b19 = baseline_raw.replace(
+                "- **发布流程状态 (`release_flow_status`)**：`IN_PROGRESS`",
+                "- **发布流程状态 (`release_flow_status`)**：`RELEASED`",
+                1,
+            )
+            p19 = write_with_sha(b19, tmp / "b_neg19.md")
+            res19 = run_baseline_verify(["--output", str(p19)])
+            self.assertNotEqual(res19.returncode, 0)
+            self.assertIn("release_flow_status", res19.stdout)
+
+            h20 = handoff_raw.replace(
+                "- **PR Run ID**：`42983609802`\n",
+                "",
+                1,
+            )
+            p20 = write_with_sha(h20, tmp / "h_neg20.md")
+            res20 = run_handoff_verify(["--output", str(p20)])
+            self.assertNotEqual(res20.returncode, 0)
+            self.assertIn("MISSING_FIELD", res20.stdout)
             # 12. Missing Std018 evidence file -> BLOCK
             missing_ev = tmp / "missing-std018.json"
             res12_b = subprocess.run([
