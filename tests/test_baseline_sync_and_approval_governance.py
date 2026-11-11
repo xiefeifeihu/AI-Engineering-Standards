@@ -514,7 +514,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             self.assertIn("ci verification_status", res7.stdout)
 
             # --- Negative 8: 216 tests changed to 215 tests fails ---
-            ev8 = dict(valid_ev_data, test_count=215)
+            ev8 = dict(valid_ev_data, test_count=215 if valid_ev_data.get("test_count") != 215 else 214)
             res8 = run_baseline_with_evidence(ev8)
             self.assertNotEqual(res8.returncode, 0)
             self.assertIn("test count", res8.stdout)
@@ -572,7 +572,8 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             self.assertTrue(any("Ubuntu job conclusion" in e for e in errs10))
 
             # --- Negative 11: Wrong PR status fails ---
-            ev11 = dict(valid_ev_data, pr_status="MERGED")
+            wrong_st = "DRAFT" if valid_ev_data.get("pr_status") == "MERGED" else "MERGED"
+            ev11 = dict(valid_ev_data, pr_status=wrong_st)
             res11 = run_baseline_with_evidence(ev11)
             self.assertNotEqual(res11.returncode, 0)
             self.assertIn("pr_status", res11.stdout)
@@ -1081,6 +1082,281 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         st11, errs11, _ = verify_github_ci_runs(ev_unreachable, timeout=1, simulate_data_map=None)
         self.assertEqual(st11, "NOT_VERIFIABLE")
         self.assertTrue(any("not accessible" in e.lower() for e in errs11))
+
+    def test_b15_merged_pr_run_fallback_and_pr_identity_binding(self) -> None:
+        """STD-016 / STD-034: Verification of historical PR Run fallback when pull_requests is empty,
+        6-point identity verification contract against GitHub PR API, and real main workflow CLI integration.
+        """
+        canonical_repo = "xiefeifeihu/AI-Engineering-Standards"
+        push_id = "42843755347"
+        pr_id = "42843964061"
+        head_sha = "336114861b2c720106a6076956eef08c9cd6ded7"
+        feat_branch = "feat/standards-baseline-sync-governance"
+        workflow_path = ".github/workflows/standards-ci.yml"
+
+        valid_evidence = {
+            "repository": canonical_repo,
+            "version": "3.0.0",
+            "pr_number": 9,
+            "pr_status": "MERGED",
+            "main_head": "3cd42b69049b148bceea1324d4f8212393cb96df",
+            "candidate_commit": head_sha,
+            "snapshot_commit": head_sha,
+            "last_verified_ci_commit": head_sha,
+            "push_run_id": push_id,
+            "push_head_branch": feat_branch,
+            "pr_run_id": pr_id,
+            "ci_status": "PASS",
+            "test_count": 219,
+            "test_failed": 0,
+            "test_skipped": 0,
+            "windows_status": "PASS",
+            "ubuntu_status": "PASS",
+            "old_tag_deleted": True,
+            "old_tag_object": "325008af90a1e6dcc88ff714c9ec4e7ecee86ec6",
+            "old_tag_peeled_commit": "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b",
+            "old_tag_bundle_sha256": "45bc3e455fc06b96a669ba9d7c44195f5dfb4e42e55397d795200942e434ebfc",
+            "release_flow_status": "IN_PROGRESS",
+            "task_id": "Std-016-V3-0-0-REISSUE-MERGED-PR-RUN-FALLBACK",
+        }
+
+        base_push_sim = {
+            "id": int(push_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": head_sha,
+            "headSha": head_sha,
+            "event": "push",
+            "status": "completed",
+            "conclusion": "success",
+            "path": workflow_path,
+            "head_branch": feat_branch,
+            "headBranch": feat_branch,
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "jobs": [
+                {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+            ],
+        }
+
+        # PR Run with empty pull_requests (merged PR simulation)
+        base_pr_sim_empty = {
+            "id": int(pr_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": head_sha,
+            "headSha": head_sha,
+            "event": "pull_request",
+            "status": "completed",
+            "conclusion": "success",
+            "path": workflow_path,
+            "head_branch": feat_branch,
+            "headBranch": feat_branch,
+            "pull_requests": [],
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "jobs": [
+                {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+            ],
+        }
+
+        # Valid PR API response
+        valid_pr_api_data = {
+            "number": 9,
+            "state": "closed",
+            "merged": True,
+            "merged_at": "2026-11-11T00:44:16Z",
+            "base": {"ref": "main"},
+            "head": {"ref": feat_branch, "sha": head_sha},
+        }
+
+        # 1. PR OPEN 且 Run.pull_requests 正常存在：PASS
+        pr_sim_open = dict(
+            base_pr_sim_empty,
+            pull_requests=[{"number": 9, "head": {"ref": feat_branch}, "base": {"ref": "main"}}],
+        )
+        st1, errs1, meta1 = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="OPEN",
+            simulate_data=pr_sim_open,
+        )
+        self.assertEqual(st1, "PASS")
+        self.assertEqual(errs1, [])
+        self.assertFalse(meta1.get("pr_fallback_verified", False))
+
+        # 2. PR MERGED 且 Run.pull_requests 为空：使用 PR API fallback，PASS
+        st2, errs2, meta2 = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_data=valid_pr_api_data,
+        )
+        self.assertEqual(st2, "PASS")
+        self.assertEqual(errs2, [])
+        self.assertTrue(meta2.get("pr_fallback_verified"))
+        self.assertEqual(meta2.get("actual_pr_number"), 9)
+
+        # 3. PR 当前 head.sha 与历史 Run head_sha 不一致：FAIL
+        pr_wrong_head_sha = dict(valid_pr_api_data, head={"ref": feat_branch, "sha": "1111111111111111111111111111111111111111"})
+        st3, errs3, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_data=pr_wrong_head_sha,
+        )
+        self.assertEqual(st3, "FAIL")
+        self.assertTrue(any("head.sha mismatch" in e.lower() for e in errs3))
+
+        # 4. PR base.ref 非 main：FAIL
+        pr_wrong_base = dict(valid_pr_api_data, base={"ref": "develop"})
+        st4, errs4, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_data=pr_wrong_base,
+        )
+        self.assertEqual(st4, "FAIL")
+        self.assertTrue(any("base ref mismatch" in e.lower() for e in errs4))
+
+        # 5. PR number 不匹配：FAIL
+        pr_wrong_num = dict(valid_pr_api_data, number=99)
+        st5, errs5, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_data=pr_wrong_num,
+        )
+        self.assertEqual(st5, "FAIL")
+        self.assertTrue(any("number mismatch" in e.lower() for e in errs5))
+
+        # 6. PR head.ref 与历史 Run head_branch 不匹配：FAIL
+        pr_wrong_head_ref = dict(valid_pr_api_data, head={"ref": "feature/unrelated", "sha": head_sha})
+        st6, errs6, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_data=pr_wrong_head_ref,
+        )
+        self.assertEqual(st6, "FAIL")
+        self.assertTrue(any("head.ref mismatch" in e.lower() for e in errs6))
+
+        # 7. PR merged=true 但 merged_at 为空：FAIL
+        pr_empty_merged_at = dict(valid_pr_api_data, merged_at=None)
+        st7, errs7, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_data=pr_empty_merged_at,
+        )
+        self.assertEqual(st7, "FAIL")
+        self.assertTrue(any("merged_at is empty" in e.lower() for e in errs7))
+
+        # 8. PR API 不可达：NOT_VERIFIABLE
+        st8, errs8, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_error="Connection timed out",
+        )
+        self.assertEqual(st8, "NOT_VERIFIABLE")
+        self.assertTrue(any("not accessible" in e.lower() for e in errs8))
+
+        # 9. PR API 返回 404：NOT_VERIFIABLE，不得 PASS
+        st9, errs9, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_error="HTTP 404: Not Found",
+        )
+        self.assertEqual(st9, "NOT_VERIFIABLE")
+        self.assertNotEqual(st9, "PASS")
+        self.assertTrue(any("not accessible" in e.lower() for e in errs9))
+
+        # --- verify_github_ci_runs 组合测试与模拟调用路径 ---
+        sim_data_map = {push_id: base_push_sim, pr_id: base_pr_sim_empty}
+        sim_pr_map = {"9": valid_pr_api_data}
+        st_comb, errs_comb, meta_comb = verify_github_ci_runs(
+            valid_evidence,
+            simulate_data_map=sim_data_map,
+            simulate_pr_data_map=sim_pr_map,
+        )
+        self.assertEqual(st_comb, "PASS")
+        self.assertEqual(errs_comb, [])
+        self.assertTrue(meta_comb.get("pr_fallback_verified"))
+
+        # --- 真实 CLI 集成测试：模拟当前运行于 main Workflow (GITHUB_REF_NAME=main) ---
+        # 正式调用 verify_github_ci_runs()，直连 GitHub Actions 真实 Run 42843964061 与真实 PR #9 API
+        orig_ref_name = os.environ.get("GITHUB_REF_NAME")
+        orig_head_ref = os.environ.get("GITHUB_HEAD_REF")
+        try:
+            os.environ["GITHUB_REF_NAME"] = "main"
+            os.environ["GITHUB_HEAD_REF"] = ""
+
+            ok_ev, ev_errors, real_evidence = load_release_evidence(ROOT)
+            self.assertTrue(ok_ev, f"Failed to load real release evidence: {ev_errors}")
+            self.assertEqual(real_evidence["pr_status"], "MERGED")
+            self.assertEqual(str(real_evidence["pr_run_id"]), pr_id)
+
+            real_st, real_errs, real_details = verify_github_ci_runs(real_evidence)
+            self.assertEqual(real_st, "PASS", f"Real CI authenticity verification failed: {real_errs}")
+            self.assertEqual(real_errs, [])
+            self.assertTrue(real_details.get("pr_fallback_verified"))
+            self.assertEqual(real_details["pr_run"]["actual_pr_number"], 9)
+            self.assertEqual(real_details["pr_run"]["actual_base_ref"], "main")
+            self.assertEqual(real_details["pr_run"]["actual_head_ref"], feat_branch)
+            self.assertEqual(real_details["pr_run"]["actual_pr_head_sha"], head_sha)
+        finally:
+            if orig_ref_name is not None:
+                os.environ["GITHUB_REF_NAME"] = orig_ref_name
+            else:
+                os.environ.pop("GITHUB_REF_NAME", None)
+            if orig_head_ref is not None:
+                os.environ["GITHUB_HEAD_REF"] = orig_head_ref
+            else:
+                os.environ.pop("GITHUB_HEAD_REF", None)
 
     # =========================================================================
     # C. Standards Sync Tool Tests

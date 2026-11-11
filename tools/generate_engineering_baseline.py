@@ -633,6 +633,11 @@ def build_engineering_baseline(
         or effective_push_run
         or existing_facts.get("ci_run_id")
     )
+    effective_pr_status = (
+        pr_status
+        if pr_status != "DRAFT"
+        else (evidence_data.get("pr_status") if evidence_data else pr_status)
+    )
 
     if pending_verifications is not None:
         pending_text = pending_verifications
@@ -664,6 +669,8 @@ def build_engineering_baseline(
         "Run 42800383714 (PR #9 @ 70f7554, conclusion: success, Windows/Ubuntu PASS, 217 tests)",
         "Run 42835602231 (Push @ 18a71b9, conclusion: success, Windows/Ubuntu PASS, 218 tests)",
         "Run 42835611644 (PR #9 @ 18a71b9, conclusion: success, Windows/Ubuntu PASS, 218 tests)",
+        "Run 42843755347 (Push @ 3361148, conclusion: success, Windows/Ubuntu PASS, 219 tests)",
+        "Run 42843964061 (PR #9 @ 3361148, conclusion: success, Windows/Ubuntu PASS, 219 tests)",
     ]
     hist_runs = historical_ci_runs or default_historical_runs
 
@@ -698,9 +705,12 @@ def build_engineering_baseline(
             run_lbl = str(effective_run_id)
         else:
             run_lbl = "42783497089 Push / 42783504258 PR #9"
-        summary_text = f"PR CI 已通过 (Run: {run_lbl} 双平台 PASS, {effective_test_count} tests)，等待合并及 main CI 和 Tag 重建"
+        if effective_pr_status == "MERGED":
+            summary_text = f"PR CI 已通过 (Run: {run_lbl} 双平台 PASS, {effective_test_count} tests)，PR #9 已合入 main，等待修复 main CI 后重建 Tag"
+        else:
+            summary_text = f"PR CI 已通过 (Run: {run_lbl} 双平台 PASS, {effective_test_count} tests)，等待合并及 main CI 和 Tag 重建"
     else:
-        summary_text = "当前分支远端 GitHub Actions CI 待推送后由远端 Runner 实测（执行前保持 NOT_VERIFIABLE；历史已通过 Run: 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644）"
+        summary_text = "当前分支远端 GitHub Actions CI 待推送后由远端 Runner 实测（执行前保持 NOT_VERIFIABLE；历史已通过 Run: 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644, 42843755347, 42843964061）"
 
     ci_fact: Dict[str, Any] = ci_fact_override or {
         "repository": repository,
@@ -1117,23 +1127,30 @@ def build_engineering_baseline(
             hist_run_ids.append(m.group(1))
     hist_ci_inline = "Run " + ", ".join(hist_run_ids) if hist_run_ids else "Run 42169418901"
 
+    if effective_pr_status == "MERGED":
+        cand_status_line = f"- 当前候选版本：`{version_str}`；PR #{pr_number}（状态：`{effective_pr_status}`）已合入官方 main（Merge Commit: `{remote_main_head[:8] if remote_main_head else '3cd42b69'}`），但因 main CI 历史 PR Run 关联信息为空失败，尚未创建正式 v{version_str} Tag。"
+        flow_line = f"  - 待执行发布流程：PR #{pr_number} 已合入 main 但 main CI 失败；经 Std-016 增加 PR REST API fallback 修复后，通过 PR #10 合入重新触发 main CI 自动重建同名 Annotated Tag `v{version_str}`。"
+    else:
+        cand_status_line = f"- 当前候选版本：`{version_str}`；PR #{pr_number}（状态：`{effective_pr_status}`）尚未合入官方 main，尚未创建正式 v{version_str} Tag。"
+        flow_line = f"  - 待执行发布流程：PR #{pr_number} 经 ChatGPT 独立审查与唯一 Owner 最终合入 main，触发 main CI 自动重建同名 Annotated Tag `v{version_str}`。"
+
     md_lines.extend([
         "",
         "## 19. 当前候选状态与消费端试点",
         "",
-        f"- 当前候选版本：`{version_str}`；PR #{pr_number}（状态：`{pr_status}`）尚未合入官方 main，尚未创建正式 v{version_str} Tag。",
+        cand_status_line,
         "- 正式发布版本必须以官方 main 上的 Annotated Tag、Tag Object SHA、Peeled Commit 与 main CI 为准；严禁依赖 GitHub /releases/latest REST API 对象。",
         "- 当前旧 Tag 删除状态与回滚证据：",
         f"  - 远端旧 Tag `v{version_str}` 已删除 (`OLD_TAG_DELETED={str(old_tag_deleted).lower()}`)，新 Tag 尚未创建。",
         "  - 原 Tag Object SHA: `325008af90a1e6dcc88ff714c9ec4e7ecee86ec6`",
         "  - 原 Peeled Commit: `1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b`",
         "  - 旧 Tag 本地 Bundle 备份 SHA256: `45bc3e455fc06b96a669ba9d7c44195f5dfb4e42e55397d795200942e434ebfc`",
-        "  - 待执行发布流程：PR #9 经 ChatGPT 独立审查与唯一 Owner 最终合入 main，触发 main CI 自动重建同名 Annotated Tag `v3.0.0`。",
+        flow_line,
         "- 区分 CI 与快照核心概念（STD-034 / STD-035）：",
         f"  1. **基线生成时的源 Commit (`source_commit`)**：`{ci_fact['source_commit']}`（基准比对基线）。",
         f"  2. **Git 快照观测时间**：`{ci_fact['observed_at']}`（快照有效时间 24 小时；过期事实标记 STALE 或 NOT_VERIFIABLE）。",
         f"  3. **最近一次已经验证的 CI Commit (`last_verified_ci_commit`)**：`{ci_fact['details'].get('last_verified_ci_commit', verified_ci)}`（{run_desc}）。",
-        f"  4. **代码候选 Commit (`code_candidate_commit`)**：`{ci_fact['details'].get('candidate_commit', code_candidate_commit)}`（整改与测试候选 HEAD，包含 216 项全量测试与符号链接路径安全加固）。",
+        f"  4. **代码候选 Commit (`code_candidate_commit`)**：`{ci_fact['details'].get('candidate_commit', code_candidate_commit)}`（整改与测试候选 HEAD，包含 {effective_test_count} 项全量测试与符号链接路径安全加固）。",
         f"  5. **当前 PR / 文档快照 Commit (`snapshot_commit`)**：`{ci_fact['details'].get('snapshot_commit', snapshot_commit)}`。",
         f"  6. **当前待验证事项 (`pending_verifications`)**：{ci_fact['details'].get('pending_verifications')}",
         f"  7. **历史 CI 记录**：{hist_ci_inline}（避免每次记录 CI 又无限触发基线提交的循环）。",

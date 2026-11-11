@@ -4,16 +4,22 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 
 ## [Unreleased]
 
-> RELEASE_STATUS=CANDIDATE | PROPOSED_VERSION=3.0.0 | MAIN_MERGED=false | RELEASE_TAG_NOT_CREATED=true | REISSUE_IN_PROGRESS=true
+> RELEASE_STATUS=CANDIDATE | PROPOSED_VERSION=3.0.0 | MAIN_MERGED=true | RELEASE_TAG_NOT_CREATED=true | REISSUE_IN_PROGRESS=true
 >
-> **v3.0.0 一次性重发处理中 (PR #9)**：
-> - 当前分支处于 v3.0.0 一次性重发候选就绪状态，包含 PR #8 核心规范体系、Std-009 单人 Owner 治理机制收敛与 Std-010 事务路径安全加固。
-> - Std-009 单人 Owner 治理与 PR 合并审批契约已完整实现并进入候选。
+> **v3.0.0 一次性重发处理中 (PR #9 已合并，修复分支 PR #10 处理中)**：
+> - PR #9 已由 Owner 正式合入官方 main（Merge Commit: `3cd42b69049b148bceea1324d4f8212393cb96df`）。
+> - main CI 运行失败（Run 42933692363: `Run 42835611644 has no associated pull requests`），原因为 PR 合并后 GitHub Actions API 历史 Run 的 `pull_requests` 字段返回空列表。
+> - Std-016 增加 PR REST API fallback 真实性身份核验机制，通过 PR #10 修复此问题并重新触发 main CI 自动重建同名 Annotated Tag `v3.0.0`。
 > - 远端旧 `v3.0.0` Annotated Tag 已按 Owner 授权在本地完整备份后清理（`OLD_TAG_DELETED=true`），正式 Tag 尚未重建。
-> - 保持 PR #9 Draft 状态，待 ChatGPT 独立审核给出建议结论并由唯一 Owner 批准合入 main 后，由 main CI 自动重建同名 Annotated Tag。
 > - 严禁提前标记 RELEASED 或在正式合入与 Tag 重建前变更发布状态。
 
 ### Added
+- **合并后历史 PR Run 关联信息丢失修复与 PR API Fallback 真实性核验 (STD-016 / STD-034 / STD-035 / Std-016)**:
+  - 修复 `tools/release_evidence.py` 中的 `verify_single_github_run()`：当 PR 合并后 GitHub Actions 历史 Run 的 `pull_requests` 返回空列表时，使用独立发布证据中的 `pr_number`，通过 GitHub REST API 查询 `GET /repos/{owner}/{repo}/pulls/{pr_number}` 触发严格身份回退核验 (P1-A)。
+  - 严格校验 6 大契约项：PR number 与 `expected_pr_number` 一致、PR `base.ref=main`、PR `head.ref` 与历史 Run `head_branch` 一致、PR `head.sha` 与历史 Run `head_sha` 一致、当 `pr_status=MERGED` 时 `merged=true` 且 `merged_at` 非空；网络异常或不可达时记录 `NOT_VERIFIABLE`，身份不一致判定 `FAIL`，严禁伪造 PASS (P1-B)。
+  - 在 `.github/workflows/standards-ci.yml` 的 `validate-standards` Job 中补充最小必要只读权限 `pull-requests: read`，保留 `actions: read` 与 `contents: read`，保持零密钥安全与最小权限原则 (P1-C)。
+  - 刷新独立发布证据、权威基线与跨会话交接中的历史 CI 事实至已验证 Commit `336114861b2c720106a6076956eef08c9cd6ded7`（Push Run 42843755347，PR Run 42843964061，全量 219 项测试双平台全绿），记录 PR #9 已合并事实与 Merge Commit `3cd42b69` 并保留 Std-015 历史快照 (P1-D)。
+  - 新增单元与集成测试 `test_b15`，覆盖 9 大正负向场景，并在 `GITHUB_REF_NAME=main` 模拟环境中真实直连核验已合并 PR #9 历史 Run 通过 (P1-E)。
 - **主干 CI 分支误判修复与发布证据分支严格绑定 (STD-015 / STD-034 / STD-035 / Std-015)**:
   - 在 `schemas/release-evidence.schema.json` 中新增必填字段 `push_head_branch`（类型 `string`，`minLength=1`），严格绑定历史 Push Run 真实所属分支，从契约层面防止环境分支覆盖 (P1-A)。
   - 修复 `tools/release_evidence.py` 中的 `verify_github_ci_runs()`：Push Run 的 `expected_head_branch` 必须且直接取自 `evidence["push_head_branch"]`，彻底消除 `effective_target_branch` 从 `GITHUB_REF_NAME` 错误推断导致 main Push CI 误判功能分支的历史缺陷；禁止缺少字段时回退默认分支；禁止模拟绕过生产验证 (P1-B)。
