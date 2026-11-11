@@ -511,13 +511,13 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             ev7 = dict(valid_ev_data, ci_status="NOT_VERIFIABLE")
             res7 = run_baseline_with_evidence(ev7)
             self.assertNotEqual(res7.returncode, 0)
-            self.assertIn("ci verification_status", res7.stdout)
+            self.assertTrue("ci_status" in res7.stdout or "ci verification_status" in res7.stdout)
 
             # --- Negative 8: 216 tests changed to 215 tests fails ---
             ev8 = dict(valid_ev_data, test_count=215 if valid_ev_data.get("test_count") != 215 else 214)
             res8 = run_baseline_with_evidence(ev8)
             self.assertNotEqual(res8.returncode, 0)
-            self.assertIn("test count", res8.stdout)
+            self.assertTrue("test_count" in res8.stdout or "test count" in res8.stdout)
 
             # --- Negative 9: Windows Job failed in CI check ---
             sim_windows_fail = {
@@ -582,7 +582,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             ev12 = dict(valid_ev_data, old_tag_deleted=False)
             res12 = run_baseline_with_evidence(ev12)
             self.assertNotEqual(res12.returncode, 0)
-            self.assertIn("OLD_TAG_DELETED", res12.stdout)
+            self.assertTrue("old_tag_deleted" in res12.stdout or "OLD_TAG_DELETED" in res12.stdout)
 
             # --- Proof Test: Modifying Commit or Run ID in markdown under test STILL FAILS ---
             # Even if content_sha256 is correctly recalculated!
@@ -1498,6 +1498,170 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             res12 = run_baseline_verify(pr9_file, std018_file, extra=["--output", str(tampered_base_path)])
             self.assertNotEqual(res12.returncode, 0, "Tampered baseline MUST fail verify-only even with matching content_sha256")
             self.assertIn("mismatches", res12.stdout)
+
+    def test_b17_duplicate_scope_and_field_uniqueness_negative_tests(self) -> None:
+        """STD-034 / STD-035 (Std-018): 12 negative test cases for scope and field uniqueness enforcement
+        in generate_engineering_baseline.py and generate_handoff.py.
+        Ensures:
+          1. PR9 scope heading duplicated in baseline -> FAIL (DUPLICATE_SCOPE_SECTION)
+          2. Std018 scope heading duplicated in baseline -> FAIL (DUPLICATE_SCOPE_SECTION)
+          3. PR9 field duplicated with conflicting value in baseline -> FAIL (DUPLICATE_FIELD)
+          4. Std018 field duplicated with conflicting value in baseline -> FAIL (DUPLICATE_FIELD)
+          5. Valid field followed by appended erroneous field -> FAIL (DUPLICATE_FIELD)
+          6. Delete PR9 required field in baseline -> FAIL (MISSING_FIELD)
+          7. Delete Std018 required field in baseline -> FAIL (MISSING_FIELD)
+          8. Cross-scope isolation: PR9 valid, Std018 invalid in Handoff -> FAIL
+          9. Cross-scope isolation: Std018 valid, PR9 invalid in Handoff -> FAIL
+          10. Baseline tampered then recomputed SHA256 -> FAIL
+          11. Handoff tampered then recomputed SHA256 -> FAIL
+          12. Missing Std018 evidence file -> BLOCK
+        """
+        pr9_file = ROOT / "docs" / "release-evidence" / "v3.0.0-reissue.json"
+        std018_file = ROOT / "docs" / "release-evidence" / "std018-current-snapshot.json"
+        self.assertTrue(pr9_file.exists(), f"PR9 evidence file missing: {pr9_file}")
+        self.assertTrue(std018_file.exists(), f"Std-018 evidence file missing: {std018_file}")
+
+        baseline_raw = (ROOT / "docs" / "当前权威基线.md").read_text(encoding="utf-8")
+        handoff_raw = (ROOT / "docs" / "CROSS-SESSION-HANDOFF.md").read_text(encoding="utf-8")
+
+        from tools.validate_approval_contract import compute_canonical_document_sha256
+
+        def write_with_sha(content: str, out_p: Path) -> Path:
+            csha = compute_canonical_document_sha256(content)
+            updated = re.sub(r'content_sha256:\s*"[^"]*"', f'content_sha256: "{csha}"', content)
+            out_p.write_text(updated, encoding="utf-8")
+            return out_p
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+
+            def run_baseline_verify(extra: list) -> subprocess.CompletedProcess:
+                cmd = [
+                    sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"),
+                    "--project-root", str(ROOT),
+                    "--release-evidence", str(pr9_file),
+                    "--snapshot-evidence", str(std018_file),
+                    "--verify-only",
+                ] + extra
+                return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+
+            def run_handoff_verify(extra: list) -> subprocess.CompletedProcess:
+                cmd = [
+                    sys.executable, str(ROOT / "tools" / "generate_handoff.py"),
+                    "--project-root", str(ROOT),
+                    "--release-evidence", str(pr9_file),
+                    "--snapshot-evidence", str(std018_file),
+                    "--verify-only",
+                ] + extra
+                return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+
+            # 1. PR9 scope heading duplicated in baseline -> FAIL (DUPLICATE_SCOPE_SECTION)
+            m1 = baseline_raw + "\n\n### 9.9 重复作用域副本 (PR9_HISTORICAL_RELEASE_EVIDENCE)\n- 冗余内容\n"
+            p1 = write_with_sha(m1, tmp / "b_neg1.md")
+            res1 = run_baseline_verify(["--output", str(p1)])
+            self.assertNotEqual(res1.returncode, 0)
+            self.assertIn("DUPLICATE_SCOPE_SECTION", res1.stdout)
+
+            # 2. Std018 scope heading duplicated in baseline -> FAIL (DUPLICATE_SCOPE_SECTION)
+            m2 = baseline_raw + "\n\n### 9.10 重复作用域副本 (STD018_CURRENT_SNAPSHOT)\n- 冗余内容\n"
+            p2 = write_with_sha(m2, tmp / "b_neg2.md")
+            res2 = run_baseline_verify(["--output", str(p2)])
+            self.assertNotEqual(res2.returncode, 0)
+            self.assertIn("DUPLICATE_SCOPE_SECTION", res2.stdout)
+
+            # 3. PR9 field duplicated with conflicting value in baseline -> FAIL (DUPLICATE_FIELD)
+            m3 = baseline_raw.replace(
+                "- **代码候选 Commit (`candidate_commit`)**：`336114861b2c720106a6076956eef08c9cd6ded7`",
+                "- **代码候选 Commit (`candidate_commit`)**：`336114861b2c720106a6076956eef08c9cd6ded7`\n- **代码候选 Commit (`candidate_commit`)**：`0000000000000000000000000000000000000000`"
+            )
+            p3 = write_with_sha(m3, tmp / "b_neg3.md")
+            res3 = run_baseline_verify(["--output", str(p3)])
+            self.assertNotEqual(res3.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res3.stdout)
+
+            # 4. Std018 field duplicated with conflicting value in baseline -> FAIL (DUPLICATE_FIELD)
+            m4 = baseline_raw.replace(
+                "- **Push Run ID**：`42983601133`",
+                "- **Push Run ID**：`42983601133`\n- **Push Run ID**：`99999999999`"
+            )
+            p4 = write_with_sha(m4, tmp / "b_neg4.md")
+            res4 = run_baseline_verify(["--output", str(p4)])
+            self.assertNotEqual(res4.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res4.stdout)
+
+            # 5. Valid field followed by appended erroneous field -> FAIL (DUPLICATE_FIELD)
+            m5 = baseline_raw.replace(
+                "- **PR Run ID**：`42983609802`",
+                "- **PR Run ID**：`42983609802`\n- **PR Run ID**：`42983609802`"
+            )
+            p5 = write_with_sha(m5, tmp / "b_neg5.md")
+            res5 = run_baseline_verify(["--output", str(p5)])
+            self.assertNotEqual(res5.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res5.stdout)
+
+            # 6. Delete PR9 required field in baseline -> FAIL (MISSING_FIELD)
+            m6 = baseline_raw.replace("- **代码候选 Commit (`candidate_commit`)**：`336114861b2c720106a6076956eef08c9cd6ded7`\n", "")
+            p6 = write_with_sha(m6, tmp / "b_neg6.md")
+            res6 = run_baseline_verify(["--output", str(p6)])
+            self.assertNotEqual(res6.returncode, 0)
+            self.assertIn("MISSING_FIELD", res6.stdout)
+
+            # 7. Delete Std018 required field in baseline -> FAIL (MISSING_FIELD)
+            m7 = baseline_raw.replace("- **当前工程候选 Commit (`candidate_commit`)**：`21939da5e13eb39dedd0557561e88e1342be694c`\n", "")
+            p7 = write_with_sha(m7, tmp / "b_neg7.md")
+            res7 = run_baseline_verify(["--output", str(p7)])
+            self.assertNotEqual(res7.returncode, 0)
+            self.assertIn("MISSING_FIELD", res7.stdout)
+
+            # 8. Cross-scope isolation: PR9 valid, Std018 invalid in Handoff -> FAIL
+            m8 = handoff_raw.replace("- **PR Run ID**：`42983609802`", "- **PR Run ID**：`88888888888`")
+            p8 = write_with_sha(m8, tmp / "h_neg8.md")
+            res8 = run_handoff_verify(["--output", str(p8)])
+            self.assertNotEqual(res8.returncode, 0)
+            self.assertIn("pr_run_id", res8.stdout)
+
+            # 9. Cross-scope isolation: Std018 valid, PR9 invalid in Handoff -> FAIL
+            m9 = handoff_raw.replace("- **Push Run ID**：`42843755347`", "- **Push Run ID**：`77777777777`")
+            p9 = write_with_sha(m9, tmp / "h_neg9.md")
+            res9 = run_handoff_verify(["--output", str(p9)])
+            self.assertNotEqual(res9.returncode, 0)
+            self.assertIn("push_run_id", res9.stdout)
+
+            # 10. Baseline tampered then recomputed SHA256 -> FAIL
+            m10 = baseline_raw.replace("21939da5e13eb39dedd0557561e88e1342be694c", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            p10 = write_with_sha(m10, tmp / "b_neg10.md")
+            res10 = run_baseline_verify(["--output", str(p10)])
+            self.assertNotEqual(res10.returncode, 0)
+            self.assertIn("mismatches", res10.stdout)
+
+            # 11. Handoff tampered then recomputed SHA256 -> FAIL
+            m11 = handoff_raw.replace("21939da5e13eb39dedd0557561e88e1342be694c", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+            p11 = write_with_sha(m11, tmp / "h_neg11.md")
+            res11 = run_handoff_verify(["--output", str(p11)])
+            self.assertNotEqual(res11.returncode, 0)
+            self.assertIn("mismatches", res11.stdout)
+
+            # 12. Missing Std018 evidence file -> BLOCK
+            missing_ev = tmp / "missing-std018.json"
+            res12_b = subprocess.run([
+                sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"),
+                "--project-root", str(ROOT),
+                "--release-evidence", str(pr9_file),
+                "--snapshot-evidence", str(missing_ev),
+                "--verify-only",
+            ], capture_output=True, text=True, encoding="utf-8")
+            self.assertNotEqual(res12_b.returncode, 0)
+            self.assertTrue("RELEASE_EVIDENCE_NOT_FOUND" in (res12_b.stdout + res12_b.stderr) or "snapshot evidence error" in res12_b.stdout)
+
+            res12_h = subprocess.run([
+                sys.executable, str(ROOT / "tools" / "generate_handoff.py"),
+                "--project-root", str(ROOT),
+                "--release-evidence", str(pr9_file),
+                "--snapshot-evidence", str(missing_ev),
+                "--verify-only",
+            ], capture_output=True, text=True, encoding="utf-8")
+            self.assertNotEqual(res12_h.returncode, 0)
+            self.assertTrue("RELEASE_EVIDENCE_NOT_FOUND" in (res12_h.stdout + res12_h.stderr) or "snapshot evidence error" in res12_h.stdout)
 
     # =========================================================================
     # C. Standards Sync Tool Tests

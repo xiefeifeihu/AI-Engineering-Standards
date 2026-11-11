@@ -3,14 +3,14 @@
   "repository": "xiefeifeihu/AI-Engineering-Standards",
   "version": "3.0.0",
   "task_id": "Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT",
-  "candidate_commit": "09940874a1bf539f53c22426add0757667c040a0",
-  "snapshot_commit": "09940874a1bf539f53c22426add0757667c040a0",
-  "last_verified_ci_commit": "09940874a1bf539f53c22426add0757667c040a0",
-  "push_run_id": "42975158868",
+  "candidate_commit": "21939da5e13eb39dedd0557561e88e1342be694c",
+  "snapshot_commit": "21939da5e13eb39dedd0557561e88e1342be694c",
+  "last_verified_ci_commit": "21939da5e13eb39dedd0557561e88e1342be694c",
+  "push_run_id": "42983601133",
   "push_head_branch": "fix/std-016-merged-pr-run-evidence",
-  "pr_run_id": "42975171044",
+  "pr_run_id": "42983609802",
   "ci_status": "PASS",
-  "test_count": 220,
+  "test_count": 221,
   "test_failed": 0,
   "test_skipped": 0,
   "windows_status": "PASS",
@@ -23,5 +23,6 @@
   "pr_status": "DRAFT",
   "main_head": "3cd42b69049b148bceea1324d4f8212393cb96df",
   "release_flow_status": "IN_PROGRESS",
-  "observed_at": "2026-11-11T06:55:00Z"
+  "observed_at": "2026-11-11T08:04:09Z",
+  "notes": "Implementation input snapshot for dual-evidence and dual-scope verification. Precursor snapshot was 09940874a1bf539f53c22426add0757667c040a0."
 }

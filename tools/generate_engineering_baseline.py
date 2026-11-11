@@ -189,42 +189,73 @@ def query_remote_main_head(project_root: Path, timeout: int = 8) -> str:
         return "NOT_VERIFIABLE"
 
 
-def extract_scope_content(content: str, scope_tag: str) -> str:
+def extract_scope_content(content: str, scope_tag: str) -> Tuple[str, List[str]]:
     """Extract content under markdown headings corresponding to scope_tag.
-
-    Supported scope tags:
-      - 'PR9_HISTORICAL_RELEASE_EVIDENCE' (matches headings containing 'PR9_HISTORICAL_RELEASE_EVIDENCE' or 'PR9 历史发布' or 'PR9 历史')
-      - 'STD018_CURRENT_SNAPSHOT' (matches headings containing 'STD018_CURRENT_SNAPSHOT' or 'Std-018 当前工程快照' or 'Std-018 当前快照' or 'Std018')
+    Enforces scope uniqueness:
+      - Exactly 1 scope heading containing scope_tag must be present.
+      - 0 matches -> SCOPE_SECTION_MISSING error.
+      - >1 matches -> DUPLICATE_SCOPE_SECTION error.
     """
     lines = content.splitlines()
-    scoped_lines: List[str] = []
-    in_scope = False
-    current_level = 0
-
-    def heading_matches_scope(h_text: str, tag: str) -> bool:
-        if tag == "PR9_HISTORICAL_RELEASE_EVIDENCE":
-            return tag in h_text or "PR9 历史发布" in h_text or "PR9 历史" in h_text
-        if tag == "STD018_CURRENT_SNAPSHOT":
-            return tag in h_text or "Std-018 当前工程快照" in h_text or "Std-018 当前快照" in h_text or "Std018" in h_text
-        return tag in h_text
-
-    for line in lines:
+    matches = []
+    for idx, line in enumerate(lines):
         m = re.match(r'^(#{1,6})\s+(.*)$', line)
-        if m:
-            level = len(m.group(1))
-            heading_text = m.group(2)
-            if heading_matches_scope(heading_text, scope_tag):
-                in_scope = True
-                current_level = level
-                scoped_lines.append(line)
-            else:
-                if in_scope and level <= current_level:
-                    in_scope = False
-        else:
-            if in_scope:
-                scoped_lines.append(line)
+        if m and scope_tag in m.group(2):
+            matches.append((idx, len(m.group(1)), line))
 
-    return "\n".join(scoped_lines)
+    if len(matches) == 0:
+        return "", [f"SCOPE_SECTION_MISSING: Scope section '{scope_tag}' not found in baseline document"]
+    if len(matches) > 1:
+        return "", [f"DUPLICATE_SCOPE_SECTION: Duplicate scope section '{scope_tag}' found in baseline document ({len(matches)} occurrences)"]
+
+    start_idx, start_lvl, _ = matches[0]
+    scoped_lines: List[str] = []
+    for i in range(start_idx, len(lines)):
+        m = re.match(r'^(#{1,6})\s+(.*)$', lines[i])
+        if m and i > start_idx and len(m.group(1)) <= start_lvl:
+            break
+        scoped_lines.append(lines[i])
+
+    return "\n".join(scoped_lines), []
+
+
+def extract_line_field_matches(target_text: str, patterns: List[str]) -> List[str]:
+    matches: List[str] = []
+    for line in target_text.splitlines():
+        line = line.strip()
+        if not (line.startswith("- **") or line.startswith("**") or line.startswith("- PR9_") or line.startswith("PR9_") or line.startswith("- ")):
+            continue
+        for pat in patterns:
+            m = re.search(pat, line)
+            if m:
+                matches.append(m.group(1))
+                break
+    return matches
+
+
+def verify_scoped_field(
+    target_text: str,
+    field_name: str,
+    patterns: List[str],
+    expected_val: Any,
+    scope_name: str,
+) -> List[str]:
+    matches = extract_line_field_matches(target_text, patterns)
+    if len(matches) == 0:
+        return [f"MISSING_FIELD: {field_name} missing from scope '{scope_name}' (expected '{expected_val}')"]
+    if len(matches) > 1:
+        distinct = sorted(list(set(matches)))
+        if len(distinct) > 1:
+            return [f"DUPLICATE_FIELD: {field_name} has conflicting values {distinct} in scope '{scope_name}'"]
+        return [f"DUPLICATE_FIELD: {field_name} appears multiple times ({len(matches)} occurrences) in scope '{scope_name}'"]
+    actual = matches[0]
+    if field_name == "old_tag_deleted":
+        if actual.lower() != str(expected_val).lower():
+            return [f"{field_name} committed='{actual}' != expected='{expected_val}' in scope '{scope_name}'"]
+    else:
+        if str(actual).strip() != str(expected_val).strip():
+            return [f"{field_name} committed='{actual}' != expected='{expected_val}' in scope '{scope_name}'"]
+    return []
 
 
 def verify_baseline_semantic_facts(
@@ -233,16 +264,38 @@ def verify_baseline_semantic_facts(
     scope: Optional[str] = None,
 ) -> List[str]:
     """Verify semantic facts inside committed docs/当前权威基线.md body.
-    Checks: candidate_commit, snapshot_commit, last_verified_ci_commit,
-    CI Run ID, CI Commit, CI verification_status, TEST_COUNT, PR status,
-    release_flow_status, OLD_TAG_DELETED, main_head.
+    When scope is provided, enforces:
+      1. Scope section uniqueness (exactly 1 canonical section, no duplicates, no missing).
+      2. Field uniqueness (exactly 1 occurrence per required field, duplicate fields or conflicts FAIL).
+      3. Semantic fact value equality against independent release evidence.
     """
     if scope:
-        target_text = extract_scope_content(content, scope)
-        if not target_text.strip():
-            return [f"SCOPE_SECTION_MISSING: Scope section '{scope}' not found in baseline document"]
-    else:
-        target_text = content
+        target_text, scope_errs = extract_scope_content(content, scope)
+        if scope_errs:
+            return scope_errs
+
+        field_rules: Dict[str, List[str]] = {
+            "task_id": [r'(?:task_id|任务编号)[^:：\n]*[:：]\s*`([A-Za-z0-9_-]+)`'],
+            "candidate_commit": [r'(?:candidate_commit|代码候选 Commit|当前工程候选 Commit|当前候选 Commit)[^:：\n]*[:：]\s*`([0-9a-f]{40})`'],
+            "snapshot_commit": [r'(?:snapshot_commit|文档快照 Commit|本地 HEAD)[^:：\n]*[:：]\s*`([0-9a-f]{40})`'],
+            "last_verified_ci_commit": [r'(?:last_verified_ci_commit|已验证 CI Commit)[^:：\n]*[:：]\s*`([0-9a-f]{40})`'],
+            "push_run_id": [r'Push Run ID[^:：\n]*[:：]\s*`([0-9]+)`', r'Run ID \(`run_id`\)[^:：\n]*[:：]\s*`([0-9]+)`'],
+            "pr_run_id": [r'PR Run ID[^:：\n]*[:：]\s*`([0-9]+)`'],
+            "ci_status": [r'(?:verification_status|核验状态)[^:：\n]*[:：]\s*`([A-Z_]+)`'],
+            "test_count": [r'(?:测试用例数|通过 / 失败用例数)[^:：\n]*[:：]\s*`(\d+)\s+tests', r'(?:通过 / 失败用例数)[^:：\n]*[:：]\s*`(\d+)\s*/'],
+            "pr_number": [r'(?:PR 编号|pr_number|PR 编号与状态)[^:：\n]*[:：]\s*(?:PR\s*#)?`?(\d+)`?'],
+            "pr_status": [r'状态[：:]\s*`([A-Za-z_]+)`', r'pr_status[^:：\n]*[:：]\s*`([A-Za-z_]+)`'],
+            "main_head": [r'(?:main_head|主干 HEAD)[^:：\n]*[:：]\s*`([0-9a-f]{40})`'],
+            "old_tag_deleted": [r'OLD_TAG_DELETED=(true|false)', r'old_tag_deleted[^:：\n]*[:：]\s*`(true|false)`'],
+        }
+
+        mismatches: List[str] = []
+        for fld, exp_val in expected_facts.items():
+            if fld in field_rules and exp_val is not None:
+                mismatches.extend(verify_scoped_field(target_text, fld, field_rules[fld], exp_val, scope))
+        return mismatches
+
+    target_text = content
 
     mismatches: List[str] = []
 
