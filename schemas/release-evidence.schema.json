@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://standards.local/release-evidence.schema.json",
+  "title": "Release Evidence Schema (STD-034 / STD-035 Single Source of Evidence)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "repository",
+    "version",
+    "pr_number",
+    "pr_status",
+    "main_head",
+    "candidate_commit",
+    "snapshot_commit",
+    "last_verified_ci_commit",
+    "push_run_id",
+    "push_head_branch",
+    "pr_run_id",
+    "ci_status",
+    "test_count",
+    "test_failed",
+    "test_skipped",
+    "windows_status",
+    "ubuntu_status",
+    "old_tag_deleted",
+    "old_tag_object",
+    "old_tag_peeled_commit",
+    "old_tag_bundle_sha256",
+    "release_flow_status"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "pr_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "pr_status": {
+      "type": "string",
+      "enum": [
+        "DRAFT",
+        "OPEN",
+        "MERGED",
+        "CLOSED"
+      ]
+    },
+    "main_head": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "candidate_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "snapshot_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "last_verified_ci_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "push_run_id": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ]
+    },
+    "push_head_branch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pr_run_id": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ]
+    },
+    "ci_status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCK",
+        "NOT_VERIFIABLE",
+        "NOT_RUN",
+        "STALE"
+      ]
+    },
+    "test_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "test_failed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "test_skipped": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "windows_status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCK",
+        "NOT_VERIFIABLE",
+        "NOT_RUN"
+      ]
+    },
+    "ubuntu_status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCK",
+        "NOT_VERIFIABLE",
+        "NOT_RUN"
+      ]
+    },
+    "old_tag_deleted": {
+      "type": "boolean"
+    },
+    "old_tag_object": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "old_tag_peeled_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "old_tag_bundle_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "release_flow_status": {
+      "type": "string",
+      "enum": [
+        "IN_PROGRESS",
+        "CANDIDATE",
+        "BLOCKED",
+        "RELEASED"
+      ]
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "observed_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}

@@ -11,7 +11,7 @@ source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
 last_updated: "2026-11-05"
 supersedes: null
-change_summary: "Release & Operations Manual for AI-Engineering-Standards v3.0.0 covering Draft PR gate, independent review, main CI verification, and Annotated Tag governance."
+change_summary: "Release & Operations Manual for AI-Engineering-Standards v3.0.0 covering Single Owner PR Merge approval governance, Draft PR gate, independent review, main CI verification, and Annotated Tag governance."
 history_reference: "standards/13-git-release/STD-017-git-release-versioning.md"
 primary_entrypoint: true
 content_sha256: null
@@ -28,9 +28,11 @@ content_sha256: null
    - 本地运行 Schema、17 项文档集合、权威基线、跨会话交接、官方同步工具与全量单元测试门禁，确保 `exit_code=0`。
 2. **Draft PR 与远端 CI 验证**：
    - 推送特性分支至远端并创建指向 `main` 的 **Draft PR**，触发 `.github/workflows/standards-ci.yml` 在远端 GitHub Actions Runner 上完成跨平台（Linux + Windows）验证。
-3. **独立 ChatGPT 审核与 Owner 批准 (`D2=APPROVED`)**：
-   - 将 Draft PR 审查包提交给 ChatGPT 进行跨文档及事实独立审核。
-   - 涉及规范语义或破坏性 Schema 变更时，必须由仓库所有者（Owner）明确批准后方可合入 `main`。
+3. **独立 ChatGPT 技术审查与单人 Owner PR 合并批准 (`GITHUB_PR_MERGE_EVENT`)**：
+   - **单人 Owner 模式**：个人工程只有一个合法 Owner（GitHub 仓库实际所有者 `xiefeifeihu`），不要求第二名 Reviewer，不要求创建第二个 GitHub 账号，不要求团队会签或机器人审批。
+   - **ChatGPT 技术审查**：将 Draft PR 审查包提交给 ChatGPT 进行跨文档及事实独立技术审查。ChatGPT 结论单独记录为 `READY_FOR_OWNER_MERGE`、`CHANGES_REQUESTED` 或 `BLOCK`；ChatGPT 不得代替 Owner 批准发布，智能体严禁自行批准。
+   - **PR 合并即最终批准**：PR 合并前审批状态保持为 `OWNER_APPROVAL_REQUIRED`。PR 作者与仓库 Owner 为同一人时，允许 Owner 直接合并，无需提交自我 PR Review。Owner 通过 GitHub 将审查通过的 PR 合并入 `main` 作为最终批准动作。
+   - **溯源真实性验证**：`tools/validate_approval_contract.py` 调用 GitHub PR API 验证 `merged=true`、`merged_by.login == 仓库 Owner`、`base.ref == "main"`、`head.sha == candidate_commit` 且 `merged_at` 非空后，方可将审批状态记录为 `OWNER_APPROVED`。PR 未合入前严禁伪造 `OWNER_APPROVED`。
 4. **合入 `main` 与正式 Annotated Tag 自动化签发**：
    - 经 Owner 批准并合入 `main` 后，由 `main` Push 触发 `.github/workflows/standards-ci.yml` 双平台 CI 全量验证。
    - 双平台门禁全绿后，工作流中的 `publish-version-tag` 任务自动创建并推送附注标签（`git tag -a vX.Y.Z`）。
@@ -50,8 +52,8 @@ Standards 的候选版本与正式发布版本必须严格区分：
 |---|---|---|
 | `UNRELEASED` | 变更仅存在工作分支或 Draft PR；CHANGELOG 位于 `[Unreleased]` | 否 |
 | `CANDIDATE` | 已有候选 `VERSION`、PR 和候选 Commit，但尚未合入 main | 否 |
-| `APPROVED` | ChatGPT 审核完成，Owner 必批事项已明确批准 | 否，仍需合入及 main CI |
-| `MERGED` | 已合入官方 main，main CI 尚未完成或未通过 | 否 |
+| `OWNER_APPROVAL_REQUIRED` | ChatGPT 技术审查通过 (READY_FOR_OWNER_MERGE)，等待 Owner 最终合并 PR | 否 |
+| `OWNER_APPROVED / MERGED` | Owner 通过 PR Merge (GITHUB_PR_MERGE_EVENT) 合入 main，main CI 正在运行或待签发 Tag | 否，仍需 main CI 全绿并签发 Tag |
 | `RELEASED` | main CI 通过，正式 Annotated Tag 已创建并核验 Tag Object/Peeled Commit/VERSION 一致 | 是 |
 | `SUPERSEDED` | 已被更新的正式 Release 替代 | 否，保留历史 |
 

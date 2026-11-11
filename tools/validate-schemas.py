@@ -3,7 +3,6 @@
 """Validate All AI Engineering Standards Schemas and Sample Payloads."""
 import json
 import sys
-import unittest
 import jsonschema
 from pathlib import Path
 
@@ -1481,6 +1480,35 @@ def test_samples():
         pass
 
 
+    # 26. Release Evidence Schema (STD-034 / STD-035)
+    with open(SCHEMAS_DIR / "release-evidence.schema.json", "r", encoding="utf-8") as f:
+        rel_ev_schema = json.load(f)
+    rel_ev_sample = {
+        "repository": "xiefeifeihu/AI-Engineering-Standards",
+        "version": "3.0.0",
+        "pr_number": 9,
+        "pr_status": "DRAFT",
+        "main_head": "1" * 40,
+        "candidate_commit": "2" * 40,
+        "snapshot_commit": "3" * 40,
+        "last_verified_ci_commit": "4" * 40,
+        "push_run_id": "42783497089",
+        "push_head_branch": "feat/standards-baseline-sync-governance",
+        "pr_run_id": "42783504258",
+        "ci_status": "PASS",
+        "test_count": 216,
+        "test_failed": 0,
+        "test_skipped": 0,
+        "windows_status": "PASS",
+        "ubuntu_status": "PASS",
+        "old_tag_deleted": True,
+        "old_tag_object": "5" * 40,
+        "old_tag_peeled_commit": "6" * 40,
+        "old_tag_bundle_sha256": "7" * 64,
+        "release_flow_status": "IN_PROGRESS",
+    }
+    jsonschema.validate(instance=rel_ev_sample, schema=rel_ev_schema)
+
     print(f"Sample validation PASS: Standards {(ROOT / 'VERSION').read_text().strip()}.")
     return True
 
@@ -1500,9 +1528,6 @@ def main():
             failed += 1
             
     test_samples()
-    approval_tests = unittest.defaultTestLoader.discover(str(ROOT / 'tests'))
-    if not unittest.TextTestRunner(verbosity=2).run(approval_tests).wasSuccessful():
-        failed += 1
 
     if failed == 0:
         print(f"\nAll {len(schemas)} schemas validated successfully!")

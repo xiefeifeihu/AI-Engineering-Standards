@@ -45,6 +45,7 @@ FORBIDDEN_SELF_APPROVAL_ROLES = {
 
 TRUSTED_PROVENANCE_TYPES = {
     "GITHUB_PR_REVIEW",
+    "GITHUB_PR_MERGE",
     "TRUSTED_CHATGPT_EVENT",
     "SIGNED_OWNER_EVENT",
 }
@@ -111,17 +112,19 @@ def git_commit_exists(repo_root: Path, commit_sha: str) -> bool:
 
 
 def verify_approval_event_provenance(record: Dict[str, Any]) -> Tuple[str, List[str]]:
-    """Verify Owner approval through the GitHub PR review API; never trust JSON status labels."""
+    """Verify Owner approval through GitHub PR merge or review API; never trust JSON status labels."""
     event = record.get("approval_event")
     if not isinstance(event, dict):
         return "NOT_VERIFIABLE", ["UNVERIFIABLE_APPROVAL_PROVENANCE: No external approval event is attached"]
-    if event.get("event_type") != "GITHUB_PR_REVIEW_EVENT" or event.get("provenance_type") != "GITHUB_PR_REVIEW":
+    event_type = event.get("event_type")
+    provenance_type = event.get("provenance_type")
+    if event_type not in ("GITHUB_PR_REVIEW_EVENT", "GITHUB_PR_MERGE_EVENT") or provenance_type not in ("GITHUB_PR_REVIEW", "GITHUB_PR_MERGE"):
         return "NOT_VERIFIABLE", [
             "UNVERIFIABLE_APPROVAL_PROVENANCE: ChatGPT session references and unsigned local records cannot be independently verified"
         ]
     if record.get("approval_status") != "OWNER_APPROVED":
         return "NOT_VERIFIABLE", [
-            "UNVERIFIABLE_APPROVAL_PROVENANCE: GitHub PR review adapter currently verifies Owner approval only"
+            "UNVERIFIABLE_APPROVAL_PROVENANCE: GitHub PR adapter currently verifies Owner approval only"
         ]
 
     actor = event.get("actor_identity") or {}
@@ -129,16 +132,89 @@ def verify_approval_event_provenance(record: Dict[str, Any]) -> Tuple[str, List[
         return "NOT_VERIFIABLE", ["UNVERIFIABLE_APPROVAL_PROVENANCE: Actor is not a verified GitHub user"]
 
     repository = str(record.get("repository") or "")
-    review_id = str(event.get("event_id") or "")
     service_ref = str(actor.get("service_provenance_ref") or "")
+    expected_owner = repository.split("/", 1)[0].lower()
+    identity_id = str(actor.get("identity_id") or "")
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if not token:
+        return "NOT_VERIFIABLE", ["UNVERIFIABLE_APPROVAL_PROVENANCE: GITHUB_TOKEN or GH_TOKEN is unavailable"]
+
+    # 1. GITHUB_PR_MERGE_EVENT: Single Owner PR Merge Approval
+    if event_type == "GITHUB_PR_MERGE_EVENT" or provenance_type == "GITHUB_PR_MERGE":
+        prefix = f"https://api.github.com/repos/{repository}/pulls/"
+        match = re.fullmatch(re.escape(prefix) + r"(\d+)", service_ref)
+        if not match:
+            return "FAILED", ["INVALID_APPROVAL_EVENT_REFERENCE: Expected exact GitHub PR API URL: https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}"]
+        pull_number = int(match.group(1))
+        event_id = str(event.get("event_id") or "")
+        if event_id.isdigit() and int(event_id) != pull_number:
+            return "FAILED", ["APPROVAL_PR_ID_MISMATCH: event_id does not match PR number"]
+
+        request = urllib.request.Request(
+            service_ref,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "User-Agent": "AI-Engineering-Standards-Approval-Verifier/3.0.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                pr = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            return "NOT_VERIFIABLE", [f"UNVERIFIABLE_APPROVAL_PROVENANCE: GitHub PR lookup failed: {exc}"]
+
+        merged_by = (pr.get("merged_by") or {}).get("login") or ""
+        if merged_by.upper() in FORBIDDEN_SELF_APPROVAL_ROLES or identity_id.upper() in FORBIDDEN_SELF_APPROVAL_ROLES or "AGENT" in merged_by.upper():
+            return "FAILED", [f"AGENT_SELF_APPROVAL_FORBIDDEN: Coding agent ({merged_by or identity_id}) cannot issue OWNER approval"]
+
+        if not pr.get("merged"):
+            return "FAILED", ["APPROVAL_PR_NOT_MERGED: PR is not merged; approval state must remain OWNER_APPROVAL_REQUIRED"]
+
+        if not merged_by:
+            return "FAILED", ["APPROVAL_PR_MERGED_BY_MISSING: PR merged_by is empty"]
+        if merged_by.lower() != expected_owner or (identity_id and identity_id.lower() != merged_by.lower()):
+            return "FAILED", [f"APPROVAL_ACTOR_MISMATCH: PR merged_by '{merged_by}' is not the repository owner '{expected_owner}'"]
+
+        base_ref = (pr.get("base") or {}).get("ref") or ""
+        if base_ref != "main":
+            return "FAILED", [f"APPROVAL_PR_BASE_BRANCH_MISMATCH: Base branch is '{base_ref}', expected 'main'"]
+
+        cand_commit = record.get("candidate_commit") or ""
+        head_sha = (pr.get("head") or {}).get("sha") or ""
+        if head_sha != cand_commit:
+            return "FAILED", [f"APPROVAL_PR_HEAD_COMMIT_MISMATCH: PR head.sha '{head_sha}' != candidate_commit '{cand_commit}'"]
+        if event.get("candidate_commit") != cand_commit:
+            return "FAILED", ["EVENT_COMMIT_MISMATCH"]
+
+        merged_at = pr.get("merged_at")
+        if not merged_at:
+            return "FAILED", ["APPROVAL_PR_MERGED_AT_EMPTY: PR merged_at is empty"]
+
+        digest = normalize_sha256(record.get("content_sha256"))
+        if normalize_sha256(event.get("content_sha256")) != digest:
+            return "FAILED", ["EVENT_CONTENT_HASH_MISMATCH"]
+
+        record_scope = record.get("approval_scope") or record.get("decision_scope")
+        event_scope = event.get("approval_scope")
+        if event_scope and record_scope and event_scope != record_scope:
+            return "FAILED", [f"EVENT_SCOPE_MISMATCH: event.approval_scope '{event_scope}' != '{record_scope}'"]
+
+        record_approved_at = str(record.get("approved_at") or (record.get("owner_approval") or {}).get("approved_at") or "").strip()
+        if record_approved_at:
+            norm_merged = str(merged_at).replace("Z", "+00:00")
+            norm_appr = record_approved_at.replace("Z", "+00:00")
+            if norm_merged != norm_appr:
+                return "FAILED", [f"APPROVAL_TIME_MISMATCH: approved_at '{record_approved_at}' does not match GitHub PR merged_at '{merged_at}'"]
+
+        return "VERIFIED", []
+
+    # 2. GITHUB_PR_REVIEW_EVENT: Legacy Multi-Account Review Approval
+    review_id = str(event.get("event_id") or "")
     prefix = f"https://api.github.com/repos/{repository}/pulls/"
     match = re.fullmatch(re.escape(prefix) + r"(\d+)/reviews/(\d+)", service_ref)
     if not match or not review_id.isdigit() or match.group(2) != review_id:
         return "FAILED", ["INVALID_APPROVAL_EVENT_REFERENCE: Expected exact GitHub PR review API URL"]
-
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    if not token:
-        return "NOT_VERIFIABLE", ["UNVERIFIABLE_APPROVAL_PROVENANCE: GITHUB_TOKEN or GH_TOKEN is unavailable"]
 
     request = urllib.request.Request(
         service_ref,
@@ -154,9 +230,7 @@ def verify_approval_event_provenance(record: Dict[str, Any]) -> Tuple[str, List[
     except Exception as exc:
         return "NOT_VERIFIABLE", [f"UNVERIFIABLE_APPROVAL_PROVENANCE: GitHub review lookup failed: {exc}"]
 
-    expected_owner = repository.split("/", 1)[0].lower()
     actual_actor = str((review.get("user") or {}).get("login") or "")
-    identity_id = str(actor.get("identity_id") or "")
 
     # Anti-agent check on review actor
     if actual_actor.upper() in FORBIDDEN_SELF_APPROVAL_ROLES or identity_id.upper() in FORBIDDEN_SELF_APPROVAL_ROLES or "AGENT" in actual_actor.upper():

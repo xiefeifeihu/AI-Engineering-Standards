@@ -4,11 +4,49 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 
 ## [Unreleased]
 
-> RELEASE_STATUS=CANDIDATE | PROPOSED_VERSION=3.0.0 | MAIN_MERGED=false | RELEASE_TAG_NOT_CREATED=true
+> RELEASE_STATUS=CANDIDATE | PROPOSED_VERSION=3.0.0 | MAIN_MERGED=false | RELEASE_TAG_NOT_CREATED=true | REISSUE_IN_PROGRESS=true
 >
-> 本节记录 PR #8 的候选变更。只有合入官方 main、main CI 通过并创建正式 Annotated Tag 后，才可迁移为带发布日期的 `## [3.0.0] - YYYY-MM-DD`。
+> **v3.0.0 一次性重发处理中 (PR #9)**：
+> - 当前分支处于 v3.0.0 一次性重发候选就绪状态，包含 PR #8 核心规范体系、Std-009 单人 Owner 治理机制收敛与 Std-010 事务路径安全加固。
+> - Std-009 单人 Owner 治理与 PR 合并审批契约已完整实现并进入候选。
+> - 远端旧 `v3.0.0` Annotated Tag 已按 Owner 授权在本地完整备份后清理（`OLD_TAG_DELETED=true`），正式 Tag 尚未重建。
+> - 保持 PR #9 Draft 状态，待 ChatGPT 独立审核给出建议结论并由唯一 Owner 批准合入 main 后，由 main CI 自动重建同名 Annotated Tag。
+> - 严禁提前标记 RELEASED 或在正式合入与 Tag 重建前变更发布状态。
 
 ### Added
+- **主干 CI 分支误判修复与发布证据分支严格绑定 (STD-015 / STD-034 / STD-035 / Std-015)**:
+  - 在 `schemas/release-evidence.schema.json` 中新增必填字段 `push_head_branch`（类型 `string`，`minLength=1`），严格绑定历史 Push Run 真实所属分支，从契约层面防止环境分支覆盖 (P1-A)。
+  - 修复 `tools/release_evidence.py` 中的 `verify_github_ci_runs()`：Push Run 的 `expected_head_branch` 必须且直接取自 `evidence["push_head_branch"]`，彻底消除 `effective_target_branch` 从 `GITHUB_REF_NAME` 错误推断导致 main Push CI 误判功能分支的历史缺陷；禁止缺少字段时回退默认分支；禁止模拟绕过生产验证 (P1-B)。
+  - 补充关键回归测试用例 `test_b14`，在 `GITHUB_REF_NAME=main` 模拟环境中验证历史功能分支 Push Run（`head_branch=feat/standards-baseline-sync-governance`）验证通过，并覆盖 11 类分支缺失、分支不一致、PR 错误、base 非 main、workflow path 错误、repo 不匹配、未完成、Job 失败及 API 不可达等负向拦截与离线降级场景 (P1-C)。
+  - 刷新独立发布证据、权威基线与跨会话交接中的历史 CI 事实至已验证 Commit `18a71b920c0dc162ae4f4c1ce35aad901bdba9d2`（Push Run 42835602231，PR Run 42835611644，全量 218 项测试双平台全绿），保留 Std-014 历史快照并生成 Std-015 新快照 (P1-D)。
+- **GitHub Actions 实时 CI 真实性门禁接入与身份绑定强化 (STD-014 / STD-034 / STD-035 / Std-014)**:
+  - 将实时 GitHub CI 真实性验证正式接入 `.github/workflows/standards-ci.yml` 核心门禁（`python tools/release_evidence.py --project-root . --check-ci`），执行于 Schema 校验之后、Baseline/Handoff verify-only 之前 (P1-A)。
+  - 在 CI 中配置最小只读权限 (`actions: read`、`contents: read`) 并通过 `GITHUB_TOKEN` 鉴权，严禁泄露 Token，在网络不可达时返回 `NOT_VERIFIABLE` 并阻断发布门禁。
+  - 完善 `tools/release_evidence.py` 中的 `verify_single_github_run()`，实现 9 大核心项严格核验：Repository full_name、Run ID、Event 类型、Workflow path (`.github/workflows/standards-ci.yml`)、被测 Commit head_sha、status=completed、conclusion=success、Ubuntu Job completed/success、Windows Job completed/success；Push Run 额外核验目标功能分支 `head_branch`；PR Run 额外核验 PR number=9、`base.ref=main` 与 `event=pull_request` (P1-B)。
+  - 消除 `tools/validate-schemas.py` 内部重复执行完整 unittest 的性能瓶颈，严格遵循职责分离原则，仅验证 JSON Schema 结构与样本有效性，由 `standards-ci.yml` 保留一次完整 unittest discover (P2)。
+  - 新增 12 项真实性负向测试用例（覆盖 Repository 不匹配、Run ID 不匹配、Workflow path 不匹配、Event 不匹配、head_sha 不匹配、PR number 不匹配、base branch 不匹配、Run 未完成、Run conclusion 失败、Ubuntu Job 缺失/失败、Windows Job 缺失/失败、API 不可达），严格证明所有身份不匹配与故障场景均不能返回 PASS。
+  - 对齐发布证据、权威基线与跨会话交接中的历史 CI 事实至已通过 Commit `70f7554`（Push Run 42800374434，PR Run 42800383714，全量 217 项测试双平台全绿）。
+- **单一发布证据源与 verify-only 真实性强化 (STD-020 / STD-034 / STD-035 / Std-013)**:
+  - 确立 `docs/release-evidence/v3.0.0-reissue.json` 为单一发布证据源，定义 `schemas/release-evidence.schema.json` 契约，收敛 20 项关键发布、Tag 与 CI 事实。
+  - 实现通用发布证据加载与 GitHub CI 真实性校验器（`tools/release_evidence.py`），支持 gh CLI 与 API 只读鉴权双通道，严禁泄露 Token，在网络离线或无权限时客观标记 `NOT_VERIFIABLE`，严禁伪造 PASS。
+  - 彻底重构 `tools/generate_engineering_baseline.py` 与 `tools/generate_handoff.py` 的 `--verify-only` 门禁机制：所有期望语义事实直接且仅来自独立发布证据文件，彻底废除从待验证 Markdown 文件内容正则回填的“自证循环”（彻底解决 P1-B 漏洞）。
+  - 对齐权威基线与交接文档中的最新 CI 事实至已验证 Commit `4538b8ba`（Push Run 42783497089，PR Run 42783504258，全量 216 项测试在 Windows 与 Ubuntu 双平台全绿），解决交接与基线事实过期（解决 P1-A）。
+  - 修复 FINAL_RETURN Commit SHA 逻辑，区分输入快照 Commit（`4538b8ba`）与输出提交 Commit，严禁制造自引用或虚构提交（解决 P1-C）。
+  - 增加 12 类真实 CLI 负向门禁测试，并严格证明：仅修改待验证 Markdown 中的 Commit 或 Run ID，即使重新计算 Frontmatter `content_sha256`，`verify-only` 仍然失败。
+- **交接与基线生成器事实对齐与语义门禁强化 (STD-020 / STD-035 / Std-012)**:
+  - 修复 `tools/generate_engineering_baseline.py` 与 `tools/generate_handoff.py`，清晰分离并准确呈现四类关键 Commit：`source_commit`（基线源）、`code_candidate_commit`（代码候选）、`snapshot_commit`（文档快照）与 `last_verified_ci_commit`（CI 验证）。
+  - 支持 CLI 传入真实 CI 状态、Run ID（包含 Push Run 42772211734 与 PR Run 42772217074）、CI Commit 与摘要，不再将 NOT_VERIFIABLE 固定作为默认事实。
+  - 大幅增强 `--verify-only` 门禁真实性：除 Frontmatter 与摘要哈希外，增加 11 项关键事实语义一致性核查（TASK_ID、candidate_commit、snapshot_commit、last_verified_ci_commit、CI Run ID、CI Commit、CI verification_status、TEST_COUNT、PR 状态、release_flow_status、OLD_TAG_DELETED）。
+  - 补充 6 类负向拦截测试覆盖（旧 CI Run ID 失败、错误 CI Commit 失败、PASS 改 NOT_VERIFIABLE 失败、216 tests 改 215 tests 失败、旧候选 Commit 失败、旧 Tag 未删除失败）。
+  - 规范时间戳字段继承与防抖，避免无意义的时间抖动导致无限提交循环。
+- **个人工程单人 Owner 治理机制与 PR 合并审批契约 (STD-034 §16.5 / D2=APPROVED / Std-009)**:
+  - 确立个人工程单一 Owner 治理模式（实际仓库所有者 `xiefeifeihu`），无需第二名 Reviewer、第二 GitHub 账号或团队审批。
+  - 明确职责边界与权限分离：ChatGPT 负责独立技术审查并提出建议结论（`READY_FOR_OWNER_MERGE`、`CHANGES_REQUESTED` 或 `BLOCK`），不得代替 Owner 批准发布；编程智能体（VibeCoding）负责工程代码与门禁执行，严禁自行批准；Owner 作为最终审批者。
+  - 确立 PR 合并审批模式 (`GITHUB_PR_MERGE_EVENT`)：候选阶段审批状态保持为 `OWNER_APPROVAL_REQUIRED`；PR 作者与仓库 Owner 为同一人时允许 Owner 直接合并，以 GitHub 界面合并候选 PR 入 `main` 作为最终批准动作。
+  - 建立 PR 合并溯源机器校验（`tools/validate_approval_contract.py`）：调用 GitHub PR API 校验 `merged=true`、`merged_by.login == Owner`、`base.ref == "main"`、`head.sha == candidate_commit` 且 `merged_at` 存在有效时间戳。未真实合入前严禁标记 `OWNER_APPROVED`。
+  - 更新 `schemas/documentation-approval.schema.json` 与 `schemas/documentation-metadata.schema.json` 支持 PR 合并审批模型。
+- **事务日志路径安全与符号链接阻断 (STD-034 §4 / Std-010)**:
+  - `tools/standards_sync/core.py` 中的 Journal 目标路径校验严格拒绝所有符号链接（包括工程内部指向 `README.md` 等普通文件的符号链接），防止利用事务回滚机制覆盖篡改工程核心文件。
 - **12 类正式文档分类与 ENGINEERING_BASELINE 规范 (STD-035 v3.0.0 / D1=APPROVED)**:
   - 正式 document_type 调整为 12 类：PROJECT_BLUEPRINT、PRODUCT_BASELINE、SYSTEM_ARCHITECTURE、TECHNICAL_DESIGN、API_CONTRACT、PROTOTYPE_UX、TEST_ACCEPTANCE、RELEASE_OPERATIONS、DECISION_RECORD、CROSS_SESSION_HANDOFF、DOCUMENT_INDEX、ENGINEERING_BASELINE。
   - 新增 docs/当前权威基线.md (ENGINEERING_BASELINE) 确定性综合视图，汇聚 11 类正式文档与 10 类实时工程事实，强制记录 18 项核心内容与 6 项动态溯源字段 (repository, source_path, source_commit, evidence_ref, observed_at, verification_status)。

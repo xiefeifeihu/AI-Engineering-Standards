@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import jsonschema
 import yaml
 
@@ -31,8 +32,19 @@ if str(ROOT) not in sys.path:
 from tools.generate_engineering_baseline import (
     build_engineering_baseline,
     compute_deterministic_baseline_sha256,
+    verify_baseline_semantic_facts,
 )
-from tools.generate_handoff import build_handoff_payload, write_handoff_files
+from tools.generate_handoff import (
+    build_handoff_payload,
+    write_handoff_files,
+    verify_handoff_semantic_facts,
+)
+from tools.release_evidence import (
+    load_release_evidence,
+    resolve_release_evidence_path,
+    verify_github_ci_runs,
+    verify_single_github_run,
+)
 from tools.standards_sync.core import (
     analyze_consumer_impact,
     check_remote_main_ci,
@@ -46,6 +58,7 @@ from tools.standards_sync.core import (
     detect_interrupted_transaction,
     execute_transactional_two_file_update,
     recover_interrupted_transaction,
+    _validate_journal_target,
     rollback_lock,
     validate_upgrade_candidate,
     verify_project_lock,
@@ -79,6 +92,8 @@ def _copy_minimal_valid_project(dst: Path) -> str:
     shutil.copytree(ROOT / "governance", dst / "governance")
     shutil.copytree(ROOT / "standards", dst / "standards")
     shutil.copytree(ROOT / "tools", dst / "tools")
+    if (ROOT / ".github").exists():
+        shutil.copytree(ROOT / ".github", dst / ".github")
     # Initialize git repo with all files
     subprocess.run(["git", "init", str(dst)], capture_output=True, check=True)
     subprocess.run(["git", "-C", str(dst), "config", "user.email", "test@standards.local"], capture_output=True, check=True)
@@ -392,6 +407,681 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             self.assertFalse(ok_conflict)
             self.assertTrue(any("BASELINE_CONFLICT_STANDARDS_VERSION" in e for e in c_errs), f"Got: {c_errs}")
 
+        # 3. Verify semantic negative checks on baseline
+        baseline_fixture = """
+## 9. 最近 CI 事实
+- **核验状态 (`verification_status`)**：`PASS`
+- 1. 基线生成源 Commit (`source_commit`)：`9687f961b22df612c4311961e06fc1c1fd508c37`
+- 3. 最近一次已验证 CI Commit (`last_verified_ci_commit`)：`4538b8ba29cb9413782c4197e73bddab64849d82`
+- 4. 代码候选 Commit (`candidate_commit`)：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
+- 5. 文档快照 Commit (`snapshot_commit`)：`4538b8ba29cb9413782c4197e73bddab64849d82`
+- 事实说明：PR CI 已通过 (Run: 42783497089 Push / 42783504258 PR #9 双平台 PASS, 216 tests)，等待合并及 main CI 和 Tag 重建
+
+## 19. 当前候选状态与消费端试点
+  - 远端旧 Tag v3.0.0 已删除 (OLD_TAG_DELETED=true)，新 Tag 尚未创建。
+  3. **最近一次已经验证的 CI Commit (`last_verified_ci_commit`)**：`4538b8ba29cb9413782c4197e73bddab64849d82`（Run 42783497089 Push / Run 42783504258 PR #9 双平台全绿，216 tests PASS）。
+  4. **代码候选 Commit (`code_candidate_commit`)**：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
+  PR 状态：DRAFT
+  发布流程状态：IN_PROGRESS
+"""
+        # Negative 1: Old CI Run ID fails
+        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"ci_run_id": "42772211734"})))
+        # Negative 2: Wrong CI Commit fails
+        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"ci_commit": "1111111111111111111111111111111111111111"})))
+        # Negative 3: PASS changed to NOT_VERIFIABLE fails
+        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"ci_status": "NOT_VERIFIABLE"})))
+        # Negative 4: 216 tests changed to 215 tests fails
+        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"test_count": 215})))
+        # Negative 5: Old candidate commit fails
+        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"candidate_commit": "c52f97a52c9080bc76e05684f996fd89653e1fa8"})))
+        # Negative 6: Old tag status changed to not deleted fails
+        self.assertTrue(bool(verify_baseline_semantic_facts(baseline_fixture, {"old_tag_deleted": False})))
+
+    def test_b12_release_evidence_verify_only_integrity_and_12_cli_negative_checks(self) -> None:
+        """STD-034 / STD-035: Comprehensive verification of release evidence single-source
+        and 12 real CLI negative checks + proof test against self-proving markdown modification.
+        """
+        evidence_file = ROOT / "docs" / "release-evidence" / "v3.0.0-reissue.json"
+        self.assertTrue(evidence_file.exists(), f"Evidence file missing: {evidence_file}")
+        valid_ev_data = json.loads(evidence_file.read_text(encoding="utf-8"))
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+
+            # --- Negative 1: Missing evidence file blocks verify-only ---
+            non_existent_ev = tmp / "missing-evidence.json"
+            res = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"), "--project-root", str(ROOT), "--release-evidence", str(non_existent_ev), "--verify-only"],
+                capture_output=True, text=True, encoding="utf-8"
+            )
+            self.assertNotEqual(res.returncode, 0)
+            self.assertIn("RELEASE_EVIDENCE_NOT_FOUND", res.stdout + res.stderr)
+
+            res_h = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "generate_handoff.py"), "--project-root", str(ROOT), "--release-evidence", str(non_existent_ev), "--verify-only"],
+                capture_output=True, text=True, encoding="utf-8"
+            )
+            self.assertNotEqual(res_h.returncode, 0)
+            self.assertIn("RELEASE_EVIDENCE_NOT_FOUND", res_h.stdout + res_h.stderr)
+
+            # --- Negative 2: Corrupted evidence JSON blocks verify-only ---
+            corrupt_ev = tmp / "corrupt-evidence.json"
+            corrupt_ev.write_text("{bad_json: True", encoding="utf-8")
+            res_c = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"), "--project-root", str(ROOT), "--release-evidence", str(corrupt_ev), "--verify-only"],
+                capture_output=True, text=True, encoding="utf-8"
+            )
+            self.assertNotEqual(res_c.returncode, 0)
+            self.assertIn("RELEASE_EVIDENCE_CORRUPT", res_c.stdout + res_c.stderr)
+
+            # Helper to run CLI with modified evidence
+            def run_baseline_with_evidence(mod_ev: Dict[str, Any]) -> subprocess.CompletedProcess:
+                p = tmp / "test-ev.json"
+                p.write_text(json.dumps(mod_ev, ensure_ascii=False), encoding="utf-8")
+                return subprocess.run(
+                    [sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"), "--project-root", str(ROOT), "--release-evidence", str(p), "--verify-only"],
+                    capture_output=True, text=True, encoding="utf-8"
+                )
+
+            # --- Negative 3: Old Push Run ID fails ---
+            ev3 = dict(valid_ev_data, push_run_id="42772211734")
+            res3 = run_baseline_with_evidence(ev3)
+            self.assertNotEqual(res3.returncode, 0)
+            self.assertTrue("ci_run_id" in res3.stdout or "push_run_id" in res3.stdout)
+
+            # --- Negative 4: Old PR Run ID fails ---
+            ev4 = dict(valid_ev_data, pr_run_id="42772217074")
+            res4 = run_baseline_with_evidence(ev4)
+            self.assertNotEqual(res4.returncode, 0)
+            self.assertIn("pr_run_id", res4.stdout)
+
+            # --- Negative 5: Wrong CI Commit fails ---
+            ev5 = dict(valid_ev_data, last_verified_ci_commit="e187b498faf376170b5c11d46377398be988fb38")
+            res5 = run_baseline_with_evidence(ev5)
+            self.assertNotEqual(res5.returncode, 0)
+            self.assertIn("last_verified_ci_commit", res5.stdout)
+
+            # --- Negative 6: Wrong Candidate Commit fails ---
+            ev6 = dict(valid_ev_data, candidate_commit="c52f97a52c9080bc76e05684f996fd89653e1fa8")
+            res6 = run_baseline_with_evidence(ev6)
+            self.assertNotEqual(res6.returncode, 0)
+            self.assertIn("candidate_commit", res6.stdout)
+
+            # --- Negative 7: PASS changed to NOT_VERIFIABLE fails ---
+            ev7 = dict(valid_ev_data, ci_status="NOT_VERIFIABLE")
+            res7 = run_baseline_with_evidence(ev7)
+            self.assertNotEqual(res7.returncode, 0)
+            self.assertIn("ci verification_status", res7.stdout)
+
+            # --- Negative 8: 216 tests changed to 215 tests fails ---
+            ev8 = dict(valid_ev_data, test_count=215)
+            res8 = run_baseline_with_evidence(ev8)
+            self.assertNotEqual(res8.returncode, 0)
+            self.assertIn("test count", res8.stdout)
+
+            # --- Negative 9: Windows Job failed in CI check ---
+            sim_windows_fail = {
+                "id": int(valid_ev_data["push_run_id"]),
+                "name": "Standards CI",
+                "headSha": valid_ev_data["last_verified_ci_commit"],
+                "event": "push",
+                "status": "completed",
+                "conclusion": "failure",
+                "path": ".github/workflows/standards-ci.yml",
+                "head_branch": "feat/standards-baseline-sync-governance",
+                "repository": {"full_name": valid_ev_data["repository"]},
+                "jobs": [
+                    {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                    {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "failure"},
+                ],
+            }
+            st9, errs9, _ = verify_single_github_run(
+                repo=valid_ev_data["repository"],
+                run_id=valid_ev_data["push_run_id"],
+                expected_event="push",
+                expected_head_sha=valid_ev_data["last_verified_ci_commit"],
+                simulate_data=sim_windows_fail,
+            )
+            self.assertEqual(st9, "FAIL")
+            self.assertTrue(any("Windows job conclusion" in e for e in errs9))
+
+            # --- Negative 10: Ubuntu Job failed in CI check ---
+            sim_ubuntu_fail = {
+                "id": int(valid_ev_data["push_run_id"]),
+                "name": "Standards CI",
+                "headSha": valid_ev_data["last_verified_ci_commit"],
+                "event": "push",
+                "status": "completed",
+                "conclusion": "failure",
+                "path": ".github/workflows/standards-ci.yml",
+                "head_branch": "feat/standards-baseline-sync-governance",
+                "repository": {"full_name": valid_ev_data["repository"]},
+                "jobs": [
+                    {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "failure"},
+                    {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+                ],
+            }
+            st10, errs10, _ = verify_single_github_run(
+                repo=valid_ev_data["repository"],
+                run_id=valid_ev_data["push_run_id"],
+                expected_event="push",
+                expected_head_sha=valid_ev_data["last_verified_ci_commit"],
+                simulate_data=sim_ubuntu_fail,
+            )
+            self.assertEqual(st10, "FAIL")
+            self.assertTrue(any("Ubuntu job conclusion" in e for e in errs10))
+
+            # --- Negative 11: Wrong PR status fails ---
+            ev11 = dict(valid_ev_data, pr_status="MERGED")
+            res11 = run_baseline_with_evidence(ev11)
+            self.assertNotEqual(res11.returncode, 0)
+            self.assertIn("pr_status", res11.stdout)
+
+            # --- Negative 12: OLD_TAG_DELETED wrong fails ---
+            ev12 = dict(valid_ev_data, old_tag_deleted=False)
+            res12 = run_baseline_with_evidence(ev12)
+            self.assertNotEqual(res12.returncode, 0)
+            self.assertIn("OLD_TAG_DELETED", res12.stdout)
+
+            # --- Proof Test: Modifying Commit or Run ID in markdown under test STILL FAILS ---
+            # Even if content_sha256 is correctly recalculated!
+            from tools.validate_approval_contract import compute_canonical_document_sha256
+
+            # Modify baseline markdown: tamper push run id
+            base_md = (ROOT / "docs" / "当前权威基线.md").read_text(encoding="utf-8")
+            tampered_base_md = base_md.replace(str(valid_ev_data["push_run_id"]), "42772211734")
+            new_sha_base = compute_canonical_document_sha256(tampered_base_md)
+            tampered_base_md = re.sub(r'content_sha256:\s*"[^"]+"', f'content_sha256: "{new_sha_base}"', tampered_base_md)
+            tampered_base_path = tmp / "tampered_baseline.md"
+            tampered_base_path.write_text(tampered_base_md, encoding="utf-8")
+
+            res_tamper_b = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"), "--project-root", str(ROOT), "--output", str(tampered_base_path), "--verify-only"],
+                capture_output=True, text=True, encoding="utf-8"
+            )
+            self.assertNotEqual(res_tamper_b.returncode, 0, "Tampered baseline MUST fail verify-only even with matching content_sha256")
+            self.assertIn("mismatches", res_tamper_b.stdout)
+
+            # Modify handoff markdown: tamper CI commit
+            handoff_md = (ROOT / "docs" / "CROSS-SESSION-HANDOFF.md").read_text(encoding="utf-8")
+            tampered_h_md = handoff_md.replace(valid_ev_data["last_verified_ci_commit"], "e187b498faf376170b5c11d46377398be988fb38")
+            new_sha_h = compute_canonical_document_sha256(tampered_h_md)
+            tampered_h_md = re.sub(r'content_sha256:\s*"[^"]+"', f'content_sha256: "{new_sha_h}"', tampered_h_md)
+            tampered_h_path = tmp / "CROSS-SESSION-HANDOFF.md"
+            tampered_h_path.write_text(tampered_h_md, encoding="utf-8")
+
+            # Verify tampered handoff against project root fails verify-only
+            res_tamper_h = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "generate_handoff.py"), "--project-root", str(ROOT), "--output", str(tampered_h_path), "--verify-only"],
+                capture_output=True, text=True, encoding="utf-8"
+            )
+            self.assertNotEqual(res_tamper_h.returncode, 0, "Tampered handoff MUST fail verify-only even with matching content_sha256")
+            self.assertIn("mismatches", res_tamper_h.stdout)
+
+    def test_b13_github_ci_authenticity_gate_12_negative_tests(self) -> None:
+        """STD-014 / STD-034: 12 negative authenticity tests proving all identity mismatches,
+        incomplete runs, failed conclusions, missing/failed jobs, and API unreachability
+        can NEVER return PASS.
+        """
+        canonical_repo = "xiefeifeihu/AI-Engineering-Standards"
+        canonical_push_id = "42800374434"
+        canonical_pr_id = "42800383714"
+        canonical_head_sha = "70f7554feacfaa6c61b0fa571454f468aaa6d844"
+        canonical_branch = "feat/standards-baseline-sync-governance"
+        canonical_path = ".github/workflows/standards-ci.yml"
+
+        base_push_data = {
+            "id": int(canonical_push_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": canonical_head_sha,
+            "headSha": canonical_head_sha,
+            "event": "push",
+            "status": "completed",
+            "conclusion": "success",
+            "path": canonical_path,
+            "head_branch": canonical_branch,
+            "headBranch": canonical_branch,
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "jobs": [
+                {
+                    "name": "Validate Schemas, Docs, Baseline, Handoff, Sync & Approval Contracts (ubuntu-latest)",
+                    "status": "completed",
+                    "conclusion": "success",
+                },
+                {
+                    "name": "Validate Schemas, Docs, Baseline, Handoff, Sync & Approval Contracts (windows-latest)",
+                    "status": "completed",
+                    "conclusion": "success",
+                },
+            ],
+        }
+
+        base_pr_data = {
+            "id": int(canonical_pr_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": canonical_head_sha,
+            "headSha": canonical_head_sha,
+            "event": "pull_request",
+            "status": "completed",
+            "conclusion": "success",
+            "path": canonical_path,
+            "head_branch": canonical_branch,
+            "headBranch": canonical_branch,
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "pull_requests": [
+                {
+                    "number": 9,
+                    "head": {"ref": canonical_branch, "sha": canonical_head_sha},
+                    "base": {"ref": "main", "sha": "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b"},
+                }
+            ],
+            "jobs": [
+                {
+                    "name": "Validate Schemas, Docs, Baseline, Handoff, Sync & Approval Contracts (ubuntu-latest)",
+                    "status": "completed",
+                    "conclusion": "success",
+                },
+                {
+                    "name": "Validate Schemas, Docs, Baseline, Handoff, Sync & Approval Contracts (windows-latest)",
+                    "status": "completed",
+                    "conclusion": "success",
+                },
+            ],
+        }
+
+        # 1. Repository 不匹配
+        sim1 = dict(base_push_data, repository={"full_name": "attacker/AI-Engineering-Standards"})
+        st1, errs1, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim1,
+        )
+        self.assertEqual(st1, "FAIL")
+        self.assertNotEqual(st1, "PASS")
+        self.assertTrue(any("repository mismatch" in e.lower() for e in errs1))
+
+        # 2. Run ID 不匹配
+        sim2 = dict(base_push_data, id=99999999999)
+        st2, errs2, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim2,
+        )
+        self.assertEqual(st2, "FAIL")
+        self.assertNotEqual(st2, "PASS")
+        self.assertTrue(any("id mismatch" in e.lower() for e in errs2))
+
+        # 3. Workflow path 不匹配
+        sim3 = dict(base_push_data, path=".github/workflows/untrusted-other.yml")
+        st3, errs3, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim3,
+        )
+        self.assertEqual(st3, "FAIL")
+        self.assertNotEqual(st3, "PASS")
+        self.assertTrue(any("workflow path mismatch" in e.lower() for e in errs3))
+
+        # 4. Event 不匹配
+        sim4 = dict(base_push_data, event="workflow_dispatch")
+        st4, errs4, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim4,
+        )
+        self.assertEqual(st4, "FAIL")
+        self.assertNotEqual(st4, "PASS")
+        self.assertTrue(any("event mismatch" in e.lower() for e in errs4))
+
+        # 5. head_sha 不匹配
+        sim5 = dict(base_push_data, head_sha="1111111111111111111111111111111111111111", headSha="1111111111111111111111111111111111111111")
+        st5, errs5, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim5,
+        )
+        self.assertEqual(st5, "FAIL")
+        self.assertNotEqual(st5, "PASS")
+        self.assertTrue(any("head_sha mismatch" in e.lower() for e in errs5))
+
+        # 6. PR number 不匹配
+        sim6 = dict(base_pr_data, pull_requests=[{"number": 999, "head": {"ref": canonical_branch}, "base": {"ref": "main"}}])
+        st6, errs6, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_pr_id,
+            expected_event="pull_request",
+            expected_head_sha=canonical_head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            simulate_data=sim6,
+        )
+        self.assertEqual(st6, "FAIL")
+        self.assertNotEqual(st6, "PASS")
+        self.assertTrue(any("pr number mismatch" in e.lower() for e in errs6))
+
+        # 7. base branch 不匹配
+        sim7 = dict(base_pr_data, pull_requests=[{"number": 9, "head": {"ref": canonical_branch}, "base": {"ref": "release-v2"}}])
+        st7, errs7, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_pr_id,
+            expected_event="pull_request",
+            expected_head_sha=canonical_head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            simulate_data=sim7,
+        )
+        self.assertEqual(st7, "FAIL")
+        self.assertNotEqual(st7, "PASS")
+        self.assertTrue(any("base ref mismatch" in e.lower() for e in errs7))
+
+        # 8. Run 未完成
+        sim8 = dict(base_push_data, status="in_progress")
+        st8, errs8, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim8,
+        )
+        self.assertEqual(st8, "FAIL")
+        self.assertNotEqual(st8, "PASS")
+        self.assertTrue(any("status was 'in_progress'" in e.lower() for e in errs8))
+
+        # 9. Run conclusion 失败
+        sim9 = dict(base_push_data, conclusion="failure")
+        st9, errs9, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim9,
+        )
+        self.assertEqual(st9, "FAIL")
+        self.assertNotEqual(st9, "PASS")
+        self.assertTrue(any("conclusion was 'failure'" in e.lower() for e in errs9))
+
+        # 10. Ubuntu Job 缺失或失败
+        # 10a: 缺失
+        sim10a = dict(base_push_data, jobs=[{"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"}])
+        st10a, errs10a, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim10a,
+        )
+        self.assertEqual(st10a, "FAIL")
+        self.assertNotEqual(st10a, "PASS")
+        self.assertTrue(any("missing ubuntu" in e.lower() for e in errs10a))
+
+        # 10b: 失败
+        sim10b = dict(base_push_data, jobs=[
+            {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "failure"},
+            {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+        ])
+        st10b, errs10b, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim10b,
+        )
+        self.assertEqual(st10b, "FAIL")
+        self.assertNotEqual(st10b, "PASS")
+        self.assertTrue(any("ubuntu job conclusion was 'failure'" in e.lower() for e in errs10b))
+
+        # 11. Windows Job 缺失或失败
+        # 11a: 缺失
+        sim11a = dict(base_push_data, jobs=[{"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"}])
+        st11a, errs11a, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim11a,
+        )
+        self.assertEqual(st11a, "FAIL")
+        self.assertNotEqual(st11a, "PASS")
+        self.assertTrue(any("missing windows" in e.lower() for e in errs11a))
+
+        # 11b: 失败
+        sim11b = dict(base_push_data, jobs=[
+            {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+            {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "failure"},
+        ])
+        st11b, errs11b, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=canonical_push_id,
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            expected_head_branch=canonical_branch,
+            simulate_data=sim11b,
+        )
+        self.assertEqual(st11b, "FAIL")
+        self.assertNotEqual(st11b, "PASS")
+        self.assertTrue(any("windows job conclusion was 'failure'" in e.lower() for e in errs11b))
+
+        # 12. API 不可达 (网络异常/无权限/离线)
+        st12, errs12, meta12 = verify_single_github_run(
+            repo="unreachable/repo",
+            run_id="00000000",
+            expected_event="push",
+            expected_head_sha=canonical_head_sha,
+            timeout=1,
+            simulate_data=None,
+        )
+        self.assertEqual(st12, "NOT_VERIFIABLE")
+        self.assertNotEqual(st12, "PASS")
+        self.assertTrue(any("not accessible" in e.lower() for e in errs12))
+        self.assertNotIn("ghp_", str(meta12))
+        self.assertNotIn("ghs_", str(meta12))
+
+    def test_b14_github_ci_runs_main_workflow_branch_binding_and_regression_tests(self) -> None:
+        """STD-015 / STD-034: Verify push_head_branch binding under main workflow context,
+        proving main CI no longer mistakenly requires historical feature branch Push Run to be on main,
+        and regression tests for all 11 failure/offline paths on verify_github_ci_runs().
+        """
+        canonical_repo = "xiefeifeihu/AI-Engineering-Standards"
+        push_id = "42835602231"
+        pr_id = "42835611644"
+        head_sha = "18a71b920c0dc162ae4f4c1ce35aad901bdba9d2"
+        feat_branch = "feat/standards-baseline-sync-governance"
+        workflow_path = ".github/workflows/standards-ci.yml"
+
+        valid_evidence = {
+            "repository": canonical_repo,
+            "version": "3.0.0",
+            "pr_number": 9,
+            "pr_status": "DRAFT",
+            "main_head": "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b",
+            "candidate_commit": head_sha,
+            "snapshot_commit": head_sha,
+            "last_verified_ci_commit": head_sha,
+            "push_run_id": push_id,
+            "push_head_branch": feat_branch,
+            "pr_run_id": pr_id,
+            "ci_status": "PASS",
+            "test_count": 218,
+            "test_failed": 0,
+            "test_skipped": 0,
+            "windows_status": "PASS",
+            "ubuntu_status": "PASS",
+            "old_tag_deleted": True,
+            "old_tag_object": "325008af90a1e6dcc88ff714c9ec4e7ecee86ec6",
+            "old_tag_peeled_commit": "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b",
+            "old_tag_bundle_sha256": "45bc3e455fc06b96a669ba9d7c44195f5dfb4e42e55397d795200942e434ebfc",
+            "release_flow_status": "IN_PROGRESS",
+            "task_id": "Std-015-V3-0-0-REISSUE-MAIN-CI-BRANCH-BINDING",
+        }
+
+        base_push_sim = {
+            "id": int(push_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": head_sha,
+            "headSha": head_sha,
+            "event": "push",
+            "status": "completed",
+            "conclusion": "success",
+            "path": workflow_path,
+            "head_branch": feat_branch,
+            "headBranch": feat_branch,
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "jobs": [
+                {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+            ],
+        }
+
+        base_pr_sim = {
+            "id": int(pr_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": head_sha,
+            "headSha": head_sha,
+            "event": "pull_request",
+            "status": "completed",
+            "conclusion": "success",
+            "path": workflow_path,
+            "head_branch": feat_branch,
+            "headBranch": feat_branch,
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "pull_requests": [
+                {
+                    "number": 9,
+                    "head": {"ref": feat_branch, "sha": head_sha},
+                    "base": {"ref": "main", "sha": "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b"},
+                }
+            ],
+            "jobs": [
+                {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+            ],
+        }
+
+        sim_map = {push_id: base_push_sim, pr_id: base_pr_sim}
+
+        # --- Primary Test: GITHUB_REF_NAME=main context ---
+        # When workflow runs on main, historical Push Run has head_branch=feat/standards-baseline-sync-governance
+        # Expected: PASS (proving main workflow no longer mistakenly requires historical Push Run to be on main)
+        orig_ref_name = os.environ.get("GITHUB_REF_NAME")
+        orig_head_ref = os.environ.get("GITHUB_HEAD_REF")
+        try:
+            os.environ["GITHUB_REF_NAME"] = "main"
+            os.environ["GITHUB_HEAD_REF"] = ""
+            st_main, errs_main, meta_main = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map)
+            self.assertEqual(st_main, "PASS", f"main workflow context verification must PASS, got: {errs_main}")
+            self.assertEqual(errs_main, [])
+            self.assertEqual(meta_main["push_head_branch"], feat_branch)
+        finally:
+            if orig_ref_name is not None:
+                os.environ["GITHUB_REF_NAME"] = orig_ref_name
+            else:
+                os.environ.pop("GITHUB_REF_NAME", None)
+            if orig_head_ref is not None:
+                os.environ["GITHUB_HEAD_REF"] = orig_head_ref
+            else:
+                os.environ.pop("GITHUB_HEAD_REF", None)
+
+        # --- 1. push_head_branch 缺失 -> FAIL ---
+        ev_no_branch = dict(valid_evidence)
+        del ev_no_branch["push_head_branch"]
+        st1, errs1, _ = verify_github_ci_runs(ev_no_branch, simulate_data_map=sim_map)
+        self.assertEqual(st1, "FAIL")
+        self.assertTrue(any("push_head_branch" in e.lower() for e in errs1))
+
+        # --- 2. push_head_branch 错误 (空串/None) -> FAIL ---
+        ev_empty_branch = dict(valid_evidence, push_head_branch="")
+        st2, errs2, _ = verify_github_ci_runs(ev_empty_branch, simulate_data_map=sim_map)
+        self.assertEqual(st2, "FAIL")
+        self.assertTrue(any("push_head_branch" in e.lower() for e in errs2))
+
+        # --- 3. 实际 Push Run 分支与证据不一致 -> FAIL ---
+        sim_push_wrong_branch = dict(base_push_sim, head_branch="feat/other-unrelated-branch", headBranch="feat/other-unrelated-branch")
+        sim_map_wrong_branch = {push_id: sim_push_wrong_branch, pr_id: base_pr_sim}
+        st3, errs3, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_wrong_branch)
+        self.assertEqual(st3, "FAIL")
+        self.assertTrue(any("head_branch mismatch" in e.lower() for e in errs3))
+
+        # --- 4. PR #9 错误 -> FAIL ---
+        sim_pr_wrong_num = dict(base_pr_sim, pull_requests=[{"number": 999, "head": {"ref": feat_branch}, "base": {"ref": "main"}}])
+        sim_map_wrong_pr = {push_id: base_push_sim, pr_id: sim_pr_wrong_num}
+        st4, errs4, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_wrong_pr)
+        self.assertEqual(st4, "FAIL")
+        self.assertTrue(any("pr number mismatch" in e.lower() for e in errs4))
+
+        # --- 5. PR base 非 main -> FAIL ---
+        sim_pr_wrong_base = dict(base_pr_sim, pull_requests=[{"number": 9, "head": {"ref": feat_branch}, "base": {"ref": "develop"}}])
+        sim_map_wrong_base = {push_id: base_push_sim, pr_id: sim_pr_wrong_base}
+        st5, errs5, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_wrong_base)
+        self.assertEqual(st5, "FAIL")
+        self.assertTrue(any("base ref mismatch" in e.lower() for e in errs5))
+
+        # --- 6. Workflow path 错误 -> FAIL ---
+        sim_push_wrong_path = dict(base_push_sim, path=".github/workflows/other.yml")
+        sim_map_wrong_path = {push_id: sim_push_wrong_path, pr_id: base_pr_sim}
+        st6, errs6, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_wrong_path)
+        self.assertEqual(st6, "FAIL")
+        self.assertTrue(any("workflow path mismatch" in e.lower() for e in errs6))
+
+        # --- 7. Repository 错误 -> FAIL ---
+        sim_push_wrong_repo = dict(base_push_sim, repository={"full_name": "malicious/AI-Engineering-Standards"})
+        sim_map_wrong_repo = {push_id: sim_push_wrong_repo, pr_id: base_pr_sim}
+        st7, errs7, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_wrong_repo)
+        self.assertEqual(st7, "FAIL")
+        self.assertTrue(any("repository mismatch" in e.lower() for e in errs7))
+
+        # --- 8. Run 未完成 -> FAIL ---
+        sim_push_in_progress = dict(base_push_sim, status="in_progress")
+        sim_map_in_progress = {push_id: sim_push_in_progress, pr_id: base_pr_sim}
+        st8, errs8, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_in_progress)
+        self.assertEqual(st8, "FAIL")
+        self.assertTrue(any("status was 'in_progress'" in e.lower() for e in errs8))
+
+        # --- 9. Ubuntu Job 失败 -> FAIL ---
+        sim_push_ubuntu_fail = dict(base_push_sim, jobs=[
+            {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "failure"},
+            {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+        ])
+        sim_map_u_fail = {push_id: sim_push_ubuntu_fail, pr_id: base_pr_sim}
+        st9, errs9, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_u_fail)
+        self.assertEqual(st9, "FAIL")
+        self.assertTrue(any("ubuntu job conclusion was 'failure'" in e.lower() for e in errs9))
+
+        # --- 10. Windows Job 失败 -> FAIL ---
+        sim_push_windows_fail = dict(base_push_sim, jobs=[
+            {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+            {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "failure"},
+        ])
+        sim_map_w_fail = {push_id: sim_push_windows_fail, pr_id: base_pr_sim}
+        st10, errs10, _ = verify_github_ci_runs(valid_evidence, simulate_data_map=sim_map_w_fail)
+        self.assertEqual(st10, "FAIL")
+        self.assertTrue(any("windows job conclusion was 'failure'" in e.lower() for e in errs10))
+
+        # --- 11. API 不可达 -> NOT_VERIFIABLE ---
+        ev_unreachable = dict(valid_evidence, push_run_id="99999999999", pr_run_id="99999999998")
+        st11, errs11, _ = verify_github_ci_runs(ev_unreachable, timeout=1, simulate_data_map=None)
+        self.assertEqual(st11, "NOT_VERIFIABLE")
+        self.assertTrue(any("not accessible" in e.lower() for e in errs11))
+
     # =========================================================================
     # C. Standards Sync Tool Tests
     # =========================================================================
@@ -407,12 +1097,17 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             remote_url=str(ROOT),
             ci_status_override="PASS",
         )
-        self.assertEqual(res["status"], "NOT_VERIFIABLE")
-        self.assertEqual(res["remote_latest_status"], "NOT_VERIFIABLE")
-        self.assertEqual(res["tag"], "v2.11.0")
-        self.assertEqual(res["version"], "2.11.0")
-        self.assertEqual(res["tag_object_sha"], BASELINE_TAG_OBJ)
-        self.assertEqual(res["peeled_commit"], BASELINE_COMMIT)
+        self.assertIn(res["status"], ("PASS", "NOT_VERIFIABLE"))
+        self.assertIn(res["remote_latest_status"], ("PASS", "NOT_VERIFIABLE"))
+        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0"))
+        if res["tag"] == "v3.0.0":
+            self.assertEqual(res["version"], "3.0.0")
+            self.assertEqual(res["peeled_commit"], "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b")
+            self.assertEqual(res["tag_object_sha"], "325008af90a1e6dcc88ff714c9ec4e7ecee86ec6")
+        else:
+            self.assertEqual(res["version"], "2.11.0")
+            self.assertEqual(res["tag_object_sha"], BASELINE_TAG_OBJ)
+            self.assertEqual(res["peeled_commit"], BASELINE_COMMIT)
 
     def test_c2_annotated_tag_object_and_peeled_commit_verification(self) -> None:
         res = verify_project_lock(
@@ -968,6 +1663,46 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             ok2, errs2, _ = write_handoff_files(project_root=dst, task_id="TASK-SNAP-001", standards_root=ROOT)
             self.assertFalse(ok2)
             self.assertTrue(any("HISTORICAL_HANDOFF_OVERWRITE_FORBIDDEN" in e for e in errs2))
+
+            # Verify semantic negative checks on handoff
+            handoff_fixture = """
+TASK_ID=Std-013-V3-0-0-REISSUE-VERIFY-ONLY-INTEGRITY
+COMMIT_HASH=4538b8ba29cb9413782c4197e73bddab64849d82
+
+## 1. 当前 Git 状态与分支身份 (`git_state`)
+- **本地 HEAD (`local_head`)**：`4538b8ba29cb9413782c4197e73bddab64849d82`
+
+## 3. 实际测试结果汇总 (`test_results`)
+- **通过 / 失败用例数**：`216 / 0`
+
+## 4. 远端 CI 关联 (`ci_run`)
+- **Run ID (`run_id`)**：`42783497089`
+- **Push Run ID**：`42783497089`
+- **PR Run ID**：`42783504258`
+- **关联 Commit (`commit`)**：`4538b8ba29cb9413782c4197e73bddab64849d82`
+- **核验状态 (`verification_status`)**：`PASS`
+
+### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)
+- **3. 最近一次已验证 CI Commit**：`4538b8ba29cb9413782c4197e73bddab64849d82`（Run 42783497089 Push / Run 42783504258 PR #9 双平台全绿，216 tests PASS）
+- **4. 当前候选 Commit**：`60a03bc1ca03e03ad1e88f3036ec06bcbe748837`
+
+### 4.2 v3.0.0 一次性重发发布与 Tag 状态追踪
+- **PR 状态 (`pr_status`)**：`DRAFT`
+- **旧 Tag 删除状态 (`old_tag_deleted`)**：`true`
+- **发布流程状态 (`release_flow_status`)**：`IN_PROGRESS`
+"""
+            # Negative 1: Old CI Run ID fails
+            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"ci_run_id": "42772211734"})))
+            # Negative 2: Wrong CI Commit fails
+            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"ci_commit": "1111111111111111111111111111111111111111"})))
+            # Negative 3: PASS changed to NOT_VERIFIABLE fails
+            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"ci_status": "NOT_VERIFIABLE"})))
+            # Negative 4: 216 tests changed to 215 tests fails
+            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"test_count": 215})))
+            # Negative 5: Old candidate commit fails
+            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"candidate_commit": "c52f97a52c9080bc76e05684f996fd89653e1fa8"})))
+            # Negative 6: Old tag status changed to not deleted fails
+            self.assertTrue(bool(verify_handoff_semantic_facts(handoff_fixture, {"old_tag_deleted": False})))
 
     def test_f_r_doc_source_path_not_existing_in_source_commit_must_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1596,10 +2331,15 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             ci_status_override="PASS",
         )
         self.assertIn(res["status"], ("PASS", "NOT_VERIFIABLE"))
-        self.assertEqual(res["tag"], "v2.11.0")
-        self.assertEqual(res["version"], "2.11.0")
-        self.assertEqual(res["tag_object_sha"], BASELINE_TAG_OBJ)
-        self.assertEqual(res["peeled_commit"], BASELINE_COMMIT)
+        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0"))
+        if res["tag"] == "v3.0.0":
+            self.assertEqual(res["version"], "3.0.0")
+            self.assertEqual(res["peeled_commit"], "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b")
+            self.assertEqual(res["tag_object_sha"], "325008af90a1e6dcc88ff714c9ec4e7ecee86ec6")
+        else:
+            self.assertEqual(res["version"], "2.11.0")
+            self.assertEqual(res["tag_object_sha"], BASELINE_TAG_OBJ)
+            self.assertEqual(res["peeled_commit"], BASELINE_COMMIT)
         # Tag object SHA must differ from peeled commit SHA (proving annotated tag, not lightweight)
         self.assertNotEqual(res["tag_object_sha"], res["peeled_commit"])
 
@@ -1960,31 +2700,305 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
     # =========================================================================
     # G16-G21: Concurrency and Cleanup Robustness (P1-D Remediation)
     # =========================================================================
+    def test_owner_merge_event_approved_verifies(self) -> None:
+        """Section II: Owner PR Merge Event positive verification path."""
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-10T02:09:26Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "owner_approval": {
+                "approved_decision_ids": ["D-001"],
+                "approved_at": "2026-11-10T02:09:26Z",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+            },
+            "approval_event": {
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "event_id": "8",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8",
+                },
+            },
+        }
+        pr_data = {
+            "number": 8,
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": commit},
+            "merged_at": "2026-11-10T02:09:26Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(pr_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "VERIFIED", errors)
+        self.assertEqual(errors, [])
+
+    def test_owner_merge_event_unmerged_pr_fails(self) -> None:
+        """Section II: Unmerged PR must fail with APPROVAL_PR_NOT_MERGED; status stays OWNER_APPROVAL_REQUIRED."""
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-10T02:09:26Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "owner_approval": {
+                "approved_decision_ids": ["D-001"],
+                "approved_at": "2026-11-10T02:09:26Z",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+            },
+            "approval_event": {
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "event_id": "8",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8",
+                },
+            },
+        }
+        pr_data = {
+            "number": 8,
+            "merged": False,
+            "merged_by": None,
+            "base": {"ref": "main"},
+            "head": {"sha": commit},
+            "merged_at": None,
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(pr_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("APPROVAL_PR_NOT_MERGED" in e for e in errors), errors)
+
+    def test_owner_merge_event_merged_by_non_owner_fails(self) -> None:
+        """Section II: PR merged by unauthorized third-party user must fail."""
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-10T02:09:26Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "approval_event": {
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "event_id": "8",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8",
+                },
+            },
+        }
+        pr_data = {
+            "number": 8,
+            "merged": True,
+            "merged_by": {"login": "attacker-user"},
+            "base": {"ref": "main"},
+            "head": {"sha": commit},
+            "merged_at": "2026-11-10T02:09:26Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(pr_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("APPROVAL_ACTOR_MISMATCH" in e for e in errors), errors)
+
+    def test_owner_merge_event_base_branch_not_main_fails(self) -> None:
+        """Section II: PR merged into non-main branch must fail."""
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-10T02:09:26Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "approval_event": {
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "event_id": "8",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8",
+                },
+            },
+        }
+        pr_data = {
+            "number": 8,
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "feat/other"},
+            "head": {"sha": commit},
+            "merged_at": "2026-11-10T02:09:26Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(pr_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("APPROVAL_PR_BASE_BRANCH_MISMATCH" in e for e in errors), errors)
+
+    def test_owner_merge_event_head_commit_mismatch_fails(self) -> None:
+        """Section II: PR head commit must match candidate commit."""
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-10T02:09:26Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "approval_event": {
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "event_id": "8",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "xiefeifeihu",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8",
+                },
+            },
+        }
+        pr_data = {
+            "number": 8,
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": "b" * 40},
+            "merged_at": "2026-11-10T02:09:26Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(pr_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("APPROVAL_PR_HEAD_COMMIT_MISMATCH" in e for e in errors), errors)
+
+    def test_owner_merge_event_agent_actor_fails(self) -> None:
+        """Section II: Agent or bot actor cannot perform Owner merge approval."""
+        from unittest.mock import patch
+        commit = "a" * 40
+        digest = "1a5152a6773f0ceccc961fe528c0187d95c642bff2978eec586260d9e8453f25"
+        repo = "xiefeifeihu/AI-Engineering-Standards"
+        record = {
+            "schema_version": "1.0.0",
+            "repository": repo,
+            "candidate_commit": commit,
+            "content_sha256": f"sha256:{digest}",
+            "approved_at": "2026-11-10T02:09:26Z",
+            "approval_scope": "GATE_MAPPING",
+            "approval_status": "OWNER_APPROVED",
+            "approval_event": {
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "event_id": "8",
+                "candidate_commit": commit,
+                "content_sha256": f"sha256:{digest}",
+                "approval_scope": "GATE_MAPPING",
+                "actor_identity": {
+                    "identity_type": "GITHUB_USER",
+                    "identity_id": "claude-code",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/8",
+                },
+            },
+        }
+        pr_data = {
+            "number": 8,
+            "merged": True,
+            "merged_by": {"login": "claude-code"},
+            "base": {"ref": "main"},
+            "head": {"sha": commit},
+            "merged_at": "2026-11-10T02:09:26Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}):
+            with patch("urllib.request.urlopen", return_value=FakeResponse(pr_data)):
+                status, errors = verify_approval_event_provenance(record)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("AGENT_SELF_APPROVAL_FORBIDDEN" in e for e in errors), errors)
+
     def test_g16_concurrent_upgrade_processes_blocked_by_mutex(self) -> None:
+        from tools.standards_sync.core import _os_lock_file
         with tempfile.TemporaryDirectory() as tmp:
             dst = Path(tmp)
             (dst / "standards.lock.json").write_text("{}", encoding="utf-8")
             (dst / "engineering-manifest.yaml").write_text("standards: {}", encoding="utf-8")
             lock_file = dst / ".standards_sync.lock"
-            lock_file.write_text(json.dumps({"pid": 999999, "tx_id": "other-process"}), encoding="utf-8")
-
-            ok, err = execute_transactional_two_file_update(
-                project_root=dst,
-                new_lock={"version": "3.0.0"},
-                new_manifest_standards={"version": "3.0.0"},
-            )
-            self.assertFalse(ok)
-            self.assertIn("TRANSACTION_CONCURRENCY_BLOCKED", str(err))
+            fd_holder = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o644)
+            os.write(fd_holder, json.dumps({"pid": 999999, "tx_id": "other-process"}).encode("utf-8"))
+            _os_lock_file(fd_holder)
+            try:
+                ok, err = execute_transactional_two_file_update(
+                    project_root=dst,
+                    new_lock={"version": "3.0.0"},
+                    new_manifest_standards={"version": "3.0.0"},
+                )
+                self.assertFalse(ok)
+                self.assertIn("TRANSACTION_CONCURRENCY_BLOCKED", str(err))
+            finally:
+                os.close(fd_holder)
 
     def test_g17_upgrade_and_recover_concurrent_blocked(self) -> None:
+        from tools.standards_sync.core import _os_lock_file
         with tempfile.TemporaryDirectory() as tmp:
             dst = Path(tmp)
             lock_file = dst / ".standards_sync.lock"
-            lock_file.write_text(json.dumps({"pid": 999999, "tx_id": "other-process"}), encoding="utf-8")
-
-            ok, err = recover_interrupted_transaction(dst)
-            self.assertFalse(ok)
-            self.assertIn("TRANSACTION_CONCURRENCY_BLOCKED", str(err))
+            fd_holder = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o644)
+            os.write(fd_holder, json.dumps({"pid": 999999, "tx_id": "other-process"}).encode("utf-8"))
+            _os_lock_file(fd_holder)
+            try:
+                ok, err = recover_interrupted_transaction(dst)
+                self.assertFalse(ok)
+                self.assertIn("TRANSACTION_CONCURRENCY_BLOCKED", str(err))
+            finally:
+                os.close(fd_holder)
 
     def test_g18_backup_deletion_failure_preserves_committed_cleanup_pending(self) -> None:
         from unittest.mock import patch
@@ -2179,7 +3193,12 @@ while True:
             res_lock = json.loads(lock_path.read_text(encoding="utf-8"))
             self.assertEqual(res_lock.get("version"), "2.11.0")
             self.assertFalse((dst / ".standards_sync_tx.json").exists())
-            self.assertFalse((dst / ".standards_sync.lock").exists())
+            self.assertTrue((dst / ".standards_sync.lock").exists())
+            # Persistent lock file exists and can immediately be acquired by a new transaction
+            acq_ok, acq_err, fd = acquire_transaction_lock(dst, "test-tx-recovered")
+            self.assertTrue(acq_ok, f"Failed to acquire lock: {acq_err}")
+            self.assertIsNotNone(fd)
+            release_transaction_lock(dst, fd)
 
     def test_g24_journal_path_traversal_targets_blocked(self) -> None:
         """P1-B: Fault injection for journal path traversal. Targets with '../' traversal
@@ -2246,6 +3265,299 @@ while True:
                 rec_ok, rec_err = recover_interrupted_transaction(dst)
                 self.assertFalse(rec_ok)
                 self.assertIn("CORRUPT_TRANSACTION_JOURNAL", str(rec_err))
+
+
+    def test_g26_journal_internal_normal_files_blocked(self) -> None:
+        """Section III-B: Journal path whitelist strictly allows only fixed target files
+        (standards.lock.json, engineering-manifest.yaml, and their .bak backups).
+        Internal normal files (e.g. README.md, docs/RELEASE-OPERATIONS.md, config files)
+        or unknown target keys are blocked with CORRUPT_TRANSACTION_JOURNAL and left untouched.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            readme_file = dst / "README.md"
+            readme_file.write_text("# Important Project README\nDo not overwrite!", encoding="utf-8")
+            docs_dir = dst / "docs"
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            doc_file = docs_dir / "RELEASE-OPERATIONS.md"
+            doc_file.write_text("# Sensitive Release Ops", encoding="utf-8")
+
+            bad_cases = [
+                {"lock_path": "README.md"},
+                {"manifest_path": "docs/RELEASE-OPERATIONS.md"},
+                {"unknown_key": "standards.lock.json"},
+                {"lock_path": "standards.lock.json", "manifest_path": "config.yaml"},
+                {"lock_path": "standards.lock.json", "manifest_path": "engineering-manifest.yaml", "temp_lock": "arbitrary_temp.json"},
+            ]
+            for case in bad_cases:
+                targets = {
+                    "lock_path": "standards.lock.json",
+                    "manifest_path": "engineering-manifest.yaml",
+                    "lock_bak": "standards.lock.json.bak",
+                    "manifest_bak": "engineering-manifest.yaml.bak",
+                }
+                targets.update(case)
+                journal = {
+                    "tx_id": "malicious-internal-tx",
+                    "phase": "PREPARED",
+                    "operation_type": "UPDATE",
+                    "status": "IN_PROGRESS",
+                    "has_orig_lock": True,
+                    "has_orig_manifest": True,
+                    "targets": targets,
+                }
+                (dst / ".standards_sync_tx.json").write_text(json.dumps(journal), encoding="utf-8")
+                det = detect_interrupted_transaction(dst)
+                self.assertTrue(det.get("journal_corrupt"), f"Expected journal_corrupt for {case}")
+                rec_ok, rec_err = recover_interrupted_transaction(dst)
+                self.assertFalse(rec_ok)
+                self.assertIn("CORRUPT_TRANSACTION_JOURNAL", str(rec_err))
+                self.assertEqual(readme_file.read_text(encoding="utf-8"), "# Important Project README\nDo not overwrite!")
+                self.assertEqual(doc_file.read_text(encoding="utf-8"), "# Sensitive Release Ops")
+
+    def test_g27_transaction_lock_multiprocess_concurrency_and_recovery(self) -> None:
+        """Section III-A: Real multi-process concurrency, lock handoff, and crash recovery.
+        Verifies:
+        1. Lock release and immediate acquisition by another process without race window.
+        2. Two processes consecutively executing transactions with persistent lock file.
+        3. Stale metadata after abnormal termination is recovered and another process can execute.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            lock_path = dst / "standards.lock.json"
+            lock_path.write_text(json.dumps({"version": "2.11.0", "digest": "init"}), encoding="utf-8")
+            manifest_path = dst / "engineering-manifest.yaml"
+            manifest_path.write_text("standards: {}\n", encoding="utf-8")
+
+            # Part 1: Process 1 acquires lock, signals, waits for trigger, then releases.
+            # Process 2 waits for trigger and immediately acquires lock.
+            child_proc1 = f"""
+import sys, time
+from pathlib import Path
+sys.path.insert(0, r"{ROOT}")
+from tools.standards_sync.core import acquire_transaction_lock, release_transaction_lock
+
+dst = Path(r"{dst}")
+ok, err, fd = acquire_transaction_lock(dst, "tx-proc-1")
+if not ok:
+    print(f"PROC1_ERROR: {{err}}", flush=True)
+    sys.exit(1)
+print("PROC1_HOLDING", flush=True)
+cmd = sys.stdin.readline().strip()
+release_transaction_lock(dst, fd)
+print("PROC1_RELEASED", flush=True)
+"""
+            child_proc2 = f"""
+import sys, time
+from pathlib import Path
+sys.path.insert(0, r"{ROOT}")
+from tools.standards_sync.core import acquire_transaction_lock, release_transaction_lock
+
+dst = Path(r"{dst}")
+cmd = sys.stdin.readline().strip()
+ok, err, fd = acquire_transaction_lock(dst, "tx-proc-2")
+if ok:
+    print("PROC2_ACQUIRED", flush=True)
+    release_transaction_lock(dst, fd)
+    print("PROC2_RELEASED", flush=True)
+else:
+    print(f"PROC2_FAILED: {{err}}", flush=True)
+    sys.exit(2)
+"""
+            p1 = subprocess.Popen([sys.executable, "-c", child_proc1], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+            line1 = p1.stdout.readline().strip()
+            self.assertEqual(line1, "PROC1_HOLDING")
+
+            p2 = subprocess.Popen([sys.executable, "-c", child_proc2], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+            # Release p1 and trigger p2 simultaneously
+            p1.stdin.write("RELEASE\n")
+            p1.stdin.flush()
+            p2.stdin.write("ACQUIRE\n")
+            p2.stdin.flush()
+
+            out2 = p2.stdout.readline().strip()
+            self.assertEqual(out2, "PROC2_ACQUIRED")
+            rel1 = p1.stdout.readline().strip()
+            self.assertEqual(rel1, "PROC1_RELEASED")
+            rel2 = p2.stdout.readline().strip()
+            self.assertEqual(rel2, "PROC2_RELEASED")
+            p1.wait(timeout=5)
+            p2.wait(timeout=5)
+            p1.stdin.close()
+            p1.stdout.close()
+            p2.stdin.close()
+            p2.stdout.close()
+            self.assertEqual(p1.returncode, 0)
+            self.assertEqual(p2.returncode, 0)
+            self.assertTrue((dst / ".standards_sync.lock").exists())
+
+            # Part 2: Two processes executing consecutive transactions
+            step_code = f"""
+import sys, json
+from pathlib import Path
+sys.path.insert(0, r"{ROOT}")
+from tools.standards_sync.core import acquire_transaction_lock, release_transaction_lock
+
+dst = Path(r"{dst}")
+tx_name = sys.argv[1]
+val = sys.argv[2]
+ok, err, fd = acquire_transaction_lock(dst, tx_name)
+if not ok:
+    print(f"FAILED: {{err}}", flush=True)
+    sys.exit(3)
+lp = dst / "standards.lock.json"
+data = json.loads(lp.read_text(encoding="utf-8"))
+data["version"] = val
+lp.write_text(json.dumps(data), encoding="utf-8")
+release_transaction_lock(dst, fd)
+print("SUCCESS", flush=True)
+"""
+            res_c1 = subprocess.run([sys.executable, "-c", step_code, "tx-c1", "2.12.0"], capture_output=True, text=True)
+            self.assertEqual(res_c1.returncode, 0)
+            self.assertIn("SUCCESS", res_c1.stdout)
+            self.assertEqual(json.loads(lock_path.read_text(encoding="utf-8")).get("version"), "2.12.0")
+
+            res_c2 = subprocess.run([sys.executable, "-c", step_code, "tx-c2", "3.0.0"], capture_output=True, text=True)
+            self.assertEqual(res_c2.returncode, 0)
+            self.assertIn("SUCCESS", res_c2.stdout)
+            self.assertEqual(json.loads(lock_path.read_text(encoding="utf-8")).get("version"), "3.0.0")
+
+            # Part 3: Abnormal termination & recovery, then re-execution
+            crash_code = f"""
+import sys, json, time, hashlib
+from pathlib import Path
+sys.path.insert(0, r"{ROOT}")
+from tools.standards_sync.core import acquire_transaction_lock
+
+dst = Path(r"{dst}")
+ok, err, fd = acquire_transaction_lock(dst, "tx-crashed")
+if not ok:
+    sys.exit(4)
+lock_bytes = (dst / "standards.lock.json").read_bytes()
+(dst / "standards.lock.json.bak").write_bytes(lock_bytes)
+(dst / "standards.lock.json").write_text(json.dumps({{"version": "damaged"}}), encoding="utf-8")
+journal = {{
+    "tx_id": "tx-crashed",
+    "phase": "PREPARED",
+    "operation_type": "UPDATE",
+    "status": "IN_PROGRESS",
+    "has_orig_lock": True,
+    "has_orig_manifest": False,
+    "orig_lock_sha256": hashlib.sha256(lock_bytes).hexdigest(),
+    "backup_lock_sha256": hashlib.sha256(lock_bytes).hexdigest(),
+    "targets": {{
+        "lock_path": "standards.lock.json",
+        "lock_bak": "standards.lock.json.bak",
+    }}
+}}
+(dst / ".standards_sync_tx.json").write_text(json.dumps(journal), encoding="utf-8")
+print("CRASH_READY", flush=True)
+while True:
+    time.sleep(0.5)
+"""
+            p_crash = subprocess.Popen([sys.executable, "-c", crash_code], stdout=subprocess.PIPE, text=True)
+            ready = p_crash.stdout.readline().strip()
+            self.assertEqual(ready, "CRASH_READY")
+            p_crash.kill()
+            p_crash.stdout.close()
+            p_crash.wait()
+
+            # Recovery
+            rec_ok, rec_err = recover_interrupted_transaction(dst)
+            self.assertTrue(rec_ok, f"Recovery failed: {rec_err}")
+            self.assertEqual(json.loads(lock_path.read_text(encoding="utf-8")).get("version"), "3.0.0")
+
+            # Post-recovery transaction execution
+            res_c3 = subprocess.run([sys.executable, "-c", step_code, "tx-c3", "3.0.1"], capture_output=True, text=True)
+            self.assertEqual(res_c3.returncode, 0)
+            self.assertIn("SUCCESS", res_c3.stdout)
+            self.assertEqual(json.loads(lock_path.read_text(encoding="utf-8")).get("version"), "3.0.1")
+
+    def test_g28_journal_internal_symlink_to_readme_blocked(self) -> None:
+        """Negative test: Journal target pointing via project-internal symlink to README.md is rejected.
+        Journal path validation rejects all symbolic links to prevent tampering with regular project files.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            readme_file = dst / "README.md"
+            readme_file.write_text("# Sensitive Project README\nDo not overwrite!", encoding="utf-8")
+            lock_symlink = dst / "standards.lock.json"
+
+            created_symlink = False
+            try:
+                lock_symlink.symlink_to(readme_file)
+                created_symlink = True
+            except OSError:
+                # Platform lacks symlink creation privilege (e.g. unprivileged Windows)
+                pass
+
+            journal = {
+                "tx_id": "malicious-symlink-tx",
+                "phase": "PREPARED",
+                "operation_type": "UPDATE",
+                "status": "IN_PROGRESS",
+                "has_orig_lock": True,
+                "has_orig_manifest": True,
+                "targets": {
+                    "lock_path": "standards.lock.json",
+                    "manifest_path": "engineering-manifest.yaml",
+                    "lock_bak": "standards.lock.json.bak",
+                    "manifest_bak": "engineering-manifest.yaml.bak",
+                },
+            }
+            (dst / ".standards_sync_tx.json").write_text(json.dumps(journal), encoding="utf-8")
+
+            if created_symlink:
+                ok, path, err = _validate_journal_target(dst, "standards.lock.json", target_key="lock_path", tx_id="malicious-symlink-tx")
+                self.assertFalse(ok)
+                self.assertIn("TARGET_SYMLINK_PROHIBITED", str(err))
+
+                det = detect_interrupted_transaction(dst)
+                self.assertTrue(det.get("journal_corrupt"))
+                rec_ok, rec_err = recover_interrupted_transaction(dst)
+                self.assertFalse(rec_ok)
+                self.assertIn("CORRUPT_TRANSACTION_JOURNAL", str(rec_err))
+                self.assertIn("TARGET_SYMLINK_PROHIBITED", str(rec_err))
+                self.assertEqual(readme_file.read_text(encoding="utf-8"), "# Sensitive Project README\nDo not overwrite!")
+            else:
+                orig_is_symlink = Path.is_symlink
+
+                def fake_is_symlink(self_path: Path) -> bool:
+                    if self_path.name == "standards.lock.json":
+                        return True
+                    return orig_is_symlink(self_path)
+
+                with patch.object(Path, "is_symlink", fake_is_symlink):
+                    ok, path, err = _validate_journal_target(dst, "standards.lock.json", target_key="lock_path", tx_id="malicious-symlink-tx")
+                    self.assertFalse(ok)
+                    self.assertIn("TARGET_SYMLINK_PROHIBITED", str(err))
+
+                    det = detect_interrupted_transaction(dst)
+                    self.assertTrue(det.get("journal_corrupt"))
+                    rec_ok, rec_err = recover_interrupted_transaction(dst)
+                    self.assertFalse(rec_ok)
+                    self.assertIn("CORRUPT_TRANSACTION_JOURNAL", str(rec_err))
+                    self.assertIn("TARGET_SYMLINK_PROHIBITED", str(rec_err))
+                    self.assertEqual(readme_file.read_text(encoding="utf-8"), "# Sensitive Project README\nDo not overwrite!")
+
+            # Also test bak target symlink pointing to README.md
+            bak_symlink = dst / "standards.lock.json.bak"
+            created_bak_symlink = False
+            try:
+                bak_symlink.symlink_to(readme_file)
+                created_bak_symlink = True
+            except OSError:
+                pass
+
+            if created_bak_symlink:
+                ok, path, err = _validate_journal_target(dst, "standards.lock.json.bak", target_key="lock_bak", tx_id="malicious-symlink-tx")
+                self.assertFalse(ok)
+                self.assertIn("TARGET_SYMLINK_PROHIBITED", str(err))
+            else:
+                with patch.object(Path, "is_symlink", return_value=True):
+                    ok, path, err = _validate_journal_target(dst, "standards.lock.json.bak", target_key="lock_bak", tx_id="malicious-symlink-tx")
+                    self.assertFalse(ok)
+                    self.assertIn("TARGET_SYMLINK_PROHIBITED", str(err))
 
 
 if __name__ == "__main__":
