@@ -4,16 +4,44 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 
 ## [Unreleased]
 
-> RELEASE_STATUS=CANDIDATE | PROPOSED_VERSION=3.0.0 | MAIN_MERGED=false | RELEASE_TAG_NOT_CREATED=true | REISSUE_IN_PROGRESS=true
+> RELEASE_STATUS=CANDIDATE | PROPOSED_VERSION=3.0.0 | MAIN_MERGED=true | RELEASE_TAG_NOT_CREATED=true | REISSUE_IN_PROGRESS=true
 >
-> **v3.0.0 一次性重发处理中 (PR #9)**：
-> - 当前分支处于 v3.0.0 一次性重发候选就绪状态，包含 PR #8 核心规范体系、Std-009 单人 Owner 治理机制收敛与 Std-010 事务路径安全加固。
-> - Std-009 单人 Owner 治理与 PR 合并审批契约已完整实现并进入候选。
+> **v3.0.0 一次性重发处理中 (PR #9 已合并，修复分支 PR #10 处理中)**：
+> - PR #9 已由 Owner 正式合入官方 main（Merge Commit: `3cd42b69049b148bceea1324d4f8212393cb96df`），状态：`PR9=MERGED`。
+> - main CI 历史运行失败（Run 42933692363: `Run 42835611644 has no associated pull requests`），原因为 PR 合并后 GitHub Actions API 历史 Run 的 `pull_requests` 字段返回空列表。
+> - Std-016 已完成：OUTPUT_COMMIT=`fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7`，Push Run `42938147072` (Windows/Ubuntu PASS)，PR Run `42938186969` (Windows/Ubuntu PASS)，TEST_COUNT=220，STATUS=COMPLETED。
+> - Std-017 已完成：OUTPUT_COMMIT=`d00821e251bfe3c1495163b6af8af6c01210d5f4`，Push Run `42942640853` (Windows/Ubuntu PASS)，PR Run `42942649996` (Windows/Ubuntu PASS)，TEST_COUNT=220，STATUS=COMPLETED，交付包 SHA256: `97d90be32a5dad6a5fa415eaea8c941248c2cecdae45491263f433cc6d40a0bd`。
+> - Std-018 最终收口：已验证输入快照 Commit `21939da5e13eb39dedd0557561e88e1342be694c`，Push Run `42983601133` (Windows/Ubuntu PASS)，PR Run `42983609802` (Windows/Ubuntu PASS)，TEST_COUNT=221，STD018=COMPLETED。前序快照 Commit `09940874a1bf539f53c22426add0757667c040a0`。实现 PR9 历史发布证据与 Std-018 当前工程快照双证据双作用域独立核验，消除重复作用域与重复字段首匹配绕过缺陷，权威基线与跨会话交接严格分界。
+> - PR #10 关联分支 `fix/std-016-merged-pr-run-evidence`，状态：`PR10=OPEN/DRAFT`；当前处于 OPEN/DRAFT 状态，待 ChatGPT 独立复核及 Owner 批准；合入 main 后仍须执行 main CI，main CI 全绿后才允许重建 Annotated Tag `v3.0.0`。
 > - 远端旧 `v3.0.0` Annotated Tag 已按 Owner 授权在本地完整备份后清理（`OLD_TAG_DELETED=true`），正式 Tag 尚未重建。
-> - 保持 PR #9 Draft 状态，待 ChatGPT 独立审核给出建议结论并由唯一 Owner 批准合入 main 后，由 main CI 自动重建同名 Annotated Tag。
-> - 严禁提前标记 RELEASED 或在正式合入与 Tag 重建前变更发布状态。
+> - 整体发布流程继续保持 `IN_PROGRESS`，严禁提前标记 RELEASED 或将 PR #10 标记为 MERGED，严禁把 main CI 标记为 PASS。
 
 ### Added
+- **基线与交接作用域/字段唯一性校验与防绕过门禁强化 (STD-020 / STD-034 / STD-035 / Std-018)**:
+  - 彻底消除 `generate_engineering_baseline.py` 与 `generate_handoff.py` 的首匹配绕过隐患：实现作用域标题唯一性提取器 (`extract_scope_content`)，规范作用域标题出现 0 次报错 `SCOPE_SECTION_MISSING`，>1 次报错 `DUPLICATE_SCOPE_SECTION`。
+  - 实现基于行匹配集合的字段唯一性校验器 (`extract_line_field_matches` / `verify_scoped_field`)：规范字段出现 0 次报错 `MISSING_FIELD`，>1 次（无论是相同值还是冲突值）报错 `DUPLICATE_FIELD`，恰好 1 次时执行值校验。
+  - 同行多次出现同一字段时逐个扫描捕获值，并仅对字段别名的重叠捕获去重；所有独立期望字段必须有显式校验规则，未配置时 fail-closed。
+  - 整理 `docs/当前权威基线.md` 与 `docs/CROSS-SESSION-HANDOFF.md` 结构，确保机器校验标记 `(PR9_HISTORICAL_RELEASE_EVIDENCE)` 与 `(STD018_CURRENT_SNAPSHOT)` 全文各仅出现一次。
+  - 新增双生成器 12 类负向测试用例 `test_b17`，严格覆盖重复作用域、重复字段、冲突字段、后置追加字段、字段缺失及文件篡改等拦截场景。
+- **权威基线与交接事实对齐及核心 Commit 边界明确 (STD-020 / STD-034 / STD-035 / Std-018)**:
+  - 记录 Std-018 源快照验证点：`STD018_SOURCE_COMMIT=94faab425899f7b3ade85112c8405679df46dfe3`，Push Run `42953706511` (Windows/Ubuntu PASS)，PR Run `42953714846` (Windows/Ubuntu PASS)，TEST_COUNT=220。
+  - 标记任务最终完成：`Std018=COMPLETED`，记录最终文档输出 `STD018_FINAL_OUTPUT_COMMIT=f4cee41306cff68be2743036d64bb37d5b8c1b25`，Push Run `42969139490` (Windows/Ubuntu PASS)，PR Run `42969143389` (Windows/Ubuntu PASS)，全量测试 `TEST_COUNT=220` (PASS 220, FAILED 0, SKIPPED 0)，`PR9=MERGED`，`PR10=OPEN/DRAFT`。
+  - 保持整体发布状态：`RELEASE_STATUS=CANDIDATE`，`MAIN_MERGED=true`，`RELEASE_TAG_NOT_CREATED=true`，`REISSUE_IN_PROGRESS=true`，未合入 main 并经 main CI 成功前严禁标记 RELEASED。
+  - 纠正 `handoff/Std-016-V3-0-0-REISSUE-MERGED-PR-RUN-FALLBACK-v3.0.0-handoff.md` 历史交接快照 Commit 归属，准确记录 `OUTPUT_COMMIT=fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7` 与 220 项测试事实，消除将 PR9 候选 Commit `3361148` 误作为 Std-016 输出的矛盾。
+  - 归档 Std-017 验收证据历史快照 `handoff/Std-017-V3-0-0-REISSUE-ACCEPTANCE-EVIDENCE-CLOSEOUT-v3.0.0-handoff.md`。
+  - 修正 Std-018 跨会话交接快照 `handoff/Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT-v3.0.0-handoff.md`，准确记录 `OUTPUT_COMMIT=94faab425899f7b3ade85112c8405679df46dfe3`、`FINAL_OUTPUT_COMMIT=f4cee41306cff68be2743036d64bb37d5b8c1b25`、Push Run `42953706511` / `42969139490`、PR Run `42953714846` / `42969143389` 与 220 项测试事实，清除 PLACEHOLDER。
+  - 更新权威基线 `docs/当前权威基线.md`，严格区分核心 Commit 事实边界（PR9 候选 `3361148`、Std-016 输出 `fd9dd6e`、Std-017 输出 `d00821e`、Std-018 输入 `d00821e`、Std-018 源快照 `94faab4`、Std-018 最终输出 `f4cee41`、当前 main HEAD `3cd42b6`、当前功能分支 HEAD `f4cee41`），并记录 `MAIN_CI_STATUS=WAITING_FOR_PR10_MERGE`。
+  - 严格保护 `docs/release-evidence/v3.0.0-reissue.json` 中的 PR9 历史发布凭证，刷新活跃交接入口 `docs/CROSS-SESSION-HANDOFF.md` 为 Std-018 最新状态。
+- **验收证据收口与纯净测试日志归档 (STD-016 / STD-020 / STD-034 / Std-017)**:
+  - 纠正过程测试日志与独立诊断分离，提供 clean git status 与 220 项全量真实测试日志 `test_results.txt`。
+  - 提交快照 `d00821e251bfe3c1495163b6af8af6c01210d5f4`，触发并通过 GitHub Actions 双平台真实 CI：Push Run `42942640853` (Windows/Ubuntu PASS, 220 tests PASS)，PR Run `42942649996` (Windows/Ubuntu PASS, 220 tests PASS)。
+  - 生成 Std-017 验收交付包 `Acceptance-Std-017-V3-0-0-REISSUE-ACCEPTANCE-EVIDENCE-CLOSEOUT-v3.0.0.zip` (SHA256: `97d90be32a5dad6a5fa415eaea8c941248c2cecdae45491263f433cc6d40a0bd`) 并标记 `STATUS=COMPLETED`。
+- **合并后历史 PR Run 关联信息丢失修复与 PR API Fallback 真实性核验 (STD-016 / STD-034 / STD-035 / Std-016)**:
+  - 修复 `tools/release_evidence.py` 中的 `verify_single_github_run()`：当 PR 合并后 GitHub Actions 历史 Run 的 `pull_requests` 返回空列表时，使用独立发布证据中的 `pr_number`，通过 GitHub REST API 查询 `GET /repos/{owner}/{repo}/pulls/{pr_number}` 触发严格身份回退核验 (P1-A)。
+  - 严格校验 6 大契约项：PR number 与 `expected_pr_number` 一致、PR `base.ref=main`、PR `head.ref` 与历史 Run `head_branch` 一致、PR `head.sha` 与历史 Run `head_sha` 一致、当 `pr_status=MERGED` 时 `merged=true` 且 `merged_at` 非空；网络异常或不可达时记录 `NOT_VERIFIABLE`，身份不一致判定 `FAIL`，严禁伪造 PASS (P1-B)。
+  - 在 `.github/workflows/standards-ci.yml` 的 `validate-standards` Job 中补充最小必要只读权限 `pull-requests: read`，保留 `actions: read` 与 `contents: read`，保持零密钥安全与最小权限原则 (P1-C)。
+  - 刷新独立发布证据、权威基线与跨会话交接中的历史 CI 事实至已验证 Commit `336114861b2c720106a6076956eef08c9cd6ded7`（Push Run 42843755347，PR Run 42843964061，全量 219 项测试双平台全绿），记录 PR #9 已合并事实与 Merge Commit `3cd42b69` 并保留 Std-015 历史快照 (P1-D)。
+  - 新增单元与集成测试 `test_b15`，覆盖 9 大正负向场景，并在 `GITHUB_REF_NAME=main` 模拟环境中真实直连核验已合并 PR #9 历史 Run 通过 (P1-E)。
 - **主干 CI 分支误判修复与发布证据分支严格绑定 (STD-015 / STD-034 / STD-035 / Std-015)**:
   - 在 `schemas/release-evidence.schema.json` 中新增必填字段 `push_head_branch`（类型 `string`，`minLength=1`），严格绑定历史 Push Run 真实所属分支，从契约层面防止环境分支覆盖 (P1-A)。
   - 修复 `tools/release_evidence.py` 中的 `verify_github_ci_runs()`：Push Run 的 `expected_head_branch` 必须且直接取自 `evidence["push_head_branch"]`，彻底消除 `effective_target_branch` 从 `GITHUB_REF_NAME` 错误推断导致 main Push CI 误判功能分支的历史缺陷；禁止缺少字段时回退默认分支；禁止模拟绕过生产验证 (P1-B)。

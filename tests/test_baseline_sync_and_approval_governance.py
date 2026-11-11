@@ -511,13 +511,13 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             ev7 = dict(valid_ev_data, ci_status="NOT_VERIFIABLE")
             res7 = run_baseline_with_evidence(ev7)
             self.assertNotEqual(res7.returncode, 0)
-            self.assertIn("ci verification_status", res7.stdout)
+            self.assertTrue("ci_status" in res7.stdout or "ci verification_status" in res7.stdout)
 
             # --- Negative 8: 216 tests changed to 215 tests fails ---
-            ev8 = dict(valid_ev_data, test_count=215)
+            ev8 = dict(valid_ev_data, test_count=215 if valid_ev_data.get("test_count") != 215 else 214)
             res8 = run_baseline_with_evidence(ev8)
             self.assertNotEqual(res8.returncode, 0)
-            self.assertIn("test count", res8.stdout)
+            self.assertTrue("test_count" in res8.stdout or "test count" in res8.stdout)
 
             # --- Negative 9: Windows Job failed in CI check ---
             sim_windows_fail = {
@@ -572,7 +572,8 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             self.assertTrue(any("Ubuntu job conclusion" in e for e in errs10))
 
             # --- Negative 11: Wrong PR status fails ---
-            ev11 = dict(valid_ev_data, pr_status="MERGED")
+            wrong_st = "DRAFT" if valid_ev_data.get("pr_status") == "MERGED" else "MERGED"
+            ev11 = dict(valid_ev_data, pr_status=wrong_st)
             res11 = run_baseline_with_evidence(ev11)
             self.assertNotEqual(res11.returncode, 0)
             self.assertIn("pr_status", res11.stdout)
@@ -581,7 +582,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             ev12 = dict(valid_ev_data, old_tag_deleted=False)
             res12 = run_baseline_with_evidence(ev12)
             self.assertNotEqual(res12.returncode, 0)
-            self.assertIn("OLD_TAG_DELETED", res12.stdout)
+            self.assertTrue("old_tag_deleted" in res12.stdout or "OLD_TAG_DELETED" in res12.stdout)
 
             # --- Proof Test: Modifying Commit or Run ID in markdown under test STILL FAILS ---
             # Even if content_sha256 is correctly recalculated!
@@ -1081,6 +1082,659 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         st11, errs11, _ = verify_github_ci_runs(ev_unreachable, timeout=1, simulate_data_map=None)
         self.assertEqual(st11, "NOT_VERIFIABLE")
         self.assertTrue(any("not accessible" in e.lower() for e in errs11))
+
+    def test_b15_merged_pr_run_fallback_and_pr_identity_binding(self) -> None:
+        """STD-016 / STD-034: Verification of historical PR Run fallback when pull_requests is empty,
+        6-point identity verification contract against GitHub PR API, and real main workflow CLI integration.
+        """
+        canonical_repo = "xiefeifeihu/AI-Engineering-Standards"
+        push_id = "42843755347"
+        pr_id = "42843964061"
+        head_sha = "336114861b2c720106a6076956eef08c9cd6ded7"
+        feat_branch = "feat/standards-baseline-sync-governance"
+        workflow_path = ".github/workflows/standards-ci.yml"
+
+        valid_evidence = {
+            "repository": canonical_repo,
+            "version": "3.0.0",
+            "pr_number": 9,
+            "pr_status": "MERGED",
+            "main_head": "3cd42b69049b148bceea1324d4f8212393cb96df",
+            "candidate_commit": head_sha,
+            "snapshot_commit": head_sha,
+            "last_verified_ci_commit": head_sha,
+            "push_run_id": push_id,
+            "push_head_branch": feat_branch,
+            "pr_run_id": pr_id,
+            "ci_status": "PASS",
+            "test_count": 219,
+            "test_failed": 0,
+            "test_skipped": 0,
+            "windows_status": "PASS",
+            "ubuntu_status": "PASS",
+            "old_tag_deleted": True,
+            "old_tag_object": "325008af90a1e6dcc88ff714c9ec4e7ecee86ec6",
+            "old_tag_peeled_commit": "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b",
+            "old_tag_bundle_sha256": "45bc3e455fc06b96a669ba9d7c44195f5dfb4e42e55397d795200942e434ebfc",
+            "release_flow_status": "IN_PROGRESS",
+            "task_id": "Std-016-V3-0-0-REISSUE-MERGED-PR-RUN-FALLBACK",
+        }
+
+        base_push_sim = {
+            "id": int(push_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": head_sha,
+            "headSha": head_sha,
+            "event": "push",
+            "status": "completed",
+            "conclusion": "success",
+            "path": workflow_path,
+            "head_branch": feat_branch,
+            "headBranch": feat_branch,
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "jobs": [
+                {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+            ],
+        }
+
+        # PR Run with empty pull_requests (merged PR simulation)
+        base_pr_sim_empty = {
+            "id": int(pr_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": head_sha,
+            "headSha": head_sha,
+            "event": "pull_request",
+            "status": "completed",
+            "conclusion": "success",
+            "path": workflow_path,
+            "head_branch": feat_branch,
+            "headBranch": feat_branch,
+            "pull_requests": [],
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "jobs": [
+                {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+            ],
+        }
+
+        # Valid PR API response
+        valid_pr_api_data = {
+            "number": 9,
+            "state": "closed",
+            "merged": True,
+            "merged_at": "2026-11-11T00:44:16Z",
+            "base": {"ref": "main"},
+            "head": {"ref": feat_branch, "sha": head_sha},
+        }
+
+        # 1. PR OPEN 且 Run.pull_requests 正常存在：PASS
+        pr_sim_open = dict(
+            base_pr_sim_empty,
+            pull_requests=[{"number": 9, "head": {"ref": feat_branch}, "base": {"ref": "main"}}],
+        )
+        st1, errs1, meta1 = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="OPEN",
+            simulate_data=pr_sim_open,
+        )
+        self.assertEqual(st1, "PASS")
+        self.assertEqual(errs1, [])
+        self.assertFalse(meta1.get("pr_fallback_verified", False))
+
+        # 2. PR MERGED 且 Run.pull_requests 为空：使用 PR API fallback，PASS
+        st2, errs2, meta2 = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_data=valid_pr_api_data,
+        )
+        self.assertEqual(st2, "PASS")
+        self.assertEqual(errs2, [])
+        self.assertTrue(meta2.get("pr_fallback_verified"))
+        self.assertEqual(meta2.get("actual_pr_number"), 9)
+
+        # 3. PR 当前 head.sha 与历史 Run head_sha 不一致：FAIL
+        pr_wrong_head_sha = dict(valid_pr_api_data, head={"ref": feat_branch, "sha": "1111111111111111111111111111111111111111"})
+        st3, errs3, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_data=pr_wrong_head_sha,
+        )
+        self.assertEqual(st3, "FAIL")
+        self.assertTrue(any("head.sha mismatch" in e.lower() for e in errs3))
+
+        # 4. PR base.ref 非 main：FAIL
+        pr_wrong_base = dict(valid_pr_api_data, base={"ref": "develop"})
+        st4, errs4, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_data=pr_wrong_base,
+        )
+        self.assertEqual(st4, "FAIL")
+        self.assertTrue(any("base ref mismatch" in e.lower() for e in errs4))
+
+        # 5. PR number 不匹配：FAIL
+        pr_wrong_num = dict(valid_pr_api_data, number=99)
+        st5, errs5, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_data=pr_wrong_num,
+        )
+        self.assertEqual(st5, "FAIL")
+        self.assertTrue(any("number mismatch" in e.lower() for e in errs5))
+
+        # 6. PR head.ref 与历史 Run head_branch 不匹配：FAIL
+        pr_wrong_head_ref = dict(valid_pr_api_data, head={"ref": "feature/unrelated", "sha": head_sha})
+        st6, errs6, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_data=pr_wrong_head_ref,
+        )
+        self.assertEqual(st6, "FAIL")
+        self.assertTrue(any("head.ref mismatch" in e.lower() for e in errs6))
+
+        # 7. PR merged=true 但 merged_at 为空：FAIL
+        pr_empty_merged_at = dict(valid_pr_api_data, merged_at=None)
+        st7, errs7, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_data=pr_empty_merged_at,
+        )
+        self.assertEqual(st7, "FAIL")
+        self.assertTrue(any("merged_at is empty" in e.lower() for e in errs7))
+
+        # 8. PR API 不可达：NOT_VERIFIABLE
+        st8, errs8, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_error="Connection timed out",
+        )
+        self.assertEqual(st8, "NOT_VERIFIABLE")
+        self.assertTrue(any("not accessible" in e.lower() for e in errs8))
+
+        # 9. PR API 返回 404：NOT_VERIFIABLE，不得 PASS
+        st9, errs9, _ = verify_single_github_run(
+            repo=canonical_repo,
+            run_id=pr_id,
+            expected_event="pull_request",
+            expected_head_sha=head_sha,
+            expected_pr_number=9,
+            expected_base_ref="main",
+            expected_pr_status="MERGED",
+            simulate_data=base_pr_sim_empty,
+            simulate_pr_error="HTTP 404: Not Found",
+        )
+        self.assertEqual(st9, "NOT_VERIFIABLE")
+        self.assertNotEqual(st9, "PASS")
+        self.assertTrue(any("not accessible" in e.lower() for e in errs9))
+
+        # --- verify_github_ci_runs 组合测试与模拟调用路径 ---
+        sim_data_map = {push_id: base_push_sim, pr_id: base_pr_sim_empty}
+        sim_pr_map = {"9": valid_pr_api_data}
+        st_comb, errs_comb, meta_comb = verify_github_ci_runs(
+            valid_evidence,
+            simulate_data_map=sim_data_map,
+            simulate_pr_data_map=sim_pr_map,
+        )
+        self.assertEqual(st_comb, "PASS")
+        self.assertEqual(errs_comb, [])
+        self.assertTrue(meta_comb.get("pr_fallback_verified"))
+
+        # --- 真实 CLI 集成测试：模拟当前运行于 main Workflow (GITHUB_REF_NAME=main) ---
+        # 正式调用 verify_github_ci_runs()，直连 GitHub Actions 真实 Run 42843964061 与真实 PR #9 API
+        orig_ref_name = os.environ.get("GITHUB_REF_NAME")
+        orig_head_ref = os.environ.get("GITHUB_HEAD_REF")
+        try:
+            os.environ["GITHUB_REF_NAME"] = "main"
+            os.environ["GITHUB_HEAD_REF"] = ""
+
+            ok_ev, ev_errors, real_evidence = load_release_evidence(ROOT)
+            self.assertTrue(ok_ev, f"Failed to load real release evidence: {ev_errors}")
+            self.assertEqual(real_evidence["pr_status"], "MERGED")
+            self.assertEqual(str(real_evidence["pr_run_id"]), pr_id)
+
+            real_st, real_errs, real_details = verify_github_ci_runs(real_evidence)
+            self.assertEqual(real_st, "PASS", f"Real CI authenticity verification failed: {real_errs}")
+            self.assertEqual(real_errs, [])
+            self.assertTrue(real_details.get("pr_fallback_verified"))
+            self.assertEqual(real_details["pr_run"]["actual_pr_number"], 9)
+            self.assertEqual(real_details["pr_run"]["actual_base_ref"], "main")
+            self.assertEqual(real_details["pr_run"]["actual_head_ref"], feat_branch)
+            self.assertEqual(real_details["pr_run"]["actual_pr_head_sha"], head_sha)
+        finally:
+            if orig_ref_name is not None:
+                os.environ["GITHUB_REF_NAME"] = orig_ref_name
+            else:
+                os.environ.pop("GITHUB_REF_NAME", None)
+            if orig_head_ref is not None:
+                os.environ["GITHUB_HEAD_REF"] = orig_head_ref
+            else:
+                os.environ.pop("GITHUB_HEAD_REF", None)
+
+    def test_b16_dual_evidence_dual_scope_12_negative_tests(self) -> None:
+        """STD-034 / STD-035 (Std-018): 12 negative test cases for independent dual-evidence and
+        dual-scope verification (PR9 historical release evidence vs Std-018 current engineering snapshot).
+        Ensures:
+          1. PR9 historical evidence correctness cannot mask Std-018 current errors.
+          2. Std-018 current snapshot correctness cannot mask PR9 historical errors.
+          3. Missing current snapshot evidence blocks execution.
+          4. Tampering Markdown and recomputing content_sha256 still fails semantic verification.
+        """
+        pr9_file = ROOT / "docs" / "release-evidence" / "v3.0.0-reissue.json"
+        std018_file = ROOT / "docs" / "release-evidence" / "std018-current-snapshot.json"
+        self.assertTrue(pr9_file.exists(), f"PR9 evidence file missing: {pr9_file}")
+        self.assertTrue(std018_file.exists(), f"Std-018 evidence file missing: {std018_file}")
+
+        pr9_data = json.loads(pr9_file.read_text(encoding="utf-8"))
+        std018_data = json.loads(std018_file.read_text(encoding="utf-8"))
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+
+            def run_baseline_verify(pr9_p: Path, std_p: Path, extra: list[str] | None = None) -> subprocess.CompletedProcess:
+                cmd = [
+                    sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"),
+                    "--project-root", str(ROOT),
+                    "--release-evidence", str(pr9_p),
+                    "--snapshot-evidence", str(std_p),
+                    "--verify-only",
+                ]
+                if extra:
+                    cmd.extend(extra)
+                return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+
+            def run_handoff_verify(pr9_p: Path, std_p: Path, extra: list[str] | None = None) -> subprocess.CompletedProcess:
+                cmd = [
+                    sys.executable, str(ROOT / "tools" / "generate_handoff.py"),
+                    "--project-root", str(ROOT),
+                    "--release-evidence", str(pr9_p),
+                    "--snapshot-evidence", str(std_p),
+                    "--verify-only",
+                ]
+                if extra:
+                    cmd.extend(extra)
+                return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+
+            # --- Negative 1: 修改 PR9 candidate_commit -> FAIL ---
+            # Std-018 current snapshot is valid, but PR9 historical error MUST NOT be masked
+            p1 = tmp / "pr9_neg1.json"
+            p1.write_text(json.dumps(dict(pr9_data, candidate_commit="0000000000000000000000000000000000000000")), encoding="utf-8")
+            res1 = run_baseline_verify(p1, std018_file)
+            self.assertNotEqual(res1.returncode, 0)
+            self.assertIn("candidate_commit", res1.stdout)
+
+            # --- Negative 2: 修改 PR9 historical Run ID -> FAIL ---
+            p2 = tmp / "pr9_neg2.json"
+            p2.write_text(json.dumps(dict(pr9_data, push_run_id="99999999991")), encoding="utf-8")
+            res2 = run_baseline_verify(p2, std018_file)
+            self.assertNotEqual(res2.returncode, 0)
+            self.assertTrue("push_run_id" in res2.stdout or "ci_run_id" in res2.stdout)
+
+            # --- Negative 3: 修改 PR9 test_count -> FAIL ---
+            p3 = tmp / "pr9_neg3.json"
+            p3.write_text(json.dumps(dict(pr9_data, test_count=999)), encoding="utf-8")
+            res3 = run_baseline_verify(p3, std018_file)
+            self.assertNotEqual(res3.returncode, 0)
+            self.assertTrue("test count" in res3.stdout or "test_count" in res3.stdout)
+
+            # --- Negative 4: 修改 Std018 snapshot_commit -> FAIL ---
+            # PR9 historical evidence is valid, but Std-018 error MUST NOT be masked
+            s4 = tmp / "std_neg4.json"
+            s4.write_text(json.dumps(dict(std018_data, snapshot_commit="1111111111111111111111111111111111111111")), encoding="utf-8")
+            res4_b = run_baseline_verify(pr9_file, s4)
+            self.assertNotEqual(res4_b.returncode, 0)
+            self.assertIn("snapshot_commit", res4_b.stdout)
+            res4_h = run_handoff_verify(pr9_file, s4)
+            self.assertNotEqual(res4_h.returncode, 0)
+            self.assertIn("snapshot_commit", res4_h.stdout)
+
+            # --- Negative 5: 修改 Std018 latest CI Commit -> FAIL ---
+            s5 = tmp / "std_neg5.json"
+            s5.write_text(json.dumps(dict(std018_data, last_verified_ci_commit="2222222222222222222222222222222222222222")), encoding="utf-8")
+            res5 = run_baseline_verify(pr9_file, s5)
+            self.assertNotEqual(res5.returncode, 0)
+            self.assertTrue("last_verified_ci_commit" in res5.stdout or "ci_commit" in res5.stdout)
+
+            # --- Negative 6: 修改 Std018 Push Run -> FAIL ---
+            s6 = tmp / "std_neg6.json"
+            s6.write_text(json.dumps(dict(std018_data, push_run_id="99999999993")), encoding="utf-8")
+            res6 = run_baseline_verify(pr9_file, s6)
+            self.assertNotEqual(res6.returncode, 0)
+            self.assertTrue("push_run_id" in res6.stdout or "ci_run_id" in res6.stdout)
+
+            # --- Negative 7: 修改 Std018 PR Run -> FAIL ---
+            s7 = tmp / "std_neg7.json"
+            s7.write_text(json.dumps(dict(std018_data, pr_run_id="99999999994")), encoding="utf-8")
+            res7 = run_baseline_verify(pr9_file, s7)
+            self.assertNotEqual(res7.returncode, 0)
+            self.assertIn("pr_run_id", res7.stdout)
+
+            # --- Negative 8: 修改 Std018 TEST_COUNT -> FAIL ---
+            s8 = tmp / "std_neg8.json"
+            s8.write_text(json.dumps(dict(std018_data, test_count=999)), encoding="utf-8")
+            res8 = run_baseline_verify(pr9_file, s8)
+            self.assertNotEqual(res8.returncode, 0)
+            self.assertTrue("test count" in res8.stdout or "test_count" in res8.stdout)
+
+            # --- Negative 9: 修改 Std018 PR 状态 -> FAIL ---
+            s9 = tmp / "std_neg9.json"
+            s9.write_text(json.dumps(dict(std018_data, pr_status="MERGED")), encoding="utf-8")
+            res9 = run_baseline_verify(pr9_file, s9)
+            self.assertNotEqual(res9.returncode, 0)
+            self.assertTrue("pr_status" in res9.stdout or "PR status" in res9.stdout)
+
+            # --- Negative 10: 修改 Std018 main_head -> FAIL ---
+            s10 = tmp / "std_neg10.json"
+            s10.write_text(json.dumps(dict(std018_data, main_head="4444444444444444444444444444444444444444")), encoding="utf-8")
+            res10 = run_baseline_verify(pr9_file, s10)
+            self.assertNotEqual(res10.returncode, 0)
+            self.assertIn("main_head", res10.stdout)
+
+            # --- Negative 11: 删除 Std018 current evidence -> BLOCK ---
+            missing_snapshot_ev = tmp / "missing-std018-snapshot.json"
+            res11_b = run_baseline_verify(pr9_file, missing_snapshot_ev)
+            self.assertNotEqual(res11_b.returncode, 0)
+            self.assertTrue("RELEASE_EVIDENCE_NOT_FOUND" in (res11_b.stdout + res11_b.stderr) or "snapshot evidence error" in res11_b.stdout)
+            res11_h = run_handoff_verify(pr9_file, missing_snapshot_ev)
+            self.assertNotEqual(res11_h.returncode, 0)
+            self.assertTrue("RELEASE_EVIDENCE_NOT_FOUND" in (res11_h.stdout + res11_h.stderr) or "snapshot evidence error" in res11_h.stdout)
+
+            # --- Negative 12: 篡改 Markdown 并重新计算 SHA256 -> FAIL ---
+            from tools.validate_approval_contract import compute_canonical_document_sha256
+            base_md = (ROOT / "docs" / "当前权威基线.md").read_text(encoding="utf-8")
+            tampered_base_md = base_md.replace(str(std018_data["push_run_id"]), "99999999995")
+            new_sha_base = compute_canonical_document_sha256(tampered_base_md)
+            tampered_base_md = re.sub(r'content_sha256:\s*"[^"]+"', f'content_sha256: "{new_sha_base}"', tampered_base_md)
+            tampered_base_path = tmp / "tampered_baseline.md"
+            tampered_base_path.write_text(tampered_base_md, encoding="utf-8")
+
+            res12 = run_baseline_verify(pr9_file, std018_file, extra=["--output", str(tampered_base_path)])
+            self.assertNotEqual(res12.returncode, 0, "Tampered baseline MUST fail verify-only even with matching content_sha256")
+            self.assertIn("mismatches", res12.stdout)
+
+    def test_b17_duplicate_scope_and_field_uniqueness_negative_tests(self) -> None:
+        """STD-034 / STD-035 (Std-018): 12 negative test cases for scope and field uniqueness enforcement
+        in generate_engineering_baseline.py and generate_handoff.py.
+        Ensures dual-generator rejection of duplicate scope headings, duplicate fields
+        (including same-line duplicates), missing fields, appended conflicting values,
+        cross-scope evidence substitution, tampering after hash recomputation, missing
+        evidence files, and release-flow status tampering.
+        """
+        pr9_file = ROOT / "docs" / "release-evidence" / "v3.0.0-reissue.json"
+        std018_file = ROOT / "docs" / "release-evidence" / "std018-current-snapshot.json"
+        self.assertTrue(pr9_file.exists(), f"PR9 evidence file missing: {pr9_file}")
+        self.assertTrue(std018_file.exists(), f"Std-018 evidence file missing: {std018_file}")
+
+        baseline_raw = (ROOT / "docs" / "当前权威基线.md").read_text(encoding="utf-8")
+        handoff_raw = (ROOT / "docs" / "CROSS-SESSION-HANDOFF.md").read_text(encoding="utf-8")
+
+        from tools.validate_approval_contract import compute_canonical_document_sha256
+
+        def write_with_sha(content: str, out_p: Path) -> Path:
+            csha = compute_canonical_document_sha256(content)
+            updated = re.sub(r'content_sha256:\s*"[^"]*"', f'content_sha256: "{csha}"', content)
+            out_p.write_text(updated, encoding="utf-8")
+            return out_p
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+
+            def run_baseline_verify(extra: list) -> subprocess.CompletedProcess:
+                cmd = [
+                    sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"),
+                    "--project-root", str(ROOT),
+                    "--release-evidence", str(pr9_file),
+                    "--snapshot-evidence", str(std018_file),
+                    "--verify-only",
+                ] + extra
+                return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+
+            def run_handoff_verify(extra: list) -> subprocess.CompletedProcess:
+                cmd = [
+                    sys.executable, str(ROOT / "tools" / "generate_handoff.py"),
+                    "--project-root", str(ROOT),
+                    "--release-evidence", str(pr9_file),
+                    "--snapshot-evidence", str(std018_file),
+                    "--verify-only",
+                ] + extra
+                return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+
+            # 1. PR9 scope heading duplicated in baseline -> FAIL (DUPLICATE_SCOPE_SECTION)
+            m1 = baseline_raw + "\n\n### 9.9 重复作用域副本 (PR9_HISTORICAL_RELEASE_EVIDENCE)\n- 冗余内容\n"
+            p1 = write_with_sha(m1, tmp / "b_neg1.md")
+            res1 = run_baseline_verify(["--output", str(p1)])
+            self.assertNotEqual(res1.returncode, 0)
+            self.assertIn("DUPLICATE_SCOPE_SECTION", res1.stdout)
+
+            # 2. Std018 scope heading duplicated in baseline -> FAIL (DUPLICATE_SCOPE_SECTION)
+            m2 = baseline_raw + "\n\n### 9.10 重复作用域副本 (STD018_CURRENT_SNAPSHOT)\n- 冗余内容\n"
+            p2 = write_with_sha(m2, tmp / "b_neg2.md")
+            res2 = run_baseline_verify(["--output", str(p2)])
+            self.assertNotEqual(res2.returncode, 0)
+            self.assertIn("DUPLICATE_SCOPE_SECTION", res2.stdout)
+
+            # 3. PR9 field duplicated with conflicting value in baseline -> FAIL (DUPLICATE_FIELD)
+            m3 = baseline_raw.replace(
+                "- **代码候选 Commit (`candidate_commit`)**：`336114861b2c720106a6076956eef08c9cd6ded7`",
+                "- **代码候选 Commit (`candidate_commit`)**：`336114861b2c720106a6076956eef08c9cd6ded7`\n- **代码候选 Commit (`candidate_commit`)**：`0000000000000000000000000000000000000000`"
+            )
+            p3 = write_with_sha(m3, tmp / "b_neg3.md")
+            res3 = run_baseline_verify(["--output", str(p3)])
+            self.assertNotEqual(res3.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res3.stdout)
+
+            # 4. Std018 field duplicated with conflicting value in baseline -> FAIL (DUPLICATE_FIELD)
+            m4 = baseline_raw.replace(
+                "- **Push Run ID**：`42983601133`",
+                "- **Push Run ID**：`42983601133`\n- **Push Run ID**：`99999999999`"
+            )
+            p4 = write_with_sha(m4, tmp / "b_neg4.md")
+            res4 = run_baseline_verify(["--output", str(p4)])
+            self.assertNotEqual(res4.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res4.stdout)
+
+            # 5. Valid field followed by appended erroneous field -> FAIL (DUPLICATE_FIELD)
+            m5 = baseline_raw.replace(
+                "- **PR Run ID**：`42983609802`",
+                "- **PR Run ID**：`42983609802`\n- **PR Run ID**：`42983609802`"
+            )
+            p5 = write_with_sha(m5, tmp / "b_neg5.md")
+            res5 = run_baseline_verify(["--output", str(p5)])
+            self.assertNotEqual(res5.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res5.stdout)
+
+            # 6. Delete PR9 required field in baseline -> FAIL (MISSING_FIELD)
+            m6 = baseline_raw.replace("- **代码候选 Commit (`candidate_commit`)**：`336114861b2c720106a6076956eef08c9cd6ded7`\n", "")
+            p6 = write_with_sha(m6, tmp / "b_neg6.md")
+            res6 = run_baseline_verify(["--output", str(p6)])
+            self.assertNotEqual(res6.returncode, 0)
+            self.assertIn("MISSING_FIELD", res6.stdout)
+
+            # 7. Delete Std018 required field in baseline -> FAIL (MISSING_FIELD)
+            m7 = baseline_raw.replace("- **当前工程候选 Commit (`candidate_commit`)**：`21939da5e13eb39dedd0557561e88e1342be694c`\n", "")
+            p7 = write_with_sha(m7, tmp / "b_neg7.md")
+            res7 = run_baseline_verify(["--output", str(p7)])
+            self.assertNotEqual(res7.returncode, 0)
+            self.assertIn("MISSING_FIELD", res7.stdout)
+
+            # 8. Cross-scope isolation: PR9 valid, Std018 invalid in Handoff -> FAIL
+            m8 = handoff_raw.replace("- **PR Run ID**：`42983609802`", "- **PR Run ID**：`88888888888`")
+            p8 = write_with_sha(m8, tmp / "h_neg8.md")
+            res8 = run_handoff_verify(["--output", str(p8)])
+            self.assertNotEqual(res8.returncode, 0)
+            self.assertIn("pr_run_id", res8.stdout)
+
+            # 9. Cross-scope isolation: Std018 valid, PR9 invalid in Handoff -> FAIL
+            m9 = handoff_raw.replace("- **Push Run ID**：`42843755347`", "- **Push Run ID**：`77777777777`")
+            p9 = write_with_sha(m9, tmp / "h_neg9.md")
+            res9 = run_handoff_verify(["--output", str(p9)])
+            self.assertNotEqual(res9.returncode, 0)
+            self.assertIn("push_run_id", res9.stdout)
+
+            # 10. Baseline tampered then recomputed SHA256 -> FAIL
+            m10 = baseline_raw.replace("21939da5e13eb39dedd0557561e88e1342be694c", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            p10 = write_with_sha(m10, tmp / "b_neg10.md")
+            res10 = run_baseline_verify(["--output", str(p10)])
+            self.assertNotEqual(res10.returncode, 0)
+            self.assertIn("mismatches", res10.stdout)
+
+            # 11. Handoff tampered then recomputed SHA256 -> FAIL
+            m11 = handoff_raw.replace("21939da5e13eb39dedd0557561e88e1342be694c", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+            p11 = write_with_sha(m11, tmp / "h_neg11.md")
+            res11 = run_handoff_verify(["--output", str(p11)])
+            self.assertNotEqual(res11.returncode, 0)
+            self.assertIn("mismatches", res11.stdout)
+
+            # Handoff parity: duplicate PR9 and Std-018 scope headings must both block.
+            h12 = handoff_raw + "\n\n### 4.9 Duplicate PR9 scope (PR9_HISTORICAL_RELEASE_EVIDENCE)\n- duplicate\n"
+            p12 = write_with_sha(h12, tmp / "h_neg12.md")
+            res12 = run_handoff_verify(["--output", str(p12)])
+            self.assertNotEqual(res12.returncode, 0)
+            self.assertIn("DUPLICATE_SCOPE_SECTION", res12.stdout)
+
+            h13 = handoff_raw + "\n\n### 4.10 Duplicate Std018 scope (STD018_CURRENT_SNAPSHOT)\n- duplicate\n"
+            p13 = write_with_sha(h13, tmp / "h_neg13.md")
+            res13 = run_handoff_verify(["--output", str(p13)])
+            self.assertNotEqual(res13.returncode, 0)
+            self.assertIn("DUPLICATE_SCOPE_SECTION", res13.stdout)
+
+            h14 = handoff_raw.replace(
+                "- **Push Run ID**：`42843755347`",
+                "- **Push Run ID**：`42843755347`\n- **Push Run ID**：`99999999998`",
+                1,
+            )
+            p14 = write_with_sha(h14, tmp / "h_neg14.md")
+            res14 = run_handoff_verify(["--output", str(p14)])
+            self.assertNotEqual(res14.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res14.stdout)
+
+            h15 = handoff_raw.replace(
+                "- **Push Run ID**：`42983601133`",
+                "- **Push Run ID**：`42983601133`\n- **Push Run ID**：`99999999999`",
+                1,
+            )
+            p15 = write_with_sha(h15, tmp / "h_neg15.md")
+            res15 = run_handoff_verify(["--output", str(p15)])
+            self.assertNotEqual(res15.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res15.stdout)
+
+            b16 = baseline_raw.replace(
+                "- **Push Run ID**：`42983601133`",
+                "- **Push Run ID**：`42983601133`；**Push Run ID**：`99999999999`",
+                1,
+            )
+            p16 = write_with_sha(b16, tmp / "b_neg16.md")
+            res16 = run_baseline_verify(["--output", str(p16)])
+            self.assertNotEqual(res16.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res16.stdout)
+
+            h17 = handoff_raw.replace(
+                "- **Push Run ID**：`42983601133`",
+                "- **Push Run ID**：`42983601133`；**Push Run ID**：`99999999999`",
+                1,
+            )
+            p17 = write_with_sha(h17, tmp / "h_neg17.md")
+            res17 = run_handoff_verify(["--output", str(p17)])
+            self.assertNotEqual(res17.returncode, 0)
+            self.assertIn("DUPLICATE_FIELD", res17.stdout)
+
+            h18 = handoff_raw.replace(
+                "- **发布流程状态 (`release_flow_status`)**：`IN_PROGRESS`",
+                "- **发布流程状态 (`release_flow_status`)**：`RELEASED`",
+                1,
+            )
+            p18 = write_with_sha(h18, tmp / "h_neg18.md")
+            res18 = run_handoff_verify(["--output", str(p18)])
+            self.assertNotEqual(res18.returncode, 0)
+            self.assertIn("release_flow_status", res18.stdout)
+
+            b19 = baseline_raw.replace(
+                "- **发布流程状态 (`release_flow_status`)**：`IN_PROGRESS`",
+                "- **发布流程状态 (`release_flow_status`)**：`RELEASED`",
+                1,
+            )
+            p19 = write_with_sha(b19, tmp / "b_neg19.md")
+            res19 = run_baseline_verify(["--output", str(p19)])
+            self.assertNotEqual(res19.returncode, 0)
+            self.assertIn("release_flow_status", res19.stdout)
+
+            h20 = handoff_raw.replace(
+                "- **PR Run ID**：`42983609802`\n",
+                "",
+                1,
+            )
+            p20 = write_with_sha(h20, tmp / "h_neg20.md")
+            res20 = run_handoff_verify(["--output", str(p20)])
+            self.assertNotEqual(res20.returncode, 0)
+            self.assertIn("MISSING_FIELD", res20.stdout)
+            # 12. Missing Std018 evidence file -> BLOCK
+            missing_ev = tmp / "missing-std018.json"
+            res12_b = subprocess.run([
+                sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"),
+                "--project-root", str(ROOT),
+                "--release-evidence", str(pr9_file),
+                "--snapshot-evidence", str(missing_ev),
+                "--verify-only",
+            ], capture_output=True, text=True, encoding="utf-8")
+            self.assertNotEqual(res12_b.returncode, 0)
+            self.assertTrue("RELEASE_EVIDENCE_NOT_FOUND" in (res12_b.stdout + res12_b.stderr) or "snapshot evidence error" in res12_b.stdout)
+
+            res12_h = subprocess.run([
+                sys.executable, str(ROOT / "tools" / "generate_handoff.py"),
+                "--project-root", str(ROOT),
+                "--release-evidence", str(pr9_file),
+                "--snapshot-evidence", str(missing_ev),
+                "--verify-only",
+            ], capture_output=True, text=True, encoding="utf-8")
+            self.assertNotEqual(res12_h.returncode, 0)
+            self.assertTrue("RELEASE_EVIDENCE_NOT_FOUND" in (res12_h.stdout + res12_h.stderr) or "snapshot evidence error" in res12_h.stdout)
 
     # =========================================================================
     # C. Standards Sync Tool Tests

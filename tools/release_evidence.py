@@ -278,6 +278,60 @@ def _query_run_via_gh(
         return False, None, _sanitize_error_message(str(e))
 
 
+def _query_pr_via_api(
+    repo: str,
+    pr_number: int | str,
+    token: Optional[str] = None,
+    timeout: int = 10,
+) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+    tok = token or _get_github_token()
+    if not tok:
+        return False, None, "No GitHub token available for PR API query"
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {tok}",
+        "User-Agent": "AI-Engineering-Standards-Verifier",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    pr_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"
+
+    try:
+        req = urllib.request.Request(pr_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            pr_data = json.loads(resp.read().decode("utf-8"))
+        return True, pr_data, ""
+    except urllib.error.HTTPError as e:
+        status_code = e.code
+        return False, None, _sanitize_error_message(f"HTTP {status_code}: {e.reason}", tok)
+    except Exception as e:
+        return False, None, _sanitize_error_message(str(e), tok)
+
+
+def _query_pr_via_gh(
+    repo: str,
+    pr_number: int | str,
+    timeout: int = 10,
+) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+    try:
+        cmd_pr = ["gh", "api", f"repos/{repo}/pulls/{pr_number}"]
+        res_pr = subprocess.run(
+            cmd_pr,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        if res_pr.returncode != 0 or not res_pr.stdout.strip():
+            return False, None, _sanitize_error_message(res_pr.stderr or "gh api pr query failed")
+
+        pr_data = json.loads(res_pr.stdout)
+        return True, pr_data, ""
+    except Exception as e:
+        return False, None, _sanitize_error_message(str(e))
+
+
 def verify_single_github_run(
     repo: str,
     run_id: str,
@@ -286,9 +340,12 @@ def verify_single_github_run(
     expected_head_branch: Optional[str] = None,
     expected_pr_number: Optional[int | str] = None,
     expected_base_ref: Optional[str] = None,
+    expected_pr_status: Optional[str] = None,
     expected_workflow_path: str = ".github/workflows/standards-ci.yml",
     timeout: int = 10,
     simulate_data: Optional[Dict[str, Any]] = None,
+    simulate_pr_data: Optional[Dict[str, Any]] = None,
+    simulate_pr_error: Optional[str] = None,
 ) -> Tuple[str, List[str], Dict[str, Any]]:
     """Verify an individual GitHub Actions run against all authenticity requirements.
     Never outputs tokens. Returns status: 'PASS', 'FAIL', or 'NOT_VERIFIABLE'.
@@ -426,11 +483,9 @@ def verify_single_github_run(
     # PR Run extra checks: PR number, base.ref=main, event=pull_request
     if expected_event == "pull_request":
         prs = run_data.get("pull_requests", [])
-        run_meta["pull_requests"] = [p.get("number") for p in prs if isinstance(p, dict)]
-        if expected_pr_number is not None:
-            if not prs:
-                errors.append(f"Run {run_id} has no associated pull requests")
-            else:
+        if prs:
+            run_meta["pull_requests"] = [p.get("number") for p in prs if isinstance(p, dict)]
+            if expected_pr_number is not None:
                 matching_pr = None
                 for p in prs:
                     if isinstance(p, dict) and str(p.get("number")) == str(expected_pr_number):
@@ -445,6 +500,83 @@ def verify_single_github_run(
                         run_meta["actual_base_ref"] = base_ref
                         if base_ref != expected_base_ref:
                             errors.append(f"Run {run_id} PR base ref mismatch: expected '{expected_base_ref}', got '{base_ref}'")
+            run_meta["pr_fallback_verified"] = False
+        else:
+            # Fallback path: when historical PR Run is merged, GitHub Actions API may return pull_requests=[].
+            # Query GitHub REST API /repos/{owner}/{repo}/pulls/{pr_number} using independent release evidence.
+            if expected_pr_number is None:
+                errors.append(f"Run {run_id} has no associated pull requests and no expected_pr_number provided for fallback")
+            else:
+                if simulate_pr_error is not None:
+                    pr_ok = False
+                    pr_data = None
+                    pr_err_msg = simulate_pr_error
+                elif simulate_pr_data is not None:
+                    pr_ok = True
+                    pr_data = simulate_pr_data
+                    pr_err_msg = ""
+                else:
+                    pr_ok, pr_data, pr_err_msg = _query_pr_via_api(repo, str(expected_pr_number), timeout=timeout)
+                    if not pr_ok:
+                        pr_ok, pr_data, pr_err_msg = _query_pr_via_gh(repo, str(expected_pr_number), timeout=timeout)
+
+                if not pr_ok or pr_data is None:
+                    run_meta["verification_status"] = "NOT_VERIFIABLE"
+                    run_meta["reason"] = f"PR_API_NOT_ACCESSIBLE: {_sanitize_error_message(pr_err_msg)}"
+                    return (
+                        "NOT_VERIFIABLE",
+                        [f"Run {run_id} PR #{expected_pr_number} API not accessible: {_sanitize_error_message(pr_err_msg)}"],
+                        run_meta,
+                    )
+
+                # 1. PR number 与 expected_pr_number 一致。
+                actual_pr_num = pr_data.get("number")
+                run_meta["actual_pr_number"] = actual_pr_num
+                run_meta["fallback_pr_number"] = actual_pr_num
+                if str(actual_pr_num) != str(expected_pr_number):
+                    errors.append(f"Run {run_id} PR number mismatch: expected {expected_pr_number}, got {actual_pr_num}")
+
+                # 2. PR base.ref=main。
+                target_base_ref = expected_base_ref or "main"
+                actual_pr_base_ref = pr_data.get("base", {}).get("ref") if isinstance(pr_data.get("base"), dict) else None
+                run_meta["actual_base_ref"] = actual_pr_base_ref
+                if actual_pr_base_ref != target_base_ref:
+                    errors.append(f"Run {run_id} PR base ref mismatch: expected '{target_base_ref}', got '{actual_pr_base_ref}'")
+
+                # 3. PR head.ref 与历史 Run head_branch 一致。
+                run_head_branch = run_data.get("headBranch") or run_data.get("head_branch")
+                actual_pr_head_ref = pr_data.get("head", {}).get("ref") if isinstance(pr_data.get("head"), dict) else None
+                run_meta["actual_head_ref"] = actual_pr_head_ref
+                if not run_head_branch:
+                    errors.append(f"Run {run_id} is missing head_branch for PR fallback verification")
+                elif actual_pr_head_ref != run_head_branch:
+                    errors.append(f"Run {run_id} PR head.ref mismatch: expected '{run_head_branch}', got '{actual_pr_head_ref}'")
+
+                # 4. PR head.sha 与历史 Run head_sha 一致。
+                run_head_sha = run_data.get("headSha") or run_data.get("head_sha")
+                actual_pr_head_sha = pr_data.get("head", {}).get("sha") if isinstance(pr_data.get("head"), dict) else None
+                run_meta["actual_pr_head_sha"] = actual_pr_head_sha
+                if not run_head_sha:
+                    errors.append(f"Run {run_id} is missing head_sha for PR fallback verification")
+                elif actual_pr_head_sha != run_head_sha:
+                    errors.append(f"Run {run_id} PR head.sha mismatch: expected '{run_head_sha}', got '{actual_pr_head_sha}'")
+
+                # 5. PR merged=true（当 release evidence 的 pr_status=MERGED 时）。
+                is_merged = pr_data.get("merged")
+                run_meta["pr_merged"] = is_merged
+                if expected_pr_status == "MERGED":
+                    if is_merged is not True:
+                        errors.append(f"Run {run_id} PR merged status mismatch: expected merged=True, got {is_merged}")
+
+                # 6. merged_at 非空。
+                merged_at = pr_data.get("merged_at")
+                run_meta["pr_merged_at"] = merged_at
+                if is_merged is True or expected_pr_status == "MERGED":
+                    if not merged_at:
+                        errors.append(f"Run {run_id} PR merged_at is empty for merged PR")
+
+                run_meta["pull_requests"] = [actual_pr_num] if actual_pr_num is not None else []
+                run_meta["pr_fallback_verified"] = True
 
     if errors:
         run_meta["verification_status"] = "FAIL"
@@ -461,6 +593,8 @@ def verify_github_ci_runs(
     timeout: int = 10,
     simulate_status: Optional[str] = None,
     simulate_data_map: Optional[Dict[str, Any]] = None,
+    simulate_pr_data_map: Optional[Dict[str, Any]] = None,
+    simulate_pr_error_map: Optional[Dict[str, Any]] = None,
     target_branch: Optional[str] = None,
 ) -> Tuple[str, List[str], Dict[str, Any]]:
     """Verify both Push Run and PR Run recorded in release evidence.
@@ -498,6 +632,17 @@ def verify_github_ci_runs(
     sim_push = simulate_data_map.get(push_id) if simulate_data_map else None
     sim_pr = simulate_data_map.get(pr_id) if simulate_data_map else None
 
+    sim_pr_api = None
+    sim_pr_err = None
+    if simulate_pr_data_map is not None:
+        sim_pr_api = simulate_pr_data_map.get(str(pr_number)) or simulate_pr_data_map.get(pr_number)
+    elif simulate_data_map is not None:
+        sim_pr_api = simulate_data_map.get(f"pr_{pr_number}") or simulate_data_map.get(f"pull_{pr_number}")
+    if simulate_pr_error_map is not None:
+        sim_pr_err = simulate_pr_error_map.get(str(pr_number)) or simulate_pr_error_map.get(pr_number)
+    elif simulate_data_map is not None:
+        sim_pr_err = simulate_data_map.get(f"pr_error_{pr_number}")
+
     push_st, push_errs, push_meta = verify_single_github_run(
         repo=repo,
         run_id=push_id,
@@ -514,11 +659,15 @@ def verify_github_ci_runs(
         run_id=pr_id,
         expected_event="pull_request",
         expected_head_sha=head_sha,
+        expected_head_branch=expected_push_branch,
         expected_pr_number=pr_number,
         expected_base_ref="main",
+        expected_pr_status=evidence.get("pr_status"),
         expected_workflow_path=".github/workflows/standards-ci.yml",
         timeout=timeout,
         simulate_data=sim_pr,
+        simulate_pr_data=sim_pr_api,
+        simulate_pr_error=sim_pr_err,
     )
 
     all_errors = push_errs + pr_errs
@@ -529,7 +678,9 @@ def verify_github_ci_runs(
         "repository": repo,
         "push_head_branch": expected_push_branch,
         "pr_number": pr_number,
+        "pr_status": evidence.get("pr_status"),
         "base_ref": "main",
+        "pr_fallback_verified": pr_meta.get("pr_fallback_verified", False),
     }
 
     if push_st == "FAIL" or pr_st == "FAIL":

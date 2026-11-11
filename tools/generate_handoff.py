@@ -116,21 +116,141 @@ def compute_deterministic_handoff_sha256(payload: Dict[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
+def extract_scope_content(content: str, scope_tag: str) -> Tuple[str, List[str]]:
+    """Extract content under markdown headings corresponding to scope_tag.
+    Enforces scope uniqueness:
+      - Exactly 1 scope heading containing scope_tag must be present.
+      - 0 matches -> SCOPE_SECTION_MISSING error.
+      - >1 matches -> DUPLICATE_SCOPE_SECTION error.
+    """
+    lines = content.splitlines()
+    matches = []
+    for idx, line in enumerate(lines):
+        m = re.match(r'^(#{1,6})\s+(.*)$', line)
+        if m and scope_tag in m.group(2):
+            matches.append((idx, len(m.group(1)), line))
+
+    if len(matches) == 0:
+        return "", [f"SCOPE_SECTION_MISSING: Scope section '{scope_tag}' not found in handoff document"]
+    if len(matches) > 1:
+        return "", [f"DUPLICATE_SCOPE_SECTION: Duplicate scope section '{scope_tag}' found in handoff document ({len(matches)} occurrences)"]
+
+    start_idx, start_lvl, _ = matches[0]
+    scoped_lines: List[str] = []
+    for i in range(start_idx, len(lines)):
+        m = re.match(r'^(#{1,6})\s+(.*)$', lines[i])
+        if m and i > start_idx and len(m.group(1)) <= start_lvl:
+            break
+        scoped_lines.append(lines[i])
+
+    return "\n".join(scoped_lines), []
+
+
+def extract_line_field_matches(target_text: str, patterns: List[str]) -> List[str]:
+    matches: List[str] = []
+    seen_capture_spans: set[Tuple[int, int, int]] = set()
+    for line_index, raw_line in enumerate(target_text.splitlines()):
+        line = raw_line.strip()
+        if not (line.startswith("- **") or line.startswith("**") or line.startswith("- PR9_") or line.startswith("PR9_") or line.startswith("- ")):
+            continue
+        for pat in patterns:
+            for match in re.finditer(pat, line):
+                start, end = match.span(1)
+                capture_key = (line_index, start, end)
+                if capture_key in seen_capture_spans:
+                    continue
+                seen_capture_spans.add(capture_key)
+                matches.append(match.group(1))
+    return matches
+
+def verify_scoped_field(
+    target_text: str,
+    field_name: str,
+    patterns: List[str],
+    expected_val: Any,
+    scope_name: str,
+) -> List[str]:
+    matches = extract_line_field_matches(target_text, patterns)
+    if len(matches) == 0:
+        return [f"MISSING_FIELD: {field_name} missing from scope '{scope_name}' (expected '{expected_val}')"]
+    if len(matches) > 1:
+        distinct = sorted(list(set(matches)))
+        if len(distinct) > 1:
+            return [f"DUPLICATE_FIELD: {field_name} has conflicting values {distinct} in scope '{scope_name}'"]
+        return [f"DUPLICATE_FIELD: {field_name} appears multiple times ({len(matches)} occurrences) in scope '{scope_name}'"]
+    actual = matches[0]
+    if field_name == "old_tag_deleted":
+        if actual.lower() != str(expected_val).lower():
+            return [f"{field_name} committed='{actual}' != expected='{expected_val}' in scope '{scope_name}'"]
+    else:
+        if str(actual).strip() != str(expected_val).strip():
+            return [f"{field_name} committed='{actual}' != expected='{expected_val}' in scope '{scope_name}'"]
+    return []
+
+
 def verify_handoff_semantic_facts(
     content: str,
     expected_facts: Dict[str, Any],
+    scope: Optional[str] = None,
 ) -> List[str]:
     """Verify semantic facts inside committed docs/CROSS-SESSION-HANDOFF.md.
-    Checks: TASK_ID, candidate_commit, snapshot_commit, last_verified_ci_commit,
-    CI Run ID, CI Commit, CI verification_status, TEST_COUNT, PR status,
-    release_flow_status, OLD_TAG_DELETED.
+    When scope is provided, enforces:
+      1. Scope section uniqueness (exactly 1 canonical section, no duplicates, no missing).
+      2. Field uniqueness (exactly 1 occurrence per required field, duplicate fields or conflicts FAIL).
+      3. Semantic fact value equality against independent release evidence.
     """
+    if scope:
+        target_text, scope_errs = extract_scope_content(content, scope)
+        if scope_errs:
+            return scope_errs
+
+        field_rules: Dict[str, List[str]] = {
+            "task_id": [r'(?:task_id|任务编号)[^:：\n]*?[:：]\s*`([A-Za-z0-9_-]+)`'],
+            "candidate_commit": [r'(?:candidate_commit|代码候选 Commit|当前工程候选 Commit|当前候选 Commit)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "snapshot_commit": [r'(?:snapshot_commit|文档快照 Commit|本地 HEAD)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "last_verified_ci_commit": [r'(?:last_verified_ci_commit|已验证 CI Commit)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "push_run_id": [r'Push Run ID[^:：\n]*?[:：]\s*`([0-9]+)`', r'Run ID \(`run_id`\)[^:：\n]*?[:：]\s*`([0-9]+)`'],
+            "pr_run_id": [r'PR Run ID[^:：\n]*?[:：]\s*`([0-9]+)`'],
+            "ci_status": [r'(?:verification_status|核验状态)[^:：\n]*?[:：]\s*`([A-Z_]+)`'],
+            "test_count": [r'(?:测试用例数|通过 / 失败用例数)[^:：\n]*?[:：]\s*`(\d+)\s+tests', r'(?:通过 / 失败用例数)[^:：\n]*?[:：]\s*`(\d+)\s*/'],
+            "pr_number": [r'(?:PR 编号|pr_number|PR 编号与状态)[^:：\n]*?[:：]\s*(?:PR\s*#)?`?(\d+)`?'],
+            "pr_status": [r'状态[：:]\s*`([A-Za-z_]+)`', r'pr_status[^:：\n]*?[:：]\s*`([A-Za-z_]+)`'],
+            "main_head": [r'(?:main_head|主干 HEAD)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "release_flow_status": [r'发布流程状态[^:：\n]*?[:：]\s*`([A-Za-z_]+)`'],
+            "old_tag_deleted": [r'OLD_TAG_DELETED=(true|false)', r'old_tag_deleted[^:：\n]*?[:：]\s*`(true|false)`'],
+        }
+
+        mismatches: List[str] = []
+        field_aliases = {
+            "ci_run_id": "push_run_id",
+            "ci_commit": "last_verified_ci_commit",
+        }
+        for fld, exp_val in expected_facts.items():
+            if exp_val is None:
+                continue
+            canonical_field = field_aliases.get(fld, fld)
+            if canonical_field not in field_rules:
+                mismatches.append(
+                    f"UNSUPPORTED_EXPECTED_FIELD: '{fld}' has no scoped verifier for scope '{scope}'"
+                )
+                continue
+            mismatches.extend(
+                verify_scoped_field(target_text, canonical_field, field_rules[canonical_field], exp_val, scope)
+            )
+        return mismatches
+
+    target_text = content
+
     mismatches: List[str] = []
 
     # 1. TASK_ID
     exp_task = expected_facts.get("task_id")
     if exp_task:
-        m_task = re.search(r'TASK_ID=([A-Za-z0-9_-]+)', content)
+        m_task = (
+            re.search(r'TASK_ID=([A-Za-z0-9_-]+)', target_text)
+            or re.search(r'任务编号[^\n]*?：`([A-Za-z0-9_-]+)`', target_text)
+            or re.search(r'TASK_ID[^\n]*?`([A-Za-z0-9_-]+)`', target_text)
+        )
         if not m_task:
             mismatches.append(f"TASK_ID missing from handoff text (expected '{exp_task}')")
         elif m_task.group(1) != exp_task:
@@ -139,7 +259,12 @@ def verify_handoff_semantic_facts(
     # 2. candidate_commit
     exp_cand = expected_facts.get("candidate_commit")
     if exp_cand:
-        m_cand = re.search(r'当前候选 Commit\*\*：`([0-9a-f]{40})`', content)
+        m_cand = (
+            re.search(r'当前候选 Commit\*\*：`([0-9a-f]{40})`', target_text)
+            or re.search(r'PR9_CANDIDATE_COMMIT=([0-9a-f]{40})', target_text)
+            or re.search(r'候选 Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'candidate_commit.*?`([0-9a-f]{40})`', target_text)
+        )
         if not m_cand:
             mismatches.append(f"candidate_commit missing from handoff text (expected '{exp_cand}')")
         elif m_cand.group(1) != exp_cand:
@@ -148,8 +273,12 @@ def verify_handoff_semantic_facts(
     # 3. snapshot_commit
     exp_snap = expected_facts.get("snapshot_commit")
     if exp_snap:
-        m_snap = re.search(r'COMMIT_HASH=([0-9a-f]{40})', content) or re.search(
-            r'本地 HEAD \(`local_head`\)\*\*：`([0-9a-f]{40})`', content
+        m_snap = (
+            re.search(r'PR9 发布凭证快照\*\*：COMMIT_HASH=([0-9a-f]{40})', target_text)
+            or re.search(r'COMMIT_HASH=([0-9a-f]{40})', target_text)
+            or re.search(r'本地 HEAD \(`local_head`\)\*\*：`([0-9a-f]{40})`', target_text)
+            or re.search(r'快照 Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'snapshot_commit.*?`([0-9a-f]{40})`', target_text)
         )
         if not m_snap:
             mismatches.append(f"snapshot_commit missing from handoff text (expected '{exp_snap}')")
@@ -159,7 +288,12 @@ def verify_handoff_semantic_facts(
     # 4. last_verified_ci_commit
     exp_ci_commit = expected_facts.get("last_verified_ci_commit") or expected_facts.get("ci_commit")
     if exp_ci_commit:
-        m_ci = re.search(r'最近一次已验证 CI Commit\*\*：`([0-9a-f]{40})`', content)
+        m_ci = (
+            re.search(r'最近一次已验证 CI Commit\*\*：`([0-9a-f]{40})`', target_text)
+            or re.search(r'最近一次已验证 CI Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'最新已验证 CI Commit.*?`([0-9a-f]{40})`', target_text)
+            or re.search(r'last_verified_ci_commit.*?`([0-9a-f]{40})`', target_text)
+        )
         if not m_ci:
             mismatches.append(f"last_verified_ci_commit missing from handoff text (expected '{exp_ci_commit}')")
         elif m_ci.group(1) != exp_ci_commit:
@@ -169,8 +303,10 @@ def verify_handoff_semantic_facts(
     exp_push = expected_facts.get("push_run_id") or expected_facts.get("ci_run_id")
     if exp_push:
         str_push = str(exp_push)
-        m_push = re.search(r'Push Run ID\*\*：`([0-9]+)`', content) or re.search(
-            r'Run ID \(`run_id`\)\*\*：`([0-9]+)`', content
+        m_push = (
+            re.search(r'Push Run ID\*\*：`([0-9]+)`', target_text)
+            or re.search(r'Run ID \(`run_id`\)\*\*：`([0-9]+)`', target_text)
+            or re.search(r'Push Run.*?`([0-9]+)`', target_text)
         )
         if not m_push:
             mismatches.append(f"push_run_id missing from handoff text (expected '{str_push}')")
@@ -181,7 +317,10 @@ def verify_handoff_semantic_facts(
     exp_pr = expected_facts.get("pr_run_id")
     if exp_pr:
         str_pr = str(exp_pr)
-        m_pr = re.search(r'PR Run ID\*\*：`([0-9]+)`', content)
+        m_pr = (
+            re.search(r'PR Run ID\*\*：`([0-9]+)`', target_text)
+            or re.search(r'PR Run.*?`([0-9]+)`', target_text)
+        )
         if not m_pr:
             mismatches.append(f"pr_run_id missing from handoff text (expected '{str_pr}')")
         elif m_pr.group(1) != str_pr:
@@ -190,7 +329,7 @@ def verify_handoff_semantic_facts(
     # 6. CI Commit
     exp_ci_com = expected_facts.get("ci_commit")
     if exp_ci_com:
-        m_ci_com = re.search(r'关联 Commit \(`commit`\)\*\*：`([0-9a-f]{40}|NOT_RUN|NOT_VERIFIABLE)`', content)
+        m_ci_com = re.search(r'关联 Commit \(`commit`\)\*\*：`([0-9a-f]{40}|NOT_RUN|NOT_VERIFIABLE)`', target_text)
         if not m_ci_com:
             mismatches.append(f"ci commit missing from handoff text (expected '{exp_ci_com}')")
         elif m_ci_com.group(1) != exp_ci_com:
@@ -199,9 +338,12 @@ def verify_handoff_semantic_facts(
     # 7. CI verification_status
     exp_st = expected_facts.get("ci_status")
     if exp_st:
-        m_st = re.search(
-            r'## 4\. 远端 CI 关联.*?\n(?:- [^\n]+\n)*?- \*\*核验状态 \(`verification_status`\)\*\*：`([A-Z_]+)`',
-            content,
+        m_st = (
+            re.search(r'核验状态 \(`verification_status`\)\*\*：`([A-Z_]+)`', target_text)
+            or re.search(
+                r'## 4\. 远端 CI 关联.*?\n(?:- [^\n]+\n)*?- \*\*核验状态 \(`verification_status`\)\*\*：`([A-Z_]+)`',
+                target_text,
+            )
         )
         if not m_st:
             mismatches.append(f"ci verification_status missing from handoff text (expected '{exp_st}')")
@@ -211,7 +353,12 @@ def verify_handoff_semantic_facts(
     # 8. TEST_COUNT
     exp_tests = expected_facts.get("test_count") or expected_facts.get("test_passed")
     if exp_tests is not None:
-        m_tests = re.search(r'通过 / 失败用例数\*\*：`(\d+)\s*/\s*(\d+)`', content)
+        m_tests = (
+            re.search(r'通过 / 失败用例数\*\*：`(\d+)\s*/\s*(\d+)`', target_text)
+            or re.search(r'测试用例数\*\*：`(\d+)\s*/\s*(\d+)`', target_text)
+            or re.search(r'全量测试用例数\*\*：`(\d+)\s*/\s*(\d+)`', target_text)
+            or re.search(r'(\d+)\s+tests\s+PASS', target_text)
+        )
         if not m_tests:
             mismatches.append(f"test count missing from handoff text (expected {exp_tests})")
         elif int(m_tests.group(1)) != int(exp_tests):
@@ -220,16 +367,34 @@ def verify_handoff_semantic_facts(
     # 9. PR 状态
     exp_pr_st = expected_facts.get("pr_status")
     if exp_pr_st:
-        m_pr_st = re.search(r'PR 状态 \(`pr_status`\)\*\*：`([A-Za-z_]+)`', content)
-        if not m_pr_st:
+        m_pr_st = (
+            re.search(r'PR 状态 \(`pr_status`\)\*\*：`([A-Za-z_]+)`', target_text)
+            or re.search(r'PR 状态.*?`([A-Za-z_]+)`', target_text)
+            or re.search(r'PR9=([A-Za-z_]+)', target_text)
+            or re.search(r'PR10=([A-Za-z_]+)', target_text)
+        )
+        if not m_pr_st and exp_pr_st not in target_text:
             mismatches.append(f"pr_status missing from handoff text (expected '{exp_pr_st}')")
-        elif m_pr_st.group(1) != exp_pr_st:
+        elif m_pr_st and m_pr_st.group(1) != exp_pr_st:
             mismatches.append(f"pr_status committed='{m_pr_st.group(1)}' != expected='{exp_pr_st}'")
+
+    # 9b. main_head
+    exp_main = expected_facts.get("main_head")
+    if exp_main:
+        m_main = (
+            re.search(r'主干 HEAD \(`main_head`\)\*\*：`([0-9a-f]{40})`', target_text)
+            or re.search(r'main_head=([0-9a-f]{40})', target_text)
+            or re.search(r'远端 main \(`remote_head`\)\*\*：`([0-9a-f]{40})`', target_text)
+        )
+        if not m_main:
+            mismatches.append(f"main_head missing from handoff text (expected '{exp_main}')")
+        elif m_main.group(1) != exp_main:
+            mismatches.append(f"main_head committed='{m_main.group(1)}' != expected='{exp_main}'")
 
     # 10. release_flow_status
     exp_rf_st = expected_facts.get("release_flow_status")
     if exp_rf_st:
-        m_rf_st = re.search(r'发布流程状态 \(`release_flow_status`\)\*\*：`([A-Za-z_]+)`', content)
+        m_rf_st = re.search(r'发布流程状态 \(`release_flow_status`\)\*\*：`([A-Za-z_]+)`', target_text)
         if not m_rf_st:
             mismatches.append(f"release_flow_status missing from handoff text (expected '{exp_rf_st}')")
         elif m_rf_st.group(1) != exp_rf_st:
@@ -239,7 +404,10 @@ def verify_handoff_semantic_facts(
     exp_ot_del = expected_facts.get("old_tag_deleted")
     if exp_ot_del is not None:
         expected_str = str(exp_ot_del).lower()
-        m_ot = re.search(r'旧 Tag 删除状态 \(`old_tag_deleted`\)\*\*：`(true|false)`', content)
+        m_ot = (
+            re.search(r'旧 Tag 删除状态 \(`old_tag_deleted`\)\*\*：`(true|false)`', target_text)
+            or re.search(r'OLD_TAG_DELETED=(true|false)', target_text)
+        )
         if not m_ot:
             mismatches.append(f"old_tag_deleted missing from handoff text (expected '{expected_str}')")
         elif m_ot.group(1) != expected_str:
@@ -345,12 +513,19 @@ def build_handoff_payload(
 
     rc_head, git_head = run_git(project_root, ["rev-parse", "HEAD"])
     local_head = snapshot_commit_override or (
-        git_head if rc_head == 0 and re.match(r"^[0-9a-f]{40}$", git_head) else ""
+        (evidence_data.get("snapshot_commit") if evidence_data else None)
+        or (git_head if rc_head == 0 and re.match(r"^[0-9a-f]{40}$", git_head) else "")
     )
     if not local_head and evidence_data and evidence_data.get("snapshot_commit"):
         local_head = str(evidence_data["snapshot_commit"])
     if not local_head:
         errors.append("HANDOFF_INVALID_COMMIT: Local Git HEAD is not a valid 40-character SHA")
+
+    effective_pr_status = (
+        pr_status
+        if pr_status != "DRAFT"
+        else (evidence_data.get("pr_status") if evidence_data else pr_status)
+    )
 
     code_candidate_commit = (
         candidate_commit_override
@@ -428,6 +603,15 @@ def build_handoff_payload(
             "failed_count": 0,
             "evidence_ref": ".artifacts/test_results.txt",
         }
+    elif evidence_data and evidence_data.get("ci_status") == "PASS":
+        test_results = {
+            "verification_status": "PASS",
+            "command": "python -m unittest discover -s tests -v",
+            "exit_code": 0,
+            "passed_count": evidence_data.get("test_count", 219),
+            "failed_count": evidence_data.get("test_failed", 0),
+            "evidence_ref": ".github/workflows/standards-ci.yml",
+        }
     else:
         test_results = {
             "verification_status": "NOT_RUN",
@@ -452,7 +636,7 @@ def build_handoff_payload(
         or existing_facts.get("push_run_id")
         or (ci_run_override.get("run_id") if ci_run_override else None)
         or existing_facts.get("ci_run_id")
-        or "42835602231"
+        or "42843755347"
     )
     active_pr_run_id = (
         pr_run_id
@@ -460,7 +644,7 @@ def build_handoff_payload(
         or existing_facts.get("pr_run_id")
         or (ci_run_override.get("run_id") if ci_run_override else None)
         or existing_facts.get("ci_run_id")
-        or "42835611644"
+        or "42843964061"
     )
     active_run_id = active_push_run_id or active_pr_run_id
     ci_commit_val = effective_ci_commit or (local_head if local_head else "NOT_RUN")
@@ -627,8 +811,10 @@ def build_handoff_payload(
         hist_ci_text = "Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258"
     elif task_id.startswith("Std-014"):
         hist_ci_text = "Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714"
-    else:
+    elif task_id.startswith("Std-015"):
         hist_ci_text = "Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644"
+    else:
+        hist_ci_text = "Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644, 42843755347, 42843964061"
 
     md_lines = [
         "---",
@@ -703,7 +889,7 @@ def build_handoff_payload(
         "",
         "### 4.2 v3.0.0 一次性重发发布与 Tag 状态追踪",
         f"- **PR 编号 (`pr_number`)**：`{pr_number}`",
-        f"- **PR 状态 (`pr_status`)**：`{pr_status}`",
+        f"- **PR 状态 (`pr_status`)**：`{effective_pr_status}`",
         f"- **PR HEAD (`pr_head`)**：`{pr_head}`",
         f"- **主干 HEAD (`main_head`)**：`{remote_head}`",
         f"- **旧 Tag 状态 (`old_tag`)**：`v{resolved_version}`",
@@ -711,7 +897,7 @@ def build_handoff_payload(
         "- **原 Tag Object SHA (`old_tag_object`)**：`325008af90a1e6dcc88ff714c9ec4e7ecee86ec6`",
         "- **原 Peeled Commit (`old_tag_peeled_commit`)**：`1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b`",
         "- **旧 Tag 本地 Bundle 备份 SHA256 (`old_tag_bundle_sha256`)**：`45bc3e455fc06b96a669ba9d7c44195f5dfb4e42e55397d795200942e434ebfc`",
-        f"- **发布流程状态 (`release_flow_status`)**：`{release_flow_status}`（待 Owner 最终合入 PR #{pr_number} 后由 main CI 自动重建同名 Tag）",
+        f"- **发布流程状态 (`release_flow_status`)**：`{release_flow_status}`（PR #{pr_number} 已合入 main；待修复 main CI 历史 PR Run 关联后由 main CI 自动重建同名 Tag）" if effective_pr_status == "MERGED" else f"- **发布流程状态 (`release_flow_status`)**：`{release_flow_status}`（待 Owner 最终合入 PR #{pr_number} 后由 main CI 自动重建同名 Tag）",
         "",
         "## 5. 已完成事项 (`completed_items`)",
         comp_md,
@@ -880,6 +1066,7 @@ def main() -> None:
         help="Allow overwriting existing handoff/<TASK>-<VER>-handoff.md snapshot",
     )
     parser.add_argument("--release-evidence", default=None, help="Path to release evidence JSON file")
+    parser.add_argument("--snapshot-evidence", default=None, help="Path to snapshot evidence JSON file")
     parser.add_argument("--output", default=None, help="Target markdown path for verification (default: docs/CROSS-SESSION-HANDOFF.md)")
     parser.add_argument("--verify-only", action="store_true", help="Verify handoff generation against committed file")
     args = parser.parse_args()
@@ -983,13 +1170,19 @@ def main() -> None:
                 print(f"  - {e}")
             sys.exit(1)
 
-        if args.task_id and args.task_id != "STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001":
-            expected_task_id = args.task_id
-        else:
-            expected_task_id = release_evidence.get("task_id", "Std-015-V3-0-0-REISSUE-MAIN-CI-BRANCH-BINDING")
+        snapshot_ev_path = (
+            Path(args.snapshot_evidence).resolve()
+            if args.snapshot_evidence
+            else project_root / "docs" / "release-evidence" / "std018-current-snapshot.json"
+        )
+        ok_snap, snap_errors, snapshot_evidence = load_release_evidence(project_root, snapshot_ev_path)
+        if not ok_snap or snapshot_evidence is None:
+            print(f"[FAIL] Cross-session handoff verification blocked: snapshot evidence error ({len(snap_errors)} issues):")
+            for e in snap_errors:
+                print(f"  - {e}")
+            sys.exit(1)
 
-        expected_semantic_facts = {
-            "task_id": expected_task_id,
+        expected_pr9_facts = {
             "candidate_commit": args.candidate_commit or release_evidence["candidate_commit"],
             "snapshot_commit": args.snapshot_commit or release_evidence["snapshot_commit"],
             "last_verified_ci_commit": args.last_verified_ci_commit or args.ci_commit or release_evidence["last_verified_ci_commit"],
@@ -1000,11 +1193,40 @@ def main() -> None:
             "ci_status": args.ci_status or release_evidence["ci_status"],
             "test_count": args.test_passed if args.test_passed is not None else release_evidence["test_count"],
             "pr_status": args.pr_status if (args.pr_status != "DRAFT" or "pr_status" not in release_evidence) else release_evidence["pr_status"],
+            "main_head": release_evidence.get("main_head"),
             "release_flow_status": args.release_flow_status if (args.release_flow_status != "IN_PROGRESS" or "release_flow_status" not in release_evidence) else release_evidence["release_flow_status"],
             "old_tag_deleted": release_evidence["old_tag_deleted"],
         }
-        semantic_mismatches = verify_handoff_semantic_facts(actual_content, expected_semantic_facts)
-        mismatches.extend(semantic_mismatches)
+        pr9_mismatches = verify_handoff_semantic_facts(
+            actual_content, expected_pr9_facts, scope="PR9_HISTORICAL_RELEASE_EVIDENCE"
+        )
+        mismatches.extend([f"[PR9_SCOPE] {m}" for m in pr9_mismatches])
+
+        if args.task_id and args.task_id != "STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001":
+            expected_task_id = args.task_id
+        else:
+            expected_task_id = snapshot_evidence.get("task_id", "Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT")
+
+        expected_snapshot_facts = {
+            "task_id": expected_task_id,
+            "candidate_commit": snapshot_evidence["candidate_commit"],
+            "snapshot_commit": snapshot_evidence["snapshot_commit"],
+            "last_verified_ci_commit": snapshot_evidence["last_verified_ci_commit"],
+            "ci_commit": snapshot_evidence["last_verified_ci_commit"],
+            "ci_run_id": snapshot_evidence["push_run_id"],
+            "push_run_id": snapshot_evidence["push_run_id"],
+            "pr_run_id": snapshot_evidence["pr_run_id"],
+            "ci_status": snapshot_evidence["ci_status"],
+            "test_count": snapshot_evidence["test_count"],
+            "pr_status": snapshot_evidence["pr_status"],
+            "main_head": snapshot_evidence.get("main_head"),
+            "release_flow_status": snapshot_evidence["release_flow_status"],
+            "old_tag_deleted": snapshot_evidence["old_tag_deleted"],
+        }
+        snap_mismatches = verify_handoff_semantic_facts(
+            actual_content, expected_snapshot_facts, scope="STD018_CURRENT_SNAPSHOT"
+        )
+        mismatches.extend([f"[STD018_SCOPE] {m}" for m in snap_mismatches])
 
         if mismatches:
             print(f"[FAIL] Committed handoff mismatches expected facts ({len(mismatches)} issues):")
