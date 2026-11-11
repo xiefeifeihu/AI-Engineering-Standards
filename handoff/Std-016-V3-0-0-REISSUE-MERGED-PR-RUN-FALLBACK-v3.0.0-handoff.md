@@ -11,7 +11,7 @@ change_summary: "自动采集生成任务 Std-016-V3-0-0-REISSUE-MERGED-PR-RUN-F
 history_reference: null
 primary_entrypoint: false
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:8009266cb97184fcdf27d977cf17c98256c7f0f32415379c787ea1405d9552d4"
+content_sha256: "sha256:b9fa3dbd8a4bd49f839de4fc1e587ab252ac5b2788c98fa424043a10d6c5be5e"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
@@ -23,8 +23,8 @@ TASK_ID=Std-016-V3-0-0-REISSUE-MERGED-PR-RUN-FALLBACK
 VERSION=v3.0.0
 HANDOFF_TYPE=DURABLE
 STATUS=COMPLETED
-COMMIT_HASH=336114861b2c720106a6076956eef08c9cd6ded7
-CAPTURED_AT=2026-11-10T06:52:42Z
+COMMIT_HASH=fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7
+CAPTURED_AT=2026-11-11T01:25:00Z
 CONTENT_SHA256=sha256:3a5470d874214721883e6813d8ab06f056f050c2a004aaa88d80cba0765dffef
 ```
 
@@ -32,9 +32,9 @@ CONTENT_SHA256=sha256:3a5470d874214721883e6813d8ab06f056f050c2a004aaa88d80cba076
 
 ## 1. 当前 Git 状态与分支身份 (`git_state`)
 - **当前分支 (`branch`)**：`fix/std-016-merged-pr-run-evidence`
-- **本地 HEAD (`local_head`)**：`336114861b2c720106a6076956eef08c9cd6ded7`
+- **本地 HEAD (`local_head`)**：`fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7`
 - **远端 main (`remote_head`)**：`3cd42b69049b148bceea1324d4f8212393cb96df`
-- **工作区干净状态 (`worktree_clean`)**：`false`
+- **工作区干净状态 (`worktree_clean`)**：`true`
 - **Git 状态摘要 (`status_summary`)**：`## fix/std-016-merged-pr-run-evidence...origin/fix/std-016-merged-pr-run-evidence`
 
 ## 2. 当前 Standards 锁定 (`standards_lock`)
@@ -48,25 +48,25 @@ CONTENT_SHA256=sha256:3a5470d874214721883e6813d8ab06f056f050c2a004aaa88d80cba076
 - **核验状态 (`verification_status`)**：`PASS`
 - **执行命令 (`command`)**：`python -m unittest discover -s tests -v`
 - **退出码 (`exit_code`)**：`0`
-- **通过 / 失败用例数**：`219 / 0`
+- **通过 / 失败用例数**：`220 / 0`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ## 4. 远端 CI 关联 (`ci_run`)
-- **Run ID (`run_id`)**：`42843755347`
-- **Push Run ID**：`42843755347`
-- **PR Run ID**：`42843964061`
+- **Run ID (`run_id`)**：`42938147072`
+- **Push Run ID**：`42938147072`
+- **PR Run ID**：`42938186969`
 - **工作流 (`workflow`)**：`.github/workflows/standards-ci.yml`
-- **关联 Commit (`commit`)**：`336114861b2c720106a6076956eef08c9cd6ded7`
+- **关联 Commit (`commit`)**：`fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7`
 - **核验状态 (`verification_status`)**：`PASS`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)
 - **1. 基线源 Commit**：`9687f961b22df612c4311961e06fc1c1fd508c37`
 - **2. Git 快照观测时间**：`2026-11-10T06:52:42Z`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
-- **3. 最近一次已验证 CI Commit**：`336114861b2c720106a6076956eef08c9cd6ded7`（Run 42843755347 Push / Run 42843964061 PR #9 双平台全绿，219 tests PASS）
-- **4. 当前候选 Commit**：`336114861b2c720106a6076956eef08c9cd6ded7`
+- **3. 最近一次已验证 CI Commit**：`fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7`（Run 42938147072 Push / Run 42938186969 PR #10 双平台全绿，220 tests PASS）
+- **4. 当前候选 Commit**：`fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7`
 - **5. 当前待验证事项**：PR CI 已通过，等待合并及 main CI 和 Tag 重建。
-- **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644, 42843755347, 42843964061（避免每次记录 CI 无限触发基线变更）
+- **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644, 42843755347, 42843964061, 42938147072, 42938186969（避免每次记录 CI 无限触发基线变更）
 
 ### 4.2 v3.0.0 一次性重发发布与 Tag 状态追踪
 - **PR 编号 (`pr_number`)**：`9`
@@ -86,8 +86,14 @@ CONTENT_SHA256=sha256:3a5470d874214721883e6813d8ab06f056f050c2a004aaa88d80cba076
   - `PUSH_RUN`: `42938147072` (Windows CI: PASS, Ubuntu CI: PASS)
   - `PR_RUN`: `42938186969` (Windows CI: PASS, Ubuntu CI: PASS)
   - `TEST_COUNT`: `220` (PASS: 220, FAILED: 0, SKIPPED: 0)
+  - `TEST_PASSED`: `220`
+  - `TEST_FAILED`: `0`
+  - `TEST_SKIPPED`: `0`
   - `WINDOWS_CI`: `PASS`
   - `UBUNTU_CI`: `PASS`
+  - `PR9`: `MERGED`
+  - `PR10`: `OPEN/DRAFT`
+  - `STATUS`: `COMPLETED`
   - `PR10 当前待独立复核`
   - `PR10 合并后仍须执行 main CI。main CI 全绿后才允许重建 v3.0.0。`
 - **任务状态治理约束**：Std-016 代码修复任务标记 COMPLETED；整体 v3.0.0 发布流程继续保持 IN_PROGRESS；不得把 PR10 尚未合并写成已经合并；不得把 main CI 标记为 PASS；保留 Std-009 至 Std-016 所有历史快照；不得覆盖历史测试数和历史 CI 事实；不得产生 Commit 自引用。

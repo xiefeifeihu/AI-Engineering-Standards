@@ -7,16 +7,25 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 > RELEASE_STATUS=CANDIDATE | PROPOSED_VERSION=3.0.0 | MAIN_MERGED=true | RELEASE_TAG_NOT_CREATED=true | REISSUE_IN_PROGRESS=true
 >
 > **v3.0.0 一次性重发处理中 (PR #9 已合并，修复分支 PR #10 处理中)**：
-> - PR #9 已由 Owner 正式合入官方 main（Merge Commit: `3cd42b69049b148bceea1324d4f8212393cb96df`）。
-> - main CI 运行失败（Run 42933692363: `Run 42835611644 has no associated pull requests`），原因为 PR 合并后 GitHub Actions API 历史 Run 的 `pull_requests` 字段返回空列表。
-> - Std-016 增加 PR REST API fallback 真实性身份核验机制，通过 PR #10 修复此问题并重新触发 main CI 自动重建同名 Annotated Tag `v3.0.0`。
-> - Std-016 代码修复与验收制品收口任务已完成 (`STATUS=COMPLETED`，220 项测试全量通过，本地与独立审查通过)。
-> - 修复分支 `fix/std-016-merged-pr-run-evidence` (OUTPUT_COMMIT: `fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7`) 已推送并创建 PR #10 (`PR10=OPEN/DRAFT`)；远端 CI 真实运行通过：Push Run `42938147072` (Windows/Ubuntu PASS)，PR Run `42938186969` (Windows/Ubuntu PASS)。
-> - PR #10 当前处于 OPEN/DRAFT 状态，待 ChatGPT 独立复核及 Owner 批准；合入 main 后仍须执行 main CI，main CI 全绿后才允许重建 Annotated Tag `v3.0.0`。
+> - PR #9 已由 Owner 正式合入官方 main（Merge Commit: `3cd42b69049b148bceea1324d4f8212393cb96df`），状态：`PR9=MERGED`。
+> - main CI 历史运行失败（Run 42933692363: `Run 42835611644 has no associated pull requests`），原因为 PR 合并后 GitHub Actions API 历史 Run 的 `pull_requests` 字段返回空列表。
+> - Std-016 已完成：OUTPUT_COMMIT=`fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7`，Push Run `42938147072` (Windows/Ubuntu PASS)，PR Run `42938186969` (Windows/Ubuntu PASS)，TEST_COUNT=220，STATUS=COMPLETED。
+> - Std-017 已完成：OUTPUT_COMMIT=`d00821e251bfe3c1495163b6af8af6c01210d5f4`，Push Run `42942640853` (Windows/Ubuntu PASS)，PR Run `42942649996` (Windows/Ubuntu PASS)，TEST_COUNT=220，STATUS=COMPLETED，交付包 SHA256: `97d90be32a5dad6a5fa415eaea8c941248c2cecdae45491263f433cc6d40a0bd`。
+> - Std-018 处理中：当前权威基线与跨会话交接事实对齐，严格区分六大核心 Commit 事实边界，保护 PR9 历史发布证据。
+> - PR #10 关联分支 `fix/std-016-merged-pr-run-evidence`，状态：`PR10=OPEN/DRAFT`；当前处于 OPEN/DRAFT 状态，待 ChatGPT 独立复核及 Owner 批准；合入 main 后仍须执行 main CI，main CI 全绿后才允许重建 Annotated Tag `v3.0.0`。
 > - 远端旧 `v3.0.0` Annotated Tag 已按 Owner 授权在本地完整备份后清理（`OLD_TAG_DELETED=true`），正式 Tag 尚未重建。
 > - 整体发布流程继续保持 `IN_PROGRESS`，严禁提前标记 RELEASED 或将 PR #10 标记为 MERGED，严禁把 main CI 标记为 PASS。
 
 ### Added
+- **权威基线与交接事实对齐及六大 Commit 边界明确 (STD-020 / STD-034 / STD-035 / Std-018)**:
+  - 纠正 `handoff/Std-016-V3-0-0-REISSUE-MERGED-PR-RUN-FALLBACK-v3.0.0-handoff.md` 历史交接快照 Commit 归属，准确记录 `OUTPUT_COMMIT=fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7` 与 220 项测试事实，消除将 PR9 候选 Commit `3361148` 误作为 Std-016 输出的矛盾。
+  - 归档 Std-017 验收证据历史快照 `handoff/Std-017-V3-0-0-REISSUE-ACCEPTANCE-EVIDENCE-CLOSEOUT-v3.0.0-handoff.md`。
+  - 更新权威基线 `docs/当前权威基线.md`，区分六大核心 Commit 事实边界（PR9 候选 `3361148`、Std-016 输出 `fd9dd6e`、Std-017 输出 `d00821e`、最新已验证 CI Commit `d00821e`、当前 main HEAD `3cd42b6`、当前功能分支 HEAD `d00821e`），并记录 `MAIN_CI_STATUS=FAIL_PREVIOUS_RUN_PENDING_NEW_MAIN_VALIDATION`。
+  - 严格保护 `docs/release-evidence/v3.0.0-reissue.json` 中的 PR9 历史发布凭证，刷新活跃交接入口 `docs/CROSS-SESSION-HANDOFF.md` 为 Std-018 最新状态。
+- **验收证据收口与纯净测试日志归档 (STD-016 / STD-020 / STD-034 / Std-017)**:
+  - 纠正过程测试日志与独立诊断分离，提供 clean git status 与 220 项全量真实测试日志 `test_results.txt`。
+  - 提交快照 `d00821e251bfe3c1495163b6af8af6c01210d5f4`，触发并通过 GitHub Actions 双平台真实 CI：Push Run `42942640853` (Windows/Ubuntu PASS, 220 tests PASS)，PR Run `42942649996` (Windows/Ubuntu PASS, 220 tests PASS)。
+  - 生成 Std-017 验收交付包 `Acceptance-Std-017-V3-0-0-REISSUE-ACCEPTANCE-EVIDENCE-CLOSEOUT-v3.0.0.zip` (SHA256: `97d90be32a5dad6a5fa415eaea8c941248c2cecdae45491263f433cc6d40a0bd`) 并标记 `STATUS=COMPLETED`。
 - **合并后历史 PR Run 关联信息丢失修复与 PR API Fallback 真实性核验 (STD-016 / STD-034 / STD-035 / Std-016)**:
   - 修复 `tools/release_evidence.py` 中的 `verify_single_github_run()`：当 PR 合并后 GitHub Actions 历史 Run 的 `pull_requests` 返回空列表时，使用独立发布证据中的 `pr_number`，通过 GitHub REST API 查询 `GET /repos/{owner}/{repo}/pulls/{pr_number}` 触发严格身份回退核验 (P1-A)。
   - 严格校验 6 大契约项：PR number 与 `expected_pr_number` 一致、PR `base.ref=main`、PR `head.ref` 与历史 Run `head_branch` 一致、PR `head.sha` 与历史 Run `head_sha` 一致、当 `pr_status=MERGED` 时 `merged=true` 且 `merged_at` 非空；网络异常或不可达时记录 `NOT_VERIFIABLE`，身份不一致判定 `FAIL`，严禁伪造 PASS (P1-B)。
