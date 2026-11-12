@@ -206,24 +206,30 @@ def verify_handoff_semantic_facts(
 
         field_rules: Dict[str, List[str]] = {
             "task_id": [r'(?:task_id|任务编号)[^:：\n]*?[:：]\s*`([A-Za-z0-9_-]+)`'],
-            "candidate_commit": [r'(?:candidate_commit|代码候选 Commit|当前工程候选 Commit|当前候选 Commit)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "candidate_commit": [r'(?:candidate_commit|代码候选 Commit|当前工程候选 Commit|当前候选 Commit|发布候选 Commit)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
             "snapshot_commit": [r'(?:snapshot_commit|文档快照 Commit|本地 HEAD)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
-            "last_verified_ci_commit": [r'(?:last_verified_ci_commit|已验证 CI Commit)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
-            "push_run_id": [r'Push Run ID[^:：\n]*?[:：]\s*`([0-9]+)`', r'Run ID \(`run_id`\)[^:：\n]*?[:：]\s*`([0-9]+)`'],
+            "last_verified_ci_commit": [r'(?:last_verified_ci_commit|已验证 CI Commit|最近一次已验证 CI Commit)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "push_run_id": [r'Push Run ID[^:：\n]*?[:：]\s*`([0-9]+)`', r'Run ID \(`run_id`\)[^:：\n]*?[:：]\s*`([0-9]+)`', r'Main CI Run ID[^:：\n]*?[:：]\s*`([0-9]+)`'],
             "pr_run_id": [r'PR Run ID[^:：\n]*?[:：]\s*`([0-9]+)`'],
             "ci_status": [r'(?:verification_status|核验状态)[^:：\n]*?[:：]\s*`([A-Z_]+)`'],
-            "test_count": [r'(?:测试用例数|通过 / 失败用例数)[^:：\n]*?[:：]\s*`(\d+)\s+tests', r'(?:通过 / 失败用例数)[^:：\n]*?[:：]\s*`(\d+)\s*/'],
+            "test_count": [r'(?:测试用例数|通过 / 失败用例数)[^:：\n]*?[:：]\s*`(\d+)\s+tests', r'(?:通过 / 失败用例数)[^:：\n]*?[:：]\s*`(\d+)\s*/', r'测试用例数[^:：\n]*?[:：]\s*`(\d+)`'],
             "pr_number": [r'(?:PR 编号|pr_number|PR 编号与状态)[^:：\n]*?[:：]\s*(?:PR\s*#)?`?(\d+)`?'],
-            "pr_status": [r'状态[：:]\s*`([A-Za-z_]+)`', r'pr_status[^:：\n]*?[:：]\s*`([A-Za-z_]+)`'],
-            "main_head": [r'(?:main_head|主干 HEAD)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "pr_status": [r'状态[：:]\s*`([A-Za-z_]+)`', r'pr_status[^:：\n]*?[:：]\s*`([A-Za-z_]+)`', r'PR 状态[^:：\n]*?[:：]\s*`([A-Za-z_]+)`'],
+            "main_head": [r'(?:main_head|主干 HEAD|发布时 main HEAD)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
             "release_flow_status": [r'发布流程状态[^:：\n]*?[:：]\s*`([A-Za-z_]+)`'],
             "old_tag_deleted": [r'OLD_TAG_DELETED=(true|false)', r'old_tag_deleted[^:：\n]*?[:：]\s*`(true|false)`'],
+            "release_tag": [r'(?:release_tag|正式发布 Tag|正式 Tag|发布 Tag)[^:：\n]*?[:：]\s*`([A-Za-z0-9_.-]+)`'],
+            "tag_object_sha": [r'(?:tag_object_sha|Tag Object SHA|Tag Object)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "peeled_commit": [r'(?:peeled_commit|Peeled Commit|Peeled Commit SHA)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "tag_publish_status": [r'(?:tag_publish_status|Tag 发布状态|Tag 发布 Job 状态)[^:：\n]*?[:：]\s*`([A-Z_]+)`'],
+            "pr_merged_by": [r'(?:pr_merged_by|合并者|PR 合并者)[^:：\n]*?[:：]\s*`?([A-Za-z0-9_-]+)`?'],
         }
 
         mismatches: List[str] = []
         field_aliases = {
             "ci_run_id": "push_run_id",
             "ci_commit": "last_verified_ci_commit",
+            "main_ci_run_id": "push_run_id",
         }
         for fld, exp_val in expected_facts.items():
             if exp_val is None:
@@ -1067,6 +1073,7 @@ def main() -> None:
     )
     parser.add_argument("--release-evidence", default=None, help="Path to release evidence JSON file")
     parser.add_argument("--snapshot-evidence", default=None, help="Path to snapshot evidence JSON file")
+    parser.add_argument("--final-evidence", default=None, help="Path to final release evidence JSON file (Std-019)")
     parser.add_argument("--output", default=None, help="Target markdown path for verification (default: docs/CROSS-SESSION-HANDOFF.md)")
     parser.add_argument("--verify-only", action="store_true", help="Verify handoff generation against committed file")
     args = parser.parse_args()
@@ -1108,7 +1115,7 @@ def main() -> None:
         else True
     )
 
-    task_id_val = args.task_id or "Std-015-V3-0-0-REISSUE-MAIN-CI-BRANCH-BINDING"
+    task_id_val = args.task_id or "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT"
     ok, errors, payload, md_text = build_handoff_payload(
         project_root=project_root,
         task_id=task_id_val,
@@ -1163,7 +1170,12 @@ def main() -> None:
             )
 
         # Semantic fact verification from independent release evidence (STD-034 / STD-035)
-        ok_ev, ev_errors, release_evidence = load_release_evidence(project_root, args.release_evidence)
+        pr9_ev_path = (
+            Path(args.release_evidence).resolve()
+            if args.release_evidence
+            else project_root / "docs" / "release-evidence" / "v3.0.0-reissue.json"
+        )
+        ok_ev, ev_errors, release_evidence = load_release_evidence(project_root, pr9_ev_path)
         if not ok_ev or release_evidence is None:
             print(f"[FAIL] Cross-session handoff verification blocked: release evidence error ({len(ev_errors)} issues):")
             for e in ev_errors:
@@ -1179,6 +1191,18 @@ def main() -> None:
         if not ok_snap or snapshot_evidence is None:
             print(f"[FAIL] Cross-session handoff verification blocked: snapshot evidence error ({len(snap_errors)} issues):")
             for e in snap_errors:
+                print(f"  - {e}")
+            sys.exit(1)
+
+        final_ev_path = (
+            Path(args.final_evidence).resolve()
+            if args.final_evidence
+            else project_root / "docs" / "release-evidence" / "std019-final-release.json"
+        )
+        ok_final, final_errors, final_evidence = load_release_evidence(project_root, final_ev_path)
+        if not ok_final or final_evidence is None:
+            print(f"[FAIL] Cross-session handoff verification blocked: final release evidence error ({len(final_errors)} issues):")
+            for e in final_errors:
                 print(f"  - {e}")
             sys.exit(1)
 
@@ -1202,7 +1226,7 @@ def main() -> None:
         )
         mismatches.extend([f"[PR9_SCOPE] {m}" for m in pr9_mismatches])
 
-        if args.task_id and args.task_id != "STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001":
+        if args.task_id and args.task_id not in ("STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001", "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT"):
             expected_task_id = args.task_id
         else:
             expected_task_id = snapshot_evidence.get("task_id", "Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT")
@@ -1227,6 +1251,33 @@ def main() -> None:
             actual_content, expected_snapshot_facts, scope="STD018_CURRENT_SNAPSHOT"
         )
         mismatches.extend([f"[STD018_SCOPE] {m}" for m in snap_mismatches])
+
+        expected_final_facts = {
+            "task_id": "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT",
+            "candidate_commit": final_evidence["candidate_commit"],
+            "snapshot_commit": final_evidence["snapshot_commit"],
+            "last_verified_ci_commit": final_evidence["last_verified_ci_commit"],
+            "ci_commit": final_evidence["last_verified_ci_commit"],
+            "ci_run_id": final_evidence.get("main_ci_run_id") or final_evidence["push_run_id"],
+            "push_run_id": final_evidence.get("main_ci_run_id") or final_evidence["push_run_id"],
+            "pr_run_id": final_evidence["pr_run_id"],
+            "ci_status": final_evidence["ci_status"],
+            "test_count": final_evidence["test_count"],
+            "pr_number": final_evidence["pr_number"],
+            "pr_status": final_evidence["pr_status"],
+            "main_head": final_evidence["main_head"],
+            "release_flow_status": final_evidence["release_flow_status"],
+            "old_tag_deleted": final_evidence["old_tag_deleted"],
+            "release_tag": final_evidence["release_tag"],
+            "tag_object_sha": final_evidence["tag_object_sha"],
+            "peeled_commit": final_evidence["peeled_commit"],
+            "tag_publish_status": final_evidence["tag_publish_status"],
+            "pr_merged_by": final_evidence["pr_merged_by"],
+        }
+        final_mismatches = verify_handoff_semantic_facts(
+            actual_content, expected_final_facts, scope="STD019_FINAL_RELEASE"
+        )
+        mismatches.extend([f"[STD019_SCOPE] {m}" for m in final_mismatches])
 
         if mismatches:
             print(f"[FAIL] Committed handoff mismatches expected facts ({len(mismatches)} issues):")

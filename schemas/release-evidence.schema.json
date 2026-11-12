@@ -167,6 +167,83 @@
     "task_id": {
       "type": "string"
     },
+    "release_tag": {
+      "type": "string",
+      "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+    },
+    "tag_object_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "peeled_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "main_ci_run_id": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ]
+    },
+    "pr_merged": {
+      "type": "boolean"
+    },
+    "pr_merged_by": {
+      "type": "string"
+    },
+    "windows_job": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ]
+    },
+    "ubuntu_job": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ]
+    },
+    "tag_publish_job": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ]
+    },
+    "tag_publish_status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCK",
+        "NOT_VERIFIABLE",
+        "NOT_RUN",
+        "SKIPPED"
+      ]
+    },
     "observed_at": {
       "type": "string",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
@@ -174,5 +251,29 @@
     "notes": {
       "type": "string"
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "release_flow_status": {
+            "const": "RELEASED"
+          }
+        },
+        "required": [
+          "release_flow_status"
+        ]
+      },
+      "then": {
+        "required": [
+          "release_tag",
+          "tag_object_sha",
+          "peeled_commit",
+          "tag_publish_status",
+          "pr_merged",
+          "pr_merged_by"
+        ]
+      }
+    }
+  ]
 }

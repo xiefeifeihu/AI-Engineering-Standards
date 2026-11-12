@@ -1335,7 +1335,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             os.environ["GITHUB_REF_NAME"] = "main"
             os.environ["GITHUB_HEAD_REF"] = ""
 
-            ok_ev, ev_errors, real_evidence = load_release_evidence(ROOT)
+            ok_ev, ev_errors, real_evidence = load_release_evidence(ROOT, ROOT / "docs" / "release-evidence" / "v3.0.0-reissue.json")
             self.assertTrue(ok_ev, f"Failed to load real release evidence: {ev_errors}")
             self.assertEqual(real_evidence["pr_status"], "MERGED")
             self.assertEqual(str(real_evidence["pr_run_id"]), pr_id)
@@ -1756,8 +1756,8 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         self.assertIn(res["tag"], ("v2.11.0", "v3.0.0"))
         if res["tag"] == "v3.0.0":
             self.assertEqual(res["version"], "3.0.0")
-            self.assertEqual(res["peeled_commit"], "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b")
-            self.assertEqual(res["tag_object_sha"], "325008af90a1e6dcc88ff714c9ec4e7ecee86ec6")
+            self.assertEqual(res["peeled_commit"], "8b223019c254e0edeb94576b94af46c1e48b0316")
+            self.assertEqual(res["tag_object_sha"], "8256bb384e62894219db0992a2cb57e16d4fa8cd")
         else:
             self.assertEqual(res["version"], "2.11.0")
             self.assertEqual(res["tag_object_sha"], BASELINE_TAG_OBJ)
@@ -2988,8 +2988,8 @@ COMMIT_HASH=4538b8ba29cb9413782c4197e73bddab64849d82
         self.assertIn(res["tag"], ("v2.11.0", "v3.0.0"))
         if res["tag"] == "v3.0.0":
             self.assertEqual(res["version"], "3.0.0")
-            self.assertEqual(res["peeled_commit"], "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b")
-            self.assertEqual(res["tag_object_sha"], "325008af90a1e6dcc88ff714c9ec4e7ecee86ec6")
+            self.assertEqual(res["peeled_commit"], "8b223019c254e0edeb94576b94af46c1e48b0316")
+            self.assertEqual(res["tag_object_sha"], "8256bb384e62894219db0992a2cb57e16d4fa8cd")
         else:
             self.assertEqual(res["version"], "2.11.0")
             self.assertEqual(res["tag_object_sha"], BASELINE_TAG_OBJ)

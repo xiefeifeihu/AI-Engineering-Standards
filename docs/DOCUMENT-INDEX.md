@@ -39,7 +39,7 @@ content_sha256: null
 | 7 | `API_CONTRACT` | [`docs/API-CONTRACT.md`](./API-CONTRACT.md) | `DOC-STANDARDS-API-CONTRACT` | `ACTIVE` | CLI 子命令契约、JSON Schema 契约与审批证据数据结构契约 |
 | 8 | `PROTOTYPE_UX` | [`docs/PROTOTYPE-UX.md`](./PROTOTYPE-UX.md) | `DOC-STANDARDS-PROTOTYPE-UX` | `ACTIVE` | 非运行时规范制品库 CLI 诊断交互与 `STD-018` 中文展示规范映射 |
 | 9 | `TEST_ACCEPTANCE` | [`docs/TEST-ACCEPTANCE.md`](./TEST-ACCEPTANCE.md) | `DOC-STANDARDS-TEST-ACCEPTANCE` | `ACTIVE` | Schema、文档集合、同步状态机、防伪造审批与跨平台测试基线 |
-| 10 | `RELEASE_OPERATIONS` | [`docs/RELEASE-OPERATIONS.md`](./RELEASE-OPERATIONS.md) | `DOC-STANDARDS-RELEASE-OPERATIONS` | `ACTIVE` | `main` 主干 CI 门禁、Annotated Tag 签名发布、锁定晋升与回滚规程 |
+| 10 | `RELEASE_OPERATIONS` | [`docs/RELEASE-OPERATIONS.md`](./RELEASE-OPERATIONS.md) | `DOC-STANDARDS-RELEASE-OPERATIONS` | `ACTIVE` | `main` 主干 CI 门禁、Annotated Tag 附注标签发布、锁定晋升与回滚规程 |
 | 11 | `DECISION_RECORD` | [`docs/DECISION-RECORD.md`](./DECISION-RECORD.md) | `DOC-STANDARDS-DECISION-RECORD` | `ACTIVE` | 已批准架构决策记录（含 `D1`–`D5` 正式批准记录） |
 | 12 | `CROSS_SESSION_HANDOFF` | [`docs/CROSS-SESSION-HANDOFF.md`](./CROSS-SESSION-HANDOFF.md) | `DOC-AI-ENGINEERING-STANDARDS-CROSS-SESSION-HANDOFF-001` | `ACTIVE` | 当前活跃跨会话交接唯一入口（`STD-020` 自动采集） |
 
@@ -48,7 +48,7 @@ content_sha256: null
 ## 2. 补充规范、接入协议与迁移资料（`primary_entrypoint: false`）
 
 - [`docs/Standards消费端接入与工具使用协议.md`](./Standards消费端接入与工具使用协议.md)：共享工具、模板、版本锁定、CI 接入及升级回滚的消费端统一协议。
-- [`docs/migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md`](./migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)：以 AI-Hub 为首个消费端试点的候选迁移方案。
+- [`docs/migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md`](./migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)：Standards 正式发布后以 AI-Hub 为首个消费端试点的迁移方案。
 - [`docs/目录导航.md`](./目录导航.md)：仓库目录和文件的中文（英文）职责导航。
 - [`docs/migration/MIGRATION-GUIDE-AI-DRIVEN-TEST-GOVERNANCE-v2.11.0.md`](./migration/MIGRATION-GUIDE-AI-DRIVEN-TEST-GOVERNANCE-v2.11.0.md)：`v2.11.0` AI 自主测试设计与持续用例治理迁移指南。
 - [`docs/migration/MIGRATION-GUIDE-STD-035.md`](./migration/MIGRATION-GUIDE-STD-035.md)：`v2.9.0` 工程文档生命周期初始接入指南（已由 `v3.0.0` 迁移指南演进替代）。

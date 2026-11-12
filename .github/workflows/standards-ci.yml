@@ -8,6 +8,7 @@ on:
       - "fix/**"
       - "main"
       - "codex/**"
+      - "docs/**"
   pull_request:
     branches:
       - "main"
@@ -67,12 +68,12 @@ jobs:
 
       - name: Verify Automated Cross-Session Handoff Contract (STD-020)
         run: |
-          python tools/generate_handoff.py --project-root . --task-id STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001 --verify-only
+          python tools/generate_handoff.py --project-root . --task-id Std-019-V3-0-0-POST-RELEASE-CLOSEOUT --verify-only
 
       - name: Verify Official Standards Sync Tool & Lock Contract (STD-034)
         run: |
           python tools/standards_sync/cli.py verify-lock --project-root .
-          python tools/standards_sync/cli.py compare --from-ref v2.11.0 --to-ref WORKTREE
+          python tools/standards_sync/cli.py compare --project-root . --to-ref WORKTREE
 
       - name: Run Consumer Integration Contract Tests
         run: |

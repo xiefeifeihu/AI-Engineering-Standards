@@ -11,17 +11,18 @@ source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
 last_updated: "2026-11-05"
 supersedes: null
-change_summary: "AI-Engineering-Hub first consumer pilot plan for Standards v3.0.0 candidate; other consumers excluded."
+change_summary: "AI-Engineering-Hub first consumer pilot plan for Standards v3.0.0 official release; other consumers excluded."
 history_reference: null
 primary_entrypoint: false
 content_sha256: null
 ---
 
-# Standards v3.0.0 候选迁移指南：AI-Hub 首个消费端试点
+# Standards v3.0.0 迁移指南：AI-Hub 首个消费端试点
 
-> **状态**：PROPOSED / NOT_APPROVED（本指南是候选迁移计划，不代表下游工程已批准升级）。
+> **版本事实**：Standards v3.0.0 已正式发布（Tag: `v3.0.0`，Tag Object SHA: `8256bb384e62894219db0992a2cb57e16d4fa8cd`，Peeled Commit: `8b223019c254e0edeb94576b94af46c1e48b0316`）。
+> **方案状态**：PROPOSED / NOT_APPROVED（本指南是消费端试点方案，必须经 AI-Hub Owner 独立批准方可实施）。
 > **唯一首个试点**：`xiefeifeihu/AI-Engineering-Hub`。
-> **本 PR 边界**：只修改 AI-Engineering-Standards；不修改 AI-Hub、AI-KB、VTIP 或 SideCar。
+> **工程边界**：本工程只定义 Standards 规范与迁移指南；严禁未经授权修改 AI-Hub、AI-KB、VTIP 或 SideCar；AI-KB 明确不纳入本轮试点。
 
 ## 1. 试点选择与工程边界
 
@@ -79,7 +80,7 @@ content_sha256: null
 - 不修改 AI-KB、VTIP、SideCar。
 - 不把 AI-Hub 的试点通过解释为其他工程兼容。
 - 不因 Standards 测试失败而修改 Hub 断言或放宽 Standards 规范。
-- 不在 v3.0.0 正式发布前将候选版本写入 Hub 正式锁定。
+- 未经 AI-Hub Owner 独立批准前严禁修改 Hub 的正式锁定。
 
 ## 4. AI-Hub 试点执行阶段
 
