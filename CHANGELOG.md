@@ -4,17 +4,19 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 
 ## [Unreleased]
 
-> RELEASE_STATUS=CANDIDATE | PROPOSED_VERSION=3.0.0 | MAIN_MERGED=true | RELEASE_TAG_NOT_CREATED=true | REISSUE_IN_PROGRESS=true
+### Added
+- None yet.
+
+## [3.0.0] - 2026-11-11
+
+> RELEASE_STATUS=RELEASED | VERSION=3.0.0 | TAG=v3.0.0 | PEELED_COMMIT=8b223019c254e0edeb94576b94af46c1e48b0316 | TAG_OBJECT_SHA=8256bb384e62894219db0992a2cb57e16d4fa8cd | MAIN_CI=PASS (222 tests)
 >
-> **v3.0.0 一次性重发处理中 (PR #9 已合并，修复分支 PR #10 处理中)**：
-> - PR #9 已由 Owner 正式合入官方 main（Merge Commit: `3cd42b69049b148bceea1324d4f8212393cb96df`），状态：`PR9=MERGED`。
-> - main CI 历史运行失败（Run 42933692363: `Run 42835611644 has no associated pull requests`），原因为 PR 合并后 GitHub Actions API 历史 Run 的 `pull_requests` 字段返回空列表。
-> - Std-016 已完成：OUTPUT_COMMIT=`fd9dd6e0de9e5e1b00c5bfa1d0e213401fa90eb7`，Push Run `42938147072` (Windows/Ubuntu PASS)，PR Run `42938186969` (Windows/Ubuntu PASS)，TEST_COUNT=220，STATUS=COMPLETED。
-> - Std-017 已完成：OUTPUT_COMMIT=`d00821e251bfe3c1495163b6af8af6c01210d5f4`，Push Run `42942640853` (Windows/Ubuntu PASS)，PR Run `42942649996` (Windows/Ubuntu PASS)，TEST_COUNT=220，STATUS=COMPLETED，交付包 SHA256: `97d90be32a5dad6a5fa415eaea8c941248c2cecdae45491263f433cc6d40a0bd`。
-> - Std-018 最终收口：已验证输入快照 Commit `21939da5e13eb39dedd0557561e88e1342be694c`，Push Run `42983601133` (Windows/Ubuntu PASS)，PR Run `42983609802` (Windows/Ubuntu PASS)，TEST_COUNT=221，STD018=COMPLETED。前序快照 Commit `09940874a1bf539f53c22426add0757667c040a0`。实现 PR9 历史发布证据与 Std-018 当前工程快照双证据双作用域独立核验，消除重复作用域与重复字段首匹配绕过缺陷，权威基线与跨会话交接严格分界。
-> - PR #10 关联分支 `fix/std-016-merged-pr-run-evidence`，状态：`PR10=OPEN/DRAFT`；当前处于 OPEN/DRAFT 状态，待 ChatGPT 独立复核及 Owner 批准；合入 main 后仍须执行 main CI，main CI 全绿后才允许重建 Annotated Tag `v3.0.0`。
-> - 远端旧 `v3.0.0` Annotated Tag 已按 Owner 授权在本地完整备份后清理（`OLD_TAG_DELETED=true`），正式 Tag 尚未重建。
-> - 整体发布流程继续保持 `IN_PROGRESS`，严禁提前标记 RELEASED 或将 PR #10 标记为 MERGED，严禁把 main CI 标记为 PASS。
+> **v3.0.0 正式发布 (PR #10 已由 Owner 合入 main，main CI 双平台全绿，Annotated Tag v3.0.0 成功发布)**：
+> - PR #10 (`fix/std-016-merged-pr-run-evidence`) 已由 Owner (`xiefeifeihu`) 合入 official main（Merge Commit: `8b223019c254e0edeb94576b94af46c1e48b0316`），状态：`PR10=MERGED`。
+> - main CI Run 42996232217 双平台全绿（Windows Job 130440909118 PASS, Ubuntu Job 130440909397 PASS, 222 项测试全量通过）。
+> - Tag Publish Job 130442482801 成功发布不可变 Annotated Tag `v3.0.0`（Tag Object SHA: `8256bb384e62894219db0992a2cb57e16d4fa8cd`，Peeled Commit: `8b223019c254e0edeb94576b94af46c1e48b0316`）。
+> - Standards 自身版本锁定已同步至正式已发布的 v3.0.0（`standards.lock.json` 与 `engineering-manifest.yaml`）。
+> - Std-019 正式完成发布后工程资料收口与版本锁定对齐。
 
 ### Added
 - **基线与交接作用域/字段唯一性校验与防绕过门禁强化 (STD-020 / STD-034 / STD-035 / Std-018)**:

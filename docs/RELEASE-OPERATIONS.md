@@ -9,7 +9,7 @@ approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
-last_updated: "2026-11-05"
+last_updated: "2026-11-12"
 supersedes: null
 change_summary: "Release & Operations Manual for AI-Engineering-Standards v3.0.0 covering Single Owner PR Merge approval governance, Draft PR gate, independent review, main CI verification, and Annotated Tag governance."
 history_reference: "standards/13-git-release/STD-017-git-release-versioning.md"
@@ -81,4 +81,4 @@ Standards 的候选版本与正式发布版本必须严格区分：
 
 ## 4. 消费端发布边界
 
-本次 v3.0.0 候选以 AI-Engineering-Hub 为首个消费端试点。试点计划、当前观测基线和验收边界见 [`migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md`](./migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)。本 PR 不授权修改 Hub，也不授权 AI-KB、VTIP 或 SideCar 升级。其他工程是否接入必须由其 Owner 单独批准。
+Standards v3.0.0 已正式发布。下游接入以 AI-Engineering-Hub 为首个消费端试点。试点计划、当前观测基线和验收边界见 [`migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md`](./migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)。本 PR 不授权修改 Hub，也不授权 AI-KB、VTIP 或 SideCar 自动升级。其他工程是否接入必须由其各工程 Owner 单独批准。

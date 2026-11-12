@@ -146,6 +146,190 @@ def extract_scope_content(content: str, scope_tag: str) -> Tuple[str, List[str]]
     return "\n".join(scoped_lines), []
 
 
+
+def resolve_snapshot_branch_name(project_root: Path) -> str:
+    rc, branch = run_git(project_root, ["branch", "--show-current"])
+    if rc == 0 and branch and branch != "HEAD":
+        return branch
+    for key in ("GITHUB_HEAD_REF", "GITHUB_REF_NAME"):
+        value = os.environ.get(key, "").strip()
+        if value and value != "HEAD":
+            return value
+    ref = os.environ.get("GITHUB_REF", "").strip()
+    if ref.startswith("refs/heads/"):
+        return ref[len("refs/heads/"):]
+    return "HEAD"
+
+
+def resolve_snapshot_branch_tip(project_root: Path) -> str:
+    event_path = os.environ.get("GITHUB_EVENT_PATH", "").strip()
+    if event_path and Path(event_path).is_file():
+        try:
+            event_data = json.loads(Path(event_path).read_text(encoding="utf-8"))
+            pull_request = event_data.get("pull_request")
+            if isinstance(pull_request, dict):
+                head_data = pull_request.get("head")
+                head_sha = head_data.get("sha") if isinstance(head_data, dict) else None
+                if isinstance(head_sha, str) and re.fullmatch(r"[0-9a-f]{40}", head_sha):
+                    rc_exists, _ = run_git(project_root, ["cat-file", "-e", f"{head_sha}^{{commit}}"])
+                    if rc_exists == 0:
+                        return head_sha
+        except Exception:
+            pass
+    github_sha = os.environ.get("GITHUB_SHA", "").strip()
+    if re.fullmatch(r"[0-9a-f]{40}", github_sha):
+        rc_exists, _ = run_git(project_root, ["cat-file", "-e", f"{github_sha}^{{commit}}"])
+        if rc_exists == 0:
+            return github_sha
+    rc, head = run_git(project_root, ["rev-parse", "HEAD"])
+    return head if rc == 0 and re.fullmatch(r"[0-9a-f]{40}", head) else ""
+
+
+def verify_git_snapshot_facts(
+    project_root: Path,
+    content: str,
+    document_kind: str,
+) -> List[str]:
+    """Verify recorded Git facts against the exact branch history at captured_at.
+
+    local_head is a time-bound snapshot. It must equal the latest commit on the
+    current PR/push branch whose committer date is not later than captured_at.
+    """
+    errors: List[str] = []
+    if document_kind == "baseline":
+        identity_match = re.search(
+            r"## 8\. Git 分支及 Commit 身份.*?(?=\n## 9\.)",
+            content,
+            re.S,
+        )
+        if not identity_match:
+            return ["BASELINE_GIT_SNAPSHOT_SECTION_MISSING: Git identity section not found"]
+        identity_text = identity_match.group(0)
+        scope_text, scope_errors = extract_scope_content(
+            content, "Std-019 正式发布收口事实与治理追踪"
+        )
+        if scope_errors:
+            return [f"BASELINE_GIT_SNAPSHOT_CAPTURE_SCOPE_INVALID: {e}" for e in scope_errors]
+        captured_matches = re.findall(
+            r"Git 快照观测时间.*?\x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
+            scope_text,
+        )
+        remote_pattern = r"远端 main \(\x60remote_main_head\x60\)\*\*：\x60([0-9a-f]{40})\x60"
+        prefix = "BASELINE"
+    elif document_kind == "handoff":
+        identity_text = content.split("## 2. 当前 Standards 锁定", 1)[0]
+        captured_matches = re.findall(
+            r"^CAPTURED_AT=(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)$",
+            identity_text,
+            re.M,
+        )
+        remote_pattern = r"远端 main \(\x60remote_head\x60\)\*\*：\x60([0-9a-f]{40})\x60"
+        prefix = "HANDOFF"
+    else:
+        return [f"GIT_SNAPSHOT_UNSUPPORTED_DOCUMENT_KIND: {document_kind}"]
+
+    def one(pattern: str, label: str) -> Optional[str]:
+        matches = re.findall(pattern, identity_text)
+        if len(matches) != 1:
+            errors.append(
+                f"{prefix}_GIT_SNAPSHOT_FIELD_CARDINALITY: {label} expected exactly one value, found {len(matches)}"
+            )
+            return None
+        return matches[0]
+
+    recorded_branch = one(
+        r"当前分支 \(\x60branch\x60\)\*\*：\x60([^\x60]+)\x60",
+        "branch",
+    )
+    recorded_local_head = one(
+        r"本地 HEAD \(\x60local_head\x60\)\*\*：\x60([0-9a-f]{40})\x60",
+        "local_head",
+    )
+    recorded_remote_head = one(remote_pattern, "remote_main_head")
+    recorded_worktree_clean = one(
+        r"工作区干净状态 \(\x60worktree_clean\x60\)\*\*：\x60(true|false)\x60",
+        "worktree_clean",
+    )
+
+    if len(captured_matches) != 1:
+        errors.append(
+            f"{prefix}_GIT_SNAPSHOT_CAPTURE_TIME_CARDINALITY: expected exactly one capture timestamp, found {len(captured_matches)}"
+        )
+        captured_at = None
+    else:
+        captured_at = captured_matches[0]
+
+    expected_branch = resolve_snapshot_branch_name(project_root)
+    # A feature-branch snapshot remains valid after its PR is merged to main.
+    # The captured local_head is independently checked against branch history below.
+    if (
+        recorded_branch is not None
+        and expected_branch not in ("HEAD", "main")
+        and recorded_branch != expected_branch
+    ):
+        errors.append(
+            f"{prefix}_GIT_SNAPSHOT_BRANCH_MISMATCH: recorded '{recorded_branch}', live branch '{expected_branch}'"
+        )
+
+    if recorded_worktree_clean not in ("true", "false"):
+        errors.append(f"{prefix}_GIT_SNAPSHOT_WORKTREE_STATE_INVALID: expected true/false")
+
+    remote_main_head = query_remote_main_head(project_root)
+    if remote_main_head == "NOT_VERIFIABLE":
+        errors.append(f"{prefix}_GIT_SNAPSHOT_REMOTE_MAIN_NOT_VERIFIABLE: origin/main could not be queried")
+
+    branch_tip = resolve_snapshot_branch_tip(project_root)
+    if not branch_tip:
+        errors.append(f"{prefix}_GIT_SNAPSHOT_BRANCH_TIP_NOT_VERIFIABLE: current branch tip unavailable")
+
+    if captured_at:
+        try:
+            captured_dt = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+            if captured_dt.tzinfo is None:
+                raise ValueError("timezone missing")
+            age_seconds = (datetime.now(timezone.utc) - captured_dt).total_seconds()
+            if age_seconds < -300 or age_seconds > 24 * 60 * 60:
+                errors.append(
+                    f"{prefix}_GIT_SNAPSHOT_STALE: captured_at '{captured_at}' is outside the 24-hour validity window"
+                )
+        except Exception as exc:
+            errors.append(f"{prefix}_GIT_SNAPSHOT_CAPTURE_TIME_INVALID: {exc}")
+
+        if branch_tip:
+            rc, expected_capture_head = run_git(
+                project_root,
+                ["log", "-1", "--format=%H", f"--before={captured_at}", branch_tip],
+                timeout=8,
+            )
+            if rc != 0 or not re.fullmatch(r"[0-9a-f]{40}", expected_capture_head):
+                errors.append(
+                    f"{prefix}_GIT_SNAPSHOT_CAPTURE_COMMIT_NOT_VERIFIABLE: could not resolve branch history at '{captured_at}'"
+                )
+            elif recorded_local_head is not None and recorded_local_head != expected_capture_head:
+                errors.append(
+                    f"{prefix}_GIT_SNAPSHOT_LOCAL_HEAD_MISMATCH: recorded '{recorded_local_head}', expected '{expected_capture_head}' from branch history at '{captured_at}'"
+                )
+
+        # origin/main may advance after the snapshot (for example, when this PR merges).
+        # Compare the recorded value with origin/main as it existed at captured_at.
+        if remote_main_head != "NOT_VERIFIABLE" and captured_at:
+            rc, expected_remote_at_capture = run_git(
+                project_root,
+                ["log", "-1", "--format=%H", f"--before={captured_at}", remote_main_head],
+                timeout=8,
+            )
+            if rc != 0 or not re.fullmatch(r"[0-9a-f]{40}", expected_remote_at_capture):
+                errors.append(
+                    f"{prefix}_GIT_SNAPSHOT_REMOTE_MAIN_AT_CAPTURE_NOT_VERIFIABLE: could not resolve origin/main at '{captured_at}'"
+                )
+            elif recorded_remote_head is not None and recorded_remote_head != expected_remote_at_capture:
+                errors.append(
+                    f"{prefix}_GIT_SNAPSHOT_REMOTE_MAIN_MISMATCH: recorded '{recorded_remote_head}', origin/main at capture '{expected_remote_at_capture}'"
+                )
+
+    return errors
+
+
 def extract_line_field_matches(target_text: str, patterns: List[str]) -> List[str]:
     matches: List[str] = []
     seen_capture_spans: set[Tuple[int, int, int]] = set()
@@ -206,24 +390,30 @@ def verify_handoff_semantic_facts(
 
         field_rules: Dict[str, List[str]] = {
             "task_id": [r'(?:task_id|任务编号)[^:：\n]*?[:：]\s*`([A-Za-z0-9_-]+)`'],
-            "candidate_commit": [r'(?:candidate_commit|代码候选 Commit|当前工程候选 Commit|当前候选 Commit)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "candidate_commit": [r'(?:candidate_commit|代码候选 Commit|当前工程候选 Commit|当前候选 Commit|发布候选 Commit)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
             "snapshot_commit": [r'(?:snapshot_commit|文档快照 Commit|本地 HEAD)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
-            "last_verified_ci_commit": [r'(?:last_verified_ci_commit|已验证 CI Commit)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
-            "push_run_id": [r'Push Run ID[^:：\n]*?[:：]\s*`([0-9]+)`', r'Run ID \(`run_id`\)[^:：\n]*?[:：]\s*`([0-9]+)`'],
+            "last_verified_ci_commit": [r'(?:last_verified_ci_commit|已验证 CI Commit|最近一次已验证 CI Commit)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "push_run_id": [r'Push Run ID[^:：\n]*?[:：]\s*`([0-9]+)`', r'Run ID \(`run_id`\)[^:：\n]*?[:：]\s*`([0-9]+)`', r'Main CI Run ID[^:：\n]*?[:：]\s*`([0-9]+)`'],
             "pr_run_id": [r'PR Run ID[^:：\n]*?[:：]\s*`([0-9]+)`'],
             "ci_status": [r'(?:verification_status|核验状态)[^:：\n]*?[:：]\s*`([A-Z_]+)`'],
-            "test_count": [r'(?:测试用例数|通过 / 失败用例数)[^:：\n]*?[:：]\s*`(\d+)\s+tests', r'(?:通过 / 失败用例数)[^:：\n]*?[:：]\s*`(\d+)\s*/'],
+            "test_count": [r'(?:测试用例数|通过 / 失败用例数)[^:：\n]*?[:：]\s*`(\d+)\s+tests', r'(?:通过 / 失败用例数)[^:：\n]*?[:：]\s*`(\d+)\s*/', r'测试用例数[^:：\n]*?[:：]\s*`(\d+)`'],
             "pr_number": [r'(?:PR 编号|pr_number|PR 编号与状态)[^:：\n]*?[:：]\s*(?:PR\s*#)?`?(\d+)`?'],
-            "pr_status": [r'状态[：:]\s*`([A-Za-z_]+)`', r'pr_status[^:：\n]*?[:：]\s*`([A-Za-z_]+)`'],
-            "main_head": [r'(?:main_head|主干 HEAD)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "pr_status": [r'状态[：:]\s*`([A-Za-z_]+)`', r'pr_status[^:：\n]*?[:：]\s*`([A-Za-z_]+)`', r'PR 状态[^:：\n]*?[:：]\s*`([A-Za-z_]+)`'],
+            "main_head": [r'(?:main_head|主干 HEAD|发布时 main HEAD)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
             "release_flow_status": [r'发布流程状态[^:：\n]*?[:：]\s*`([A-Za-z_]+)`'],
             "old_tag_deleted": [r'OLD_TAG_DELETED=(true|false)', r'old_tag_deleted[^:：\n]*?[:：]\s*`(true|false)`'],
+            "release_tag": [r'(?:release_tag|正式发布 Tag|正式 Tag|发布 Tag)[^:：\n]*?[:：]\s*`([A-Za-z0-9_.-]+)`'],
+            "tag_object_sha": [r'(?:tag_object_sha|Tag Object SHA|Tag Object)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "peeled_commit": [r'(?:peeled_commit|Peeled Commit|Peeled Commit SHA)[^:：\n]*?[:：]\s*`([0-9a-f]{40})`'],
+            "tag_publish_status": [r'(?:tag_publish_status|Tag 发布状态|Tag 发布 Job 状态)[^:：\n]*?[:：]\s*`([A-Z_]+)`'],
+            "pr_merged_by": [r'(?:pr_merged_by|合并者|PR 合并者)[^:：\n]*?[:：]\s*`?([A-Za-z0-9_-]+)`?'],
         }
 
         mismatches: List[str] = []
         field_aliases = {
             "ci_run_id": "push_run_id",
             "ci_commit": "last_verified_ci_commit",
+            "main_ci_run_id": "push_run_id",
         }
         for fld, exp_val in expected_facts.items():
             if exp_val is None:
@@ -445,6 +635,8 @@ def build_handoff_payload(
     pending_verifications: Optional[str] = None,
     release_evidence_path: Optional[str] = None,
     release_evidence: Optional[Dict[str, Any]] = None,
+    snapshot_evidence_path: Optional[str] = None,
+    final_evidence_path: Optional[str] = None,
     standards_root: Optional[Path] = None,
 ) -> Tuple[bool, List[str], Optional[Dict[str, Any]], Optional[str]]:
     errors: List[str] = []
@@ -506,18 +698,32 @@ def build_handoff_payload(
 
     # 1 & 2. Auto-collect Git state, branch, and Commit
     evidence_data: Optional[Dict[str, Any]] = release_evidence
-    if evidence_data is None:
-        ev_ok, _, ev_loaded = load_release_evidence(project_root, release_evidence_path)
+    if snapshot_evidence_path:
+        snap_ok, snap_errors, _ = load_release_evidence(project_root, snapshot_evidence_path)
+        if not snap_ok:
+            errors.extend([f"HANDOFF_SNAPSHOT_EVIDENCE_INVALID: {e}" for e in snap_errors])
+    if release_evidence_path and final_evidence_path:
+        pr9_ok, pr9_errors, _ = load_release_evidence(project_root, release_evidence_path)
+        if not pr9_ok:
+            errors.extend([f"HANDOFF_HISTORICAL_RELEASE_EVIDENCE_INVALID: {e}" for e in pr9_errors])
+    if final_evidence_path:
+        final_ok, final_errors, final_loaded = load_release_evidence(project_root, final_evidence_path)
+        if not final_ok or final_loaded is None:
+            errors.extend([f"HANDOFF_FINAL_RELEASE_EVIDENCE_INVALID: {e}" for e in final_errors])
+        else:
+            evidence_data = final_loaded
+    elif evidence_data is None:
+        ev_ok, ev_errors, ev_loaded = load_release_evidence(project_root, release_evidence_path)
         if ev_ok and ev_loaded:
             evidence_data = ev_loaded
+        elif release_evidence_path:
+            errors.extend([f"HANDOFF_RELEASE_EVIDENCE_INVALID: {e}" for e in ev_errors])
 
     rc_head, git_head = run_git(project_root, ["rev-parse", "HEAD"])
-    local_head = snapshot_commit_override or (
-        (evidence_data.get("snapshot_commit") if evidence_data else None)
-        or (git_head if rc_head == 0 and re.match(r"^[0-9a-f]{40}$", git_head) else "")
+    live_head = git_head if rc_head == 0 and re.match(r"^[0-9a-f]{40}$", git_head) else ""
+    local_head = snapshot_commit_override or live_head or (
+        (evidence_data.get("snapshot_commit") if evidence_data else None) or ""
     )
-    if not local_head and evidence_data and evidence_data.get("snapshot_commit"):
-        local_head = str(evidence_data["snapshot_commit"])
     if not local_head:
         errors.append("HANDOFF_INVALID_COMMIT: Local Git HEAD is not a valid 40-character SHA")
 
@@ -560,8 +766,7 @@ def build_handoff_payload(
     else:
         source_commit = default_source_commit
 
-    rc_branch, git_branch = run_git(project_root, ["branch", "--show-current"])
-    branch_name = git_branch if rc_branch == 0 and git_branch else "HEAD"
+    branch_name = resolve_snapshot_branch_name(project_root)
     rc_sb, git_sb = run_git(project_root, ["status", "-sb"])
     rc_porcelain, git_porcelain = run_git(project_root, ["status", "--porcelain"])
     worktree_clean = rc_porcelain == 0 and len(git_porcelain.strip()) == 0
@@ -1067,6 +1272,7 @@ def main() -> None:
     )
     parser.add_argument("--release-evidence", default=None, help="Path to release evidence JSON file")
     parser.add_argument("--snapshot-evidence", default=None, help="Path to snapshot evidence JSON file")
+    parser.add_argument("--final-evidence", default=None, help="Path to final release evidence JSON file (Std-019)")
     parser.add_argument("--output", default=None, help="Target markdown path for verification (default: docs/CROSS-SESSION-HANDOFF.md)")
     parser.add_argument("--verify-only", action="store_true", help="Verify handoff generation against committed file")
     args = parser.parse_args()
@@ -1108,7 +1314,7 @@ def main() -> None:
         else True
     )
 
-    task_id_val = args.task_id or "Std-015-V3-0-0-REISSUE-MAIN-CI-BRANCH-BINDING"
+    task_id_val = args.task_id or "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT"
     ok, errors, payload, md_text = build_handoff_payload(
         project_root=project_root,
         task_id=task_id_val,
@@ -1134,6 +1340,8 @@ def main() -> None:
         ci_run_override=ci_override,
         captured_at=args.captured_at,
         release_evidence_path=args.release_evidence,
+        snapshot_evidence_path=args.snapshot_evidence,
+        final_evidence_path=args.final_evidence,
         standards_root=standards_root,
     )
     if not ok or payload is None or md_text is None:
@@ -1163,7 +1371,12 @@ def main() -> None:
             )
 
         # Semantic fact verification from independent release evidence (STD-034 / STD-035)
-        ok_ev, ev_errors, release_evidence = load_release_evidence(project_root, args.release_evidence)
+        pr9_ev_path = (
+            Path(args.release_evidence).resolve()
+            if args.release_evidence
+            else project_root / "docs" / "release-evidence" / "v3.0.0-reissue.json"
+        )
+        ok_ev, ev_errors, release_evidence = load_release_evidence(project_root, pr9_ev_path)
         if not ok_ev or release_evidence is None:
             print(f"[FAIL] Cross-session handoff verification blocked: release evidence error ({len(ev_errors)} issues):")
             for e in ev_errors:
@@ -1179,6 +1392,18 @@ def main() -> None:
         if not ok_snap or snapshot_evidence is None:
             print(f"[FAIL] Cross-session handoff verification blocked: snapshot evidence error ({len(snap_errors)} issues):")
             for e in snap_errors:
+                print(f"  - {e}")
+            sys.exit(1)
+
+        final_ev_path = (
+            Path(args.final_evidence).resolve()
+            if args.final_evidence
+            else project_root / "docs" / "release-evidence" / "std019-final-release.json"
+        )
+        ok_final, final_errors, final_evidence = load_release_evidence(project_root, final_ev_path)
+        if not ok_final or final_evidence is None:
+            print(f"[FAIL] Cross-session handoff verification blocked: final release evidence error ({len(final_errors)} issues):")
+            for e in final_errors:
                 print(f"  - {e}")
             sys.exit(1)
 
@@ -1202,7 +1427,7 @@ def main() -> None:
         )
         mismatches.extend([f"[PR9_SCOPE] {m}" for m in pr9_mismatches])
 
-        if args.task_id and args.task_id != "STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001":
+        if args.task_id and args.task_id not in ("STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001", "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT"):
             expected_task_id = args.task_id
         else:
             expected_task_id = snapshot_evidence.get("task_id", "Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT")
@@ -1227,6 +1452,36 @@ def main() -> None:
             actual_content, expected_snapshot_facts, scope="STD018_CURRENT_SNAPSHOT"
         )
         mismatches.extend([f"[STD018_SCOPE] {m}" for m in snap_mismatches])
+
+        expected_final_facts = {
+            "task_id": "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT",
+            "candidate_commit": final_evidence["candidate_commit"],
+            "snapshot_commit": final_evidence["snapshot_commit"],
+            "last_verified_ci_commit": final_evidence["last_verified_ci_commit"],
+            "ci_commit": final_evidence["last_verified_ci_commit"],
+            "ci_run_id": final_evidence.get("main_ci_run_id") or final_evidence["push_run_id"],
+            "push_run_id": final_evidence.get("main_ci_run_id") or final_evidence["push_run_id"],
+            "pr_run_id": final_evidence["pr_run_id"],
+            "ci_status": final_evidence["ci_status"],
+            "test_count": final_evidence["test_count"],
+            "pr_number": final_evidence["pr_number"],
+            "pr_status": final_evidence["pr_status"],
+            "main_head": final_evidence["main_head"],
+            "release_flow_status": final_evidence["release_flow_status"],
+            "old_tag_deleted": final_evidence["old_tag_deleted"],
+            "release_tag": final_evidence["release_tag"],
+            "tag_object_sha": final_evidence["tag_object_sha"],
+            "peeled_commit": final_evidence["peeled_commit"],
+            "tag_publish_status": final_evidence["tag_publish_status"],
+            "pr_merged_by": final_evidence["pr_merged_by"],
+        }
+        final_mismatches = verify_handoff_semantic_facts(
+            actual_content, expected_final_facts, scope="STD019_FINAL_RELEASE"
+        )
+        mismatches.extend([f"[STD019_SCOPE] {m}" for m in final_mismatches])
+        mismatches.extend(
+            [f"[GIT_SNAPSHOT] {m}" for m in verify_git_snapshot_facts(project_root, actual_content, "handoff")]
+        )
 
         if mismatches:
             print(f"[FAIL] Committed handoff mismatches expected facts ({len(mismatches)} issues):")
@@ -1266,6 +1521,8 @@ def main() -> None:
         ci_run_override=ci_override,
         captured_at=args.captured_at,
         release_evidence_path=args.release_evidence,
+        snapshot_evidence_path=args.snapshot_evidence,
+        final_evidence_path=args.final_evidence,
         standards_root=standards_root,
     )
     if not ok:
