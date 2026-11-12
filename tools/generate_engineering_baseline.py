@@ -270,6 +270,19 @@ def verify_git_snapshot_facts(
     """
     errors: List[str] = []
     if document_kind == "baseline":
+        # This historical timestamp scope belongs to Standards' own Std-019
+        # release-closeout baseline. Do not impose it on downstream consumers.
+        manifest_path = project_root / "engineering-manifest.yaml"
+        project_id = ""
+        if manifest_path.is_file():
+            try:
+                manifest_data = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+                project_id = str((manifest_data.get("project") or {}).get("id") or "")
+            except Exception:
+                project_id = ""
+        if project_id != "ai-engineering-standards":
+            return []
+
         identity_match = re.search(
             r"## 8\. Git 分支及 Commit 身份.*?(?=\n## 9\.)",
             content,
