@@ -133,9 +133,142 @@ def _copy_minimal_valid_project(dst: Path) -> str:
             )
             md.write_text(replaced, encoding="utf-8")
 
-    # Commit the updated docs so that docs in repo match working tree
+    # Commit the updated docs so that docs in repo match working tree.
     subprocess.run(["git", "-C", str(dst), "add", "docs"], capture_output=True, check=True)
     subprocess.run(["git", "-C", str(dst), "commit", "-m", "update docs source commit"], capture_output=True, check=True)
+
+    # Give this isolated fixture a local origin/main and a truthful time-bound snapshot.
+    branch = subprocess.run(
+        ["git", "-C", str(dst), "branch", "--show-current"],
+        capture_output=True, text=True, encoding="utf-8", check=True,
+    ).stdout.strip()
+    snapshot_head = subprocess.run(
+        ["git", "-C", str(dst), "rev-parse", "HEAD"],
+        capture_output=True, text=True, encoding="utf-8", check=True,
+    ).stdout.strip()
+    snapshot_epoch = int(subprocess.run(
+        ["git", "-C", str(dst), "show", "-s", "--format=%ct", "HEAD"],
+        capture_output=True, text=True, encoding="utf-8", check=True,
+    ).stdout.strip())
+    captured_at = datetime.fromtimestamp(snapshot_epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    future_commit_date = datetime.fromtimestamp(snapshot_epoch + 2, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    remote_path = dst.parent / (dst.name + "-origin.git")
+    subprocess.run(["git", "init", "--bare", str(remote_path)], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(dst), "remote", "add", "origin", str(remote_path)], capture_output=True, check=True)
+    subprocess.run(
+        ["git", "-C", str(dst), "push", "origin", "HEAD:refs/heads/main"],
+        capture_output=True, check=True,
+    )
+
+    def replace_section_line(
+        text: str,
+        section_start: str,
+        section_end: Optional[str],
+        line_prefix: str,
+        replacement: str,
+        label: str,
+    ) -> str:
+        lines = text.splitlines()
+        starts = [i for i, line in enumerate(lines) if line.startswith(section_start)]
+        if len(starts) != 1:
+            raise AssertionError(f"Fixture section missing or duplicated: {label}")
+        start = starts[0]
+        if section_end is None:
+            ends = [i for i in range(start + 1, len(lines)) if lines[i].startswith("### ")]
+        else:
+            ends = [i for i in range(start + 1, len(lines)) if lines[i].startswith(section_end)]
+        end = ends[0] if ends else len(lines)
+        matches = [i for i in range(start, end) if lines[i].startswith(line_prefix)]
+        if len(matches) != 1:
+            raise AssertionError(f"Fixture field missing or duplicated: {label} (count={len(matches)})")
+        lines[matches[0]] = replacement
+        return "\n".join(lines) + "\n"
+
+    def refresh_frontmatter_digest(text: str) -> str:
+        parts = text.split("---\n", 2)
+        if len(parts) != 3:
+            raise AssertionError("Fixture document frontmatter is malformed")
+        metadata_lines = parts[1].splitlines()
+        digest_indexes = [i for i, line in enumerate(metadata_lines) if line.startswith("content_sha256:")]
+        if len(digest_indexes) != 1:
+            raise AssertionError("Fixture document content_sha256 field is missing or duplicated")
+        digest = compute_canonical_document_sha256(text)
+        metadata_lines[digest_indexes[0]] = f'content_sha256: "{digest}"'
+        return "---\n" + "\n".join(metadata_lines) + "\n---\n" + parts[2]
+
+    tick = chr(96)
+    baseline_path = dst / "docs" / "当前权威基线.md"
+    baseline_text = baseline_path.read_text(encoding="utf-8")
+    baseline_text = replace_section_line(
+        baseline_text, "## 8. Git 分支及 Commit 身份", "## 9.",
+        "- **当前分支", "- **当前分支 (" + tick + "branch" + tick + ")**：" + tick + branch + tick,
+        "baseline branch",
+    )
+    baseline_text = replace_section_line(
+        baseline_text, "## 8. Git 分支及 Commit 身份", "## 9.",
+        "- **本地 HEAD", "- **本地 HEAD (" + tick + "local_head" + tick + ")**：" + tick + snapshot_head + tick,
+        "baseline local_head",
+    )
+    baseline_text = replace_section_line(
+        baseline_text, "## 8. Git 分支及 Commit 身份", "## 9.",
+        "- **远端 main", "- **远端 main (" + tick + "remote_main_head" + tick + ")**：" + tick + snapshot_head + tick,
+        "baseline remote_main_head",
+    )
+    baseline_text = replace_section_line(
+        baseline_text, "### 19.3 Std-019 正式发布收口事实与治理追踪", None,
+        "  7. **当前分支与 HEAD**：",
+        "  7. **当前分支与 HEAD**：分支 " + tick + branch + tick + "，本地 HEAD " + tick + snapshot_head + tick + "，worktree_clean=true。",
+        "baseline current branch summary",
+    )
+    baseline_text = replace_section_line(
+        baseline_text, "### 19.3 Std-019 正式发布收口事实与治理追踪", None,
+        "  9. **Git 快照观测时间**：",
+        "  9. **Git 快照观测时间**：" + tick + captured_at + tick + "（快照有效时间 24 小时；过期事实标记 STALE 或 NOT_VERIFIABLE）。",
+        "baseline capture time",
+    )
+    baseline_text = refresh_frontmatter_digest(baseline_text)
+    baseline_path.write_text(baseline_text, encoding="utf-8")
+
+    handoff_path = dst / "docs" / "CROSS-SESSION-HANDOFF.md"
+    handoff_text = handoff_path.read_text(encoding="utf-8")
+    handoff_lines = handoff_text.splitlines()
+    capture_indexes = [i for i, line in enumerate(handoff_lines) if line.startswith("CAPTURED_AT=")]
+    if len(capture_indexes) != 1:
+        raise AssertionError("Fixture handoff CAPTURED_AT is missing or duplicated")
+    handoff_lines[capture_indexes[0]] = f"CAPTURED_AT={captured_at}"
+    handoff_text = "\n".join(handoff_lines) + "\n"
+    handoff_text = replace_section_line(
+        handoff_text, "## 1. 当前 Git 状态与分支身份", "## 2.",
+        "- **当前分支", "- **当前分支 (" + tick + "branch" + tick + ")**：" + tick + branch + tick,
+        "handoff branch",
+    )
+    handoff_text = replace_section_line(
+        handoff_text, "## 1. 当前 Git 状态与分支身份", "## 2.",
+        "- **当前快照 Commit", "- **当前快照 Commit (" + tick + "snapshot_commit" + tick + ")**：" + tick + snapshot_head + tick,
+        "handoff snapshot commit",
+    )
+    handoff_text = replace_section_line(
+        handoff_text, "## 1. 当前 Git 状态与分支身份", "## 2.",
+        "- **本地 HEAD", "- **本地 HEAD (" + tick + "local_head" + tick + ")**：" + tick + snapshot_head + tick,
+        "handoff local head",
+    )
+    handoff_text = replace_section_line(
+        handoff_text, "## 1. 当前 Git 状态与分支身份", "## 2.",
+        "- **远端 main", "- **远端 main (" + tick + "remote_head" + tick + ")**：" + tick + snapshot_head + tick,
+        "handoff remote main",
+    )
+    handoff_text = refresh_frontmatter_digest(handoff_text)
+    handoff_path.write_text(handoff_text, encoding="utf-8")
+
+    subprocess.run(["git", "-C", str(dst), "add", "docs"], capture_output=True, check=True)
+    commit_env = os.environ.copy()
+    commit_env["GIT_AUTHOR_DATE"] = future_commit_date
+    commit_env["GIT_COMMITTER_DATE"] = future_commit_date
+    subprocess.run(
+        ["git", "-C", str(dst), "commit", "-m", "bind Git snapshot facts to isolated fixture"],
+        capture_output=True, check=True, env=commit_env,
+    )
     return head
 
 

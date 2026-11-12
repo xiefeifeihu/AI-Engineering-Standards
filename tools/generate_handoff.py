@@ -171,12 +171,16 @@ def resolve_snapshot_branch_tip(project_root: Path) -> str:
                 head_data = pull_request.get("head")
                 head_sha = head_data.get("sha") if isinstance(head_data, dict) else None
                 if isinstance(head_sha, str) and re.fullmatch(r"[0-9a-f]{40}", head_sha):
-                    return head_sha
+                    rc_exists, _ = run_git(project_root, ["cat-file", "-e", f"{head_sha}^{{commit}}"])
+                    if rc_exists == 0:
+                        return head_sha
         except Exception:
             pass
     github_sha = os.environ.get("GITHUB_SHA", "").strip()
     if re.fullmatch(r"[0-9a-f]{40}", github_sha):
-        return github_sha
+        rc_exists, _ = run_git(project_root, ["cat-file", "-e", f"{github_sha}^{{commit}}"])
+        if rc_exists == 0:
+            return github_sha
     rc, head = run_git(project_root, ["rev-parse", "HEAD"])
     return head if rc == 0 and re.fullmatch(r"[0-9a-f]{40}", head) else ""
 
@@ -256,7 +260,13 @@ def verify_git_snapshot_facts(
         captured_at = captured_matches[0]
 
     expected_branch = resolve_snapshot_branch_name(project_root)
-    if recorded_branch is not None and expected_branch != "HEAD" and recorded_branch != expected_branch:
+    # A feature-branch snapshot remains valid after its PR is merged to main.
+    # The captured local_head is independently checked against branch history below.
+    if (
+        recorded_branch is not None
+        and expected_branch not in ("HEAD", "main")
+        and recorded_branch != expected_branch
+    ):
         errors.append(
             f"{prefix}_GIT_SNAPSHOT_BRANCH_MISMATCH: recorded '{recorded_branch}', live branch '{expected_branch}'"
         )
@@ -267,10 +277,6 @@ def verify_git_snapshot_facts(
     remote_main_head = query_remote_main_head(project_root)
     if remote_main_head == "NOT_VERIFIABLE":
         errors.append(f"{prefix}_GIT_SNAPSHOT_REMOTE_MAIN_NOT_VERIFIABLE: origin/main could not be queried")
-    elif recorded_remote_head is not None and recorded_remote_head != remote_main_head:
-        errors.append(
-            f"{prefix}_GIT_SNAPSHOT_REMOTE_MAIN_MISMATCH: recorded '{recorded_remote_head}', live origin/main '{remote_main_head}'"
-        )
 
     branch_tip = resolve_snapshot_branch_tip(project_root)
     if not branch_tip:
@@ -302,6 +308,23 @@ def verify_git_snapshot_facts(
             elif recorded_local_head is not None and recorded_local_head != expected_capture_head:
                 errors.append(
                     f"{prefix}_GIT_SNAPSHOT_LOCAL_HEAD_MISMATCH: recorded '{recorded_local_head}', expected '{expected_capture_head}' from branch history at '{captured_at}'"
+                )
+
+        # origin/main may advance after the snapshot (for example, when this PR merges).
+        # Compare the recorded value with origin/main as it existed at captured_at.
+        if remote_main_head != "NOT_VERIFIABLE" and captured_at:
+            rc, expected_remote_at_capture = run_git(
+                project_root,
+                ["log", "-1", "--format=%H", f"--before={captured_at}", remote_main_head],
+                timeout=8,
+            )
+            if rc != 0 or not re.fullmatch(r"[0-9a-f]{40}", expected_remote_at_capture):
+                errors.append(
+                    f"{prefix}_GIT_SNAPSHOT_REMOTE_MAIN_AT_CAPTURE_NOT_VERIFIABLE: could not resolve origin/main at '{captured_at}'"
+                )
+            elif recorded_remote_head is not None and recorded_remote_head != expected_remote_at_capture:
+                errors.append(
+                    f"{prefix}_GIT_SNAPSHOT_REMOTE_MAIN_MISMATCH: recorded '{recorded_remote_head}', origin/main at capture '{expected_remote_at_capture}'"
                 )
 
     return errors
