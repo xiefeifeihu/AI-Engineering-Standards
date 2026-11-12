@@ -42,6 +42,7 @@ from tools.generate_handoff import (
 from tools.release_evidence import (
     load_release_evidence,
     resolve_release_evidence_path,
+    verify_git_tag,
     verify_github_ci_runs,
     verify_single_github_run,
 )
@@ -1735,6 +1736,368 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             ], capture_output=True, text=True, encoding="utf-8")
             self.assertNotEqual(res12_h.returncode, 0)
             self.assertTrue("RELEASE_EVIDENCE_NOT_FOUND" in (res12_h.stdout + res12_h.stderr) or "snapshot evidence error" in res12_h.stdout)
+
+    def test_b18_v300_released_evidence_and_three_chains_authenticity_governance(self) -> None:
+        """STD-034 / STD-035 (Std-019): 20 test cases for v3.0.0 RELEASED evidence, three independent verification
+        chains (Main CI, PR CI, PR Merge Authenticity), remote Tag verification, and dynamic Git state governance.
+        """
+        canonical_repo = "xiefeifeihu/AI-Engineering-Standards"
+        repo_owner = "xiefeifeihu"
+        peeled_commit = "8b223019c254e0edeb94576b94af46c1e48b0316"
+        tag_obj_sha = "8256bb384e62894219db0992a2cb57e16d4fa8cd"
+        pr_head_sha = "a6d3284e14c609d8284f2812c206e913a00a0c07"
+        pr_head_ref = "fix/std-016-merged-pr-run-evidence"
+        main_run_id = "42996232217"
+        pr_run_id = "42995008952"
+        pr_number = 10
+        release_tag = "v3.0.0"
+        workflow_path = ".github/workflows/standards-ci.yml"
+
+        base_released_evidence = {
+            "repository": canonical_repo,
+            "version": "3.0.0",
+            "pr_number": pr_number,
+            "pr_status": "MERGED",
+            "main_head": peeled_commit,
+            "candidate_commit": peeled_commit,
+            "snapshot_commit": peeled_commit,
+            "last_verified_ci_commit": peeled_commit,
+            "main_ci_run_id": main_run_id,
+            "push_run_id": main_run_id,
+            "push_head_branch": "main",
+            "pr_run_id": pr_run_id,
+            "ci_status": "PASS",
+            "test_count": 222,
+            "test_failed": 0,
+            "test_skipped": 0,
+            "windows_status": "PASS",
+            "ubuntu_status": "PASS",
+            "old_tag_deleted": True,
+            "old_tag_object": "325008af90a1e6dcc88ff714c9ec4e7ecee86ec6",
+            "old_tag_peeled_commit": "1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b",
+            "old_tag_bundle_sha256": "45bc3e455fc06b96a669ba9d7c44195f5dfb4e42e55397d795200942e434ebfc",
+            "release_flow_status": "RELEASED",
+            "release_tag": release_tag,
+            "tag_object_sha": tag_obj_sha,
+            "peeled_commit": peeled_commit,
+            "tag_publish_status": "PASS",
+            "pr_merged": True,
+            "pr_merged_by": repo_owner,
+            "task_id": "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT",
+        }
+
+        base_main_run_data = {
+            "id": int(main_run_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": peeled_commit,
+            "headSha": peeled_commit,
+            "event": "push",
+            "status": "completed",
+            "conclusion": "success",
+            "path": workflow_path,
+            "head_branch": "main",
+            "headBranch": "main",
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "jobs": [
+                {"name": "Validate Schemas, Docs, Baseline, Handoff, Sync & Approval Contracts (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Validate Schemas, Docs, Baseline, Handoff, Sync & Approval Contracts (windows-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Publish Standards Tag after main CI", "status": "completed", "conclusion": "success"},
+            ],
+        }
+
+        base_pr_run_data = {
+            "id": int(pr_run_id),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": pr_head_sha,
+            "headSha": pr_head_sha,
+            "event": "pull_request",
+            "status": "completed",
+            "conclusion": "success",
+            "path": workflow_path,
+            "head_branch": pr_head_ref,
+            "headBranch": pr_head_ref,
+            "repository": {"full_name": canonical_repo, "name": "AI-Engineering-Standards"},
+            "pull_requests": [
+                {"number": pr_number, "base": {"ref": "main"}, "head": {"ref": pr_head_ref, "sha": pr_head_sha}}
+            ],
+            "jobs": [
+                {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+            ],
+        }
+
+        base_pr_api_data = {
+            "number": pr_number,
+            "state": "closed",
+            "merged": True,
+            "merged_at": "2026-11-11T09:33:50Z",
+            "merge_commit_sha": peeled_commit,
+            "merged_by": {"login": repo_owner},
+            "base": {"ref": "main", "sha": "3cd42b69049b148bceea1324d4f8212393cb96df"},
+            "head": {"ref": pr_head_ref, "sha": pr_head_sha},
+        }
+
+        valid_ls_remote = f"{tag_obj_sha}\trefs/tags/{release_tag}\n{peeled_commit}\trefs/tags/{release_tag}^{{}}\n"
+
+        # 1. 正向用例：RELEASED 完整三链 + Annotated Tag 全部通过 -> PASS
+        st1, errs1, det1 = verify_github_ci_runs(
+            base_released_evidence,
+            project_root=ROOT,
+            simulate_data_map={
+                main_run_id: base_main_run_data,
+                pr_run_id: base_pr_run_data,
+                "ls_remote": valid_ls_remote,
+            },
+            simulate_pr_data_map={str(pr_number): base_pr_api_data},
+        )
+        self.assertEqual(st1, "PASS")
+        self.assertEqual(errs1, [])
+        self.assertTrue(det1["tag_publish_verified"])
+        self.assertEqual(det1["chains"]["chain_a_main_ci"], "PASS")
+        self.assertEqual(det1["chains"]["chain_b_pr_ci"], "PASS")
+
+        # 2. 负向用例：PR Run ID 错误
+        ev2 = dict(base_released_evidence, pr_run_id="99999999999")
+        st2, errs2, _ = verify_github_ci_runs(
+            ev2,
+            project_root=ROOT,
+            simulate_data_map={
+                main_run_id: base_main_run_data,
+                "99999999999": dict(base_pr_run_data, id=11111111111),
+                "ls_remote": valid_ls_remote,
+            },
+            simulate_pr_data_map={str(pr_number): base_pr_api_data},
+        )
+        self.assertEqual(st2, "FAIL")
+        self.assertTrue(any("id mismatch" in e.lower() for e in errs2))
+
+        # 3. 负向用例：PR Run HEAD 与 PR HEAD 不一致
+        sim3_pr = dict(base_pr_run_data, head_sha="0000000000000000000000000000000000000000", headSha="0000000000000000000000000000000000000000")
+        st3, errs3, _ = verify_github_ci_runs(
+            base_released_evidence,
+            project_root=ROOT,
+            simulate_data_map={
+                main_run_id: base_main_run_data,
+                pr_run_id: sim3_pr,
+                "ls_remote": valid_ls_remote,
+            },
+            simulate_pr_data_map={str(pr_number): base_pr_api_data},
+        )
+        self.assertEqual(st3, "FAIL")
+        self.assertTrue(any("head_sha mismatch" in e.lower() for e in errs3))
+
+        # 4. 负向用例：PR base.ref 不为 main
+        sim4_pr_api = dict(base_pr_api_data, base={"ref": "feat/untrusted-branch"})
+        st4, errs4, _ = verify_github_ci_runs(
+            base_released_evidence,
+            project_root=ROOT,
+            simulate_data_map={
+                main_run_id: base_main_run_data,
+                pr_run_id: base_pr_run_data,
+                "ls_remote": valid_ls_remote,
+            },
+            simulate_pr_data_map={str(pr_number): sim4_pr_api},
+        )
+        self.assertEqual(st4, "FAIL")
+        self.assertTrue(any("base.ref" in e.lower() or "base ref" in e.lower() for e in errs4))
+
+        # 5. 负向用例：PR merged_by 不是仓库 Owner
+        sim5_pr_api = dict(base_pr_api_data, merged_by={"login": "unauthorized-contributor"})
+        st5, errs5, _ = verify_github_ci_runs(
+            base_released_evidence,
+            project_root=ROOT,
+            simulate_data_map={
+                main_run_id: base_main_run_data,
+                pr_run_id: base_pr_run_data,
+                "ls_remote": valid_ls_remote,
+            },
+            simulate_pr_data_map={str(pr_number): sim5_pr_api},
+        )
+        self.assertEqual(st5, "FAIL")
+        self.assertTrue(any("not repository owner" in e.lower() or "merged by" in e.lower() for e in errs5))
+
+        # 6. 负向用例：PR merge_commit_sha 缺失
+        sim6_pr_api = dict(base_pr_api_data, merge_commit_sha=None)
+        st6, errs6, _ = verify_github_ci_runs(
+            base_released_evidence,
+            project_root=ROOT,
+            simulate_data_map={
+                main_run_id: base_main_run_data,
+                pr_run_id: base_pr_run_data,
+                "ls_remote": valid_ls_remote,
+            },
+            simulate_pr_data_map={str(pr_number): sim6_pr_api},
+        )
+        self.assertEqual(st6, "FAIL")
+        self.assertTrue(any("merge_commit_sha is missing" in e.lower() for e in errs6))
+
+        # 7. 负向用例：PR merge_commit_sha 与 peeled_commit 不一致
+        sim7_pr_api = dict(base_pr_api_data, merge_commit_sha="1111111111111111111111111111111111111111")
+        st7, errs7, _ = verify_github_ci_runs(
+            base_released_evidence,
+            project_root=ROOT,
+            simulate_data_map={
+                main_run_id: base_main_run_data,
+                pr_run_id: base_pr_run_data,
+                "ls_remote": valid_ls_remote,
+            },
+            simulate_pr_data_map={str(pr_number): sim7_pr_api},
+        )
+        self.assertEqual(st7, "FAIL")
+        self.assertTrue(any("merge commit" in e.lower() for e in errs7))
+
+        # 8. 负向用例：Main CI head_sha 与 peeled_commit 不一致
+        sim8_main = dict(base_main_run_data, head_sha="2222222222222222222222222222222222222222", headSha="2222222222222222222222222222222222222222")
+        st8, errs8, _ = verify_github_ci_runs(
+            base_released_evidence,
+            project_root=ROOT,
+            simulate_data_map={
+                main_run_id: sim8_main,
+                pr_run_id: base_pr_run_data,
+                "ls_remote": valid_ls_remote,
+            },
+            simulate_pr_data_map={str(pr_number): base_pr_api_data},
+        )
+        self.assertEqual(st8, "FAIL")
+        self.assertTrue(any("head_sha mismatch" in e.lower() for e in errs8))
+
+        # 9. 负向用例：Main CI Windows Job 失败
+        sim9_main = dict(base_main_run_data, jobs=[
+            {"name": "Validate Schemas (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+            {"name": "Validate Schemas (windows-latest)", "status": "completed", "conclusion": "failure"},
+            {"name": "Publish Standards Tag after main CI", "status": "completed", "conclusion": "success"},
+        ])
+        st9, errs9, _ = verify_github_ci_runs(
+            base_released_evidence,
+            project_root=ROOT,
+            simulate_data_map={
+                main_run_id: sim9_main,
+                pr_run_id: base_pr_run_data,
+                "ls_remote": valid_ls_remote,
+            },
+            simulate_pr_data_map={str(pr_number): base_pr_api_data},
+        )
+        self.assertEqual(st9, "FAIL")
+        self.assertTrue(any("windows job conclusion" in e.lower() for e in errs9))
+
+        # 10. 负向用例：Main CI Ubuntu Job 失败
+        sim10_main = dict(base_main_run_data, jobs=[
+            {"name": "Validate Schemas (ubuntu-latest)", "status": "completed", "conclusion": "failure"},
+            {"name": "Validate Schemas (windows-latest)", "status": "completed", "conclusion": "success"},
+            {"name": "Publish Standards Tag after main CI", "status": "completed", "conclusion": "success"},
+        ])
+        st10, errs10, _ = verify_github_ci_runs(
+            base_released_evidence,
+            project_root=ROOT,
+            simulate_data_map={
+                main_run_id: sim10_main,
+                pr_run_id: base_pr_run_data,
+                "ls_remote": valid_ls_remote,
+            },
+            simulate_pr_data_map={str(pr_number): base_pr_api_data},
+        )
+        self.assertEqual(st10, "FAIL")
+        self.assertTrue(any("ubuntu job conclusion" in e.lower() for e in errs10))
+
+        # 11. 负向用例：Main CI Tag Publish Job 失败
+        sim11_main = dict(base_main_run_data, jobs=[
+            {"name": "Validate Schemas (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+            {"name": "Validate Schemas (windows-latest)", "status": "completed", "conclusion": "success"},
+            {"name": "Publish Standards Tag after main CI", "status": "completed", "conclusion": "failure"},
+        ])
+        st11, errs11, _ = verify_github_ci_runs(
+            base_released_evidence,
+            project_root=ROOT,
+            simulate_data_map={
+                main_run_id: sim11_main,
+                pr_run_id: base_pr_run_data,
+                "ls_remote": valid_ls_remote,
+            },
+            simulate_pr_data_map={str(pr_number): base_pr_api_data},
+        )
+        self.assertEqual(st11, "FAIL")
+        self.assertTrue(any("tag publish job" in e.lower() for e in errs11))
+
+        # 12. 负向用例：远端 Tag 缺失
+        st12, errs12 = verify_git_tag(ROOT, release_tag, tag_obj_sha, peeled_commit, simulate_ls_remote="")
+        self.assertEqual(st12, "FAIL")
+        self.assertTrue(any("not found" in e.lower() for e in errs12))
+
+        # 13. 负向用例：远端 Tag Object SHA 不匹配
+        bad_obj_ls = f"3333333333333333333333333333333333333333\trefs/tags/{release_tag}\n{peeled_commit}\trefs/tags/{release_tag}^{{}}\n"
+        st13, errs13 = verify_git_tag(ROOT, release_tag, tag_obj_sha, peeled_commit, simulate_ls_remote=bad_obj_ls)
+        self.assertEqual(st13, "FAIL")
+        self.assertTrue(any("object sha mismatch" in e.lower() for e in errs13))
+
+        # 14. 负向用例：远端 Peeled Commit 不匹配
+        bad_peeled_ls = f"{tag_obj_sha}\trefs/tags/{release_tag}\n4444444444444444444444444444444444444444\trefs/tags/{release_tag}^{{}}\n"
+        st14, errs14 = verify_git_tag(ROOT, release_tag, tag_obj_sha, peeled_commit, simulate_ls_remote=bad_peeled_ls)
+        self.assertEqual(st14, "FAIL")
+        self.assertTrue(any("peeled commit mismatch" in e.lower() for e in errs14))
+
+        # 15. 负向用例：Lightweight Tag 被拒绝
+        lightweight_ls = f"{peeled_commit}\trefs/tags/{release_tag}\n"
+        st15, errs15 = verify_git_tag(ROOT, release_tag, tag_obj_sha, peeled_commit, simulate_ls_remote=lightweight_ls)
+        self.assertEqual(st15, "FAIL")
+        self.assertTrue(any("lightweight" in e.lower() or "not an annotated tag" in e.lower() for e in errs15))
+
+        # 16. 负向用例：API 不可达返回 NOT_VERIFIABLE
+        st16, errs16, _ = verify_github_ci_runs(
+            base_released_evidence,
+            project_root=ROOT,
+            simulate_data_map={
+                main_run_id: base_main_run_data,
+                pr_run_id: base_pr_run_data,
+                "ls_remote": valid_ls_remote,
+            },
+            simulate_pr_error_map={str(pr_number): "HTTP 503: GitHub API Service Unavailable"},
+        )
+        self.assertEqual(st16, "NOT_VERIFIABLE")
+        self.assertTrue(any("service unavailable" in e.lower() or "not accessible" in e.lower() for e in errs16))
+
+        # 17. 显式 version 查询不被 final evidence 覆盖
+        resolved_211 = resolve_release_evidence_path(ROOT, version="2.11.0")
+        self.assertIn("v2.11.0", resolved_211.name)
+        self.assertNotIn("std019", resolved_211.name)
+
+        # 18. 发布证据三作用域重复/缺失字段负向测试
+        baseline_text = (ROOT / "docs" / "当前权威基线.md").read_text(encoding="utf-8")
+        from tools.generate_engineering_baseline import extract_scope_content
+        _, miss_errs = extract_scope_content(baseline_text, "NON_EXISTENT_SCOPE_TEST")
+        self.assertTrue(any("SCOPE_SECTION_MISSING" in e for e in miss_errs))
+
+        # 19. Handoff 动态 Git HEAD 篡改在 verify-only 被捕获
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            from tools.validate_approval_contract import compute_canonical_document_sha256
+            h_text = (ROOT / "docs" / "CROSS-SESSION-HANDOFF.md").read_text(encoding="utf-8")
+            tampered_h = h_text.replace(peeled_commit, "5555555555555555555555555555555555555555")
+            t_sha = compute_canonical_document_sha256(tampered_h)
+            tampered_h = re.sub(r'content_sha256:\s*"[^"]*"', f'content_sha256: "{t_sha}"', tampered_h)
+            p_h = tmp / "CROSS-SESSION-HANDOFF.md"
+            p_h.write_text(tampered_h, encoding="utf-8")
+            res19 = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "generate_handoff.py"), "--project-root", str(ROOT), "--output", str(p_h), "--verify-only"],
+                capture_output=True, text=True, encoding="utf-8"
+            )
+            self.assertNotEqual(res19.returncode, 0)
+            self.assertTrue("mismatches" in res19.stdout or "FAIL" in res19.stdout)
+
+        # 20. Baseline 动态 Git 状态不一致在 verify-only 被捕获
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            b_text = (ROOT / "docs" / "当前权威基线.md").read_text(encoding="utf-8")
+            tampered_b = b_text.replace(peeled_commit, "6666666666666666666666666666666666666666")
+            b_sha = compute_canonical_document_sha256(tampered_b)
+            tampered_b = re.sub(r'content_sha256:\s*"[^"]*"', f'content_sha256: "{b_sha}"', tampered_b)
+            p_b = tmp / "当前权威基线.md"
+            p_b.write_text(tampered_b, encoding="utf-8")
+            res20 = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"), "--project-root", str(ROOT), "--output", str(p_b), "--verify-only"],
+                capture_output=True, text=True, encoding="utf-8"
+            )
+            self.assertNotEqual(res20.returncode, 0)
+            self.assertTrue("mismatches" in res20.stdout or "FAIL" in res20.stdout)
 
     # =========================================================================
     # C. Standards Sync Tool Tests

@@ -505,6 +505,8 @@ def build_engineering_baseline(
     historical_ci_runs: Optional[List[str]] = None,
     release_evidence_path: Optional[str] = None,
     release_evidence: Optional[Dict[str, Any]] = None,
+    snapshot_evidence_path: Optional[str] = None,
+    final_evidence_path: Optional[str] = None,
     ci_fact_override: Optional[Dict[str, Any]] = None,
     build_fact_override: Optional[Dict[str, Any]] = None,
     runtime_fact_override: Optional[Dict[str, Any]] = None,
@@ -776,9 +778,10 @@ def build_engineering_baseline(
     )
     snapshot_commit = (
         snapshot_commit_override
+        or (local_head if local_head != "NOT_VERIFIABLE" else None)
         or (evidence_data.get("snapshot_commit") if evidence_data else None)
         or existing_facts.get("snapshot_commit")
-        or (local_head if local_head != "NOT_VERIFIABLE" else source_commit)
+        or source_commit
     )
     verified_ci = (
         last_verified_ci_commit
@@ -1400,6 +1403,8 @@ def main() -> None:
         ci_summary=args.ci_summary,
         pending_verifications=args.pending_verifications,
         release_evidence_path=args.release_evidence,
+        snapshot_evidence_path=args.snapshot_evidence,
+        final_evidence_path=args.final_evidence,
     )
     if not ok or payload is None or md_text is None:
         print(f"[FAIL] Engineering baseline generation blocked ({len(errors)} issues):")

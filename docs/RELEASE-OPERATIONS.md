@@ -9,7 +9,7 @@ approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
-last_updated: "2026-11-05"
+last_updated: "2026-11-12"
 supersedes: null
 change_summary: "Release & Operations Manual for AI-Engineering-Standards v3.0.0 covering Single Owner PR Merge approval governance, Draft PR gate, independent review, main CI verification, and Annotated Tag governance."
 history_reference: "standards/13-git-release/STD-017-git-release-versioning.md"

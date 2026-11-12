@@ -451,6 +451,8 @@ def build_handoff_payload(
     pending_verifications: Optional[str] = None,
     release_evidence_path: Optional[str] = None,
     release_evidence: Optional[Dict[str, Any]] = None,
+    snapshot_evidence_path: Optional[str] = None,
+    final_evidence_path: Optional[str] = None,
     standards_root: Optional[Path] = None,
 ) -> Tuple[bool, List[str], Optional[Dict[str, Any]], Optional[str]]:
     errors: List[str] = []
@@ -518,12 +520,10 @@ def build_handoff_payload(
             evidence_data = ev_loaded
 
     rc_head, git_head = run_git(project_root, ["rev-parse", "HEAD"])
-    local_head = snapshot_commit_override or (
-        (evidence_data.get("snapshot_commit") if evidence_data else None)
-        or (git_head if rc_head == 0 and re.match(r"^[0-9a-f]{40}$", git_head) else "")
+    live_head = git_head if rc_head == 0 and re.match(r"^[0-9a-f]{40}$", git_head) else ""
+    local_head = snapshot_commit_override or live_head or (
+        (evidence_data.get("snapshot_commit") if evidence_data else None) or ""
     )
-    if not local_head and evidence_data and evidence_data.get("snapshot_commit"):
-        local_head = str(evidence_data["snapshot_commit"])
     if not local_head:
         errors.append("HANDOFF_INVALID_COMMIT: Local Git HEAD is not a valid 40-character SHA")
 
@@ -1141,6 +1141,8 @@ def main() -> None:
         ci_run_override=ci_override,
         captured_at=args.captured_at,
         release_evidence_path=args.release_evidence,
+        snapshot_evidence_path=args.snapshot_evidence,
+        final_evidence_path=args.final_evidence,
         standards_root=standards_root,
     )
     if not ok or payload is None or md_text is None:
@@ -1317,6 +1319,8 @@ def main() -> None:
         ci_run_override=ci_override,
         captured_at=args.captured_at,
         release_evidence_path=args.release_evidence,
+        snapshot_evidence_path=args.snapshot_evidence,
+        final_evidence_path=args.final_evidence,
         standards_root=standards_root,
     )
     if not ok:

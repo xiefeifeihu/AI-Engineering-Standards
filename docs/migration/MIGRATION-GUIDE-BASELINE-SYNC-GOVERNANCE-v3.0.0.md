@@ -9,7 +9,7 @@ approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
-last_updated: "2026-11-05"
+last_updated: "2026-11-12"
 supersedes: null
 change_summary: "AI-Engineering-Hub first consumer pilot plan for Standards v3.0.0 official release; other consumers excluded."
 history_reference: null

@@ -11,7 +11,7 @@ change_summary: "自动采集生成任务 Std-019-V3-0-0-POST-RELEASE-CLOSEOUT �
 history_reference: null
 primary_entrypoint: true
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:29cc51f006eac0315da91337265cd9c71d412f1cf1d6133ce07c1534e5efbdba"
+content_sha256: "sha256:3644d54b0bd30fafa944d621e436eba2b0264c54475d2c5d2b0fe0767695ff58"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
@@ -82,7 +82,7 @@ CONTENT_SHA256=sha256:864bbb15930e218ab703a9ac238c78e4a0d807d5d6ca358caffb5991bd
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 - **历史记录说明**：PR #9（219 tests PASS）已合入 main，等待 main CI 修复后重建 Tag。
 
-### 4.2 Std-018 当前工程快照与当前 CI 验证 (STD018_CURRENT_SNAPSHOT)
+### 4.2 Std-018 历史工程快照与治理追踪 (STD018_CURRENT_SNAPSHOT)
 - **任务编号 (`task_id`)**：`Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT`
 - **当前候选 Commit**：`21939da5e13eb39dedd0557561e88e1342be694c`
 - **本地 HEAD (`local_head`)**：`21939da5e13eb39dedd0557561e88e1342be694c`
