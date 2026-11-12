@@ -219,6 +219,167 @@ def extract_scope_content(content: str, scope_tag: str) -> Tuple[str, List[str]]
     return "\n".join(scoped_lines), []
 
 
+
+def resolve_snapshot_branch_name(project_root: Path) -> str:
+    rc, branch = run_git(project_root, ["branch", "--show-current"])
+    if rc == 0 and branch and branch != "HEAD":
+        return branch
+    for key in ("GITHUB_HEAD_REF", "GITHUB_REF_NAME"):
+        value = os.environ.get(key, "").strip()
+        if value and value != "HEAD":
+            return value
+    ref = os.environ.get("GITHUB_REF", "").strip()
+    if ref.startswith("refs/heads/"):
+        return ref[len("refs/heads/"):]
+    return "HEAD"
+
+
+def resolve_snapshot_branch_tip(project_root: Path) -> str:
+    event_path = os.environ.get("GITHUB_EVENT_PATH", "").strip()
+    if event_path and Path(event_path).is_file():
+        try:
+            event_data = json.loads(Path(event_path).read_text(encoding="utf-8"))
+            pull_request = event_data.get("pull_request")
+            if isinstance(pull_request, dict):
+                head_data = pull_request.get("head")
+                head_sha = head_data.get("sha") if isinstance(head_data, dict) else None
+                if isinstance(head_sha, str) and re.fullmatch(r"[0-9a-f]{40}", head_sha):
+                    return head_sha
+        except Exception:
+            pass
+    github_sha = os.environ.get("GITHUB_SHA", "").strip()
+    if re.fullmatch(r"[0-9a-f]{40}", github_sha):
+        return github_sha
+    rc, head = run_git(project_root, ["rev-parse", "HEAD"])
+    return head if rc == 0 and re.fullmatch(r"[0-9a-f]{40}", head) else ""
+
+
+def verify_git_snapshot_facts(
+    project_root: Path,
+    content: str,
+    document_kind: str,
+) -> List[str]:
+    """Verify recorded Git facts against the exact branch history at captured_at.
+
+    local_head is a time-bound snapshot. It must equal the latest commit on the
+    current PR/push branch whose committer date is not later than captured_at.
+    """
+    errors: List[str] = []
+    if document_kind == "baseline":
+        identity_match = re.search(
+            r"## 8\. Git 分支及 Commit 身份.*?(?=\n## 9\.)",
+            content,
+            re.S,
+        )
+        if not identity_match:
+            return ["BASELINE_GIT_SNAPSHOT_SECTION_MISSING: Git identity section not found"]
+        identity_text = identity_match.group(0)
+        scope_text, scope_errors = extract_scope_content(
+            content, "Std-019 正式发布收口事实与治理追踪"
+        )
+        if scope_errors:
+            return [f"BASELINE_GIT_SNAPSHOT_CAPTURE_SCOPE_INVALID: {e}" for e in scope_errors]
+        captured_matches = re.findall(
+            r"Git 快照观测时间.*?\x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
+            scope_text,
+        )
+        remote_pattern = r"远端 main \(\x60remote_main_head\x60\)\*\*：\x60([0-9a-f]{40})\x60"
+        prefix = "BASELINE"
+    elif document_kind == "handoff":
+        identity_text = content.split("## 2. 当前 Standards 锁定", 1)[0]
+        captured_matches = re.findall(
+            r"^CAPTURED_AT=(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)$",
+            identity_text,
+            re.M,
+        )
+        remote_pattern = r"远端 main \(\x60remote_head\x60\)\*\*：\x60([0-9a-f]{40})\x60"
+        prefix = "HANDOFF"
+    else:
+        return [f"GIT_SNAPSHOT_UNSUPPORTED_DOCUMENT_KIND: {document_kind}"]
+
+    def one(pattern: str, label: str) -> Optional[str]:
+        matches = re.findall(pattern, identity_text)
+        if len(matches) != 1:
+            errors.append(
+                f"{prefix}_GIT_SNAPSHOT_FIELD_CARDINALITY: {label} expected exactly one value, found {len(matches)}"
+            )
+            return None
+        return matches[0]
+
+    recorded_branch = one(
+        r"当前分支 \(\x60branch\x60\)\*\*：\x60([^\x60]+)\x60",
+        "branch",
+    )
+    recorded_local_head = one(
+        r"本地 HEAD \(\x60local_head\x60\)\*\*：\x60([0-9a-f]{40})\x60",
+        "local_head",
+    )
+    recorded_remote_head = one(remote_pattern, "remote_main_head")
+    recorded_worktree_clean = one(
+        r"工作区干净状态 \(\x60worktree_clean\x60\)\*\*：\x60(true|false)\x60",
+        "worktree_clean",
+    )
+
+    if len(captured_matches) != 1:
+        errors.append(
+            f"{prefix}_GIT_SNAPSHOT_CAPTURE_TIME_CARDINALITY: expected exactly one capture timestamp, found {len(captured_matches)}"
+        )
+        captured_at = None
+    else:
+        captured_at = captured_matches[0]
+
+    expected_branch = resolve_snapshot_branch_name(project_root)
+    if recorded_branch is not None and expected_branch != "HEAD" and recorded_branch != expected_branch:
+        errors.append(
+            f"{prefix}_GIT_SNAPSHOT_BRANCH_MISMATCH: recorded '{recorded_branch}', live branch '{expected_branch}'"
+        )
+
+    if recorded_worktree_clean not in ("true", "false"):
+        errors.append(f"{prefix}_GIT_SNAPSHOT_WORKTREE_STATE_INVALID: expected true/false")
+
+    remote_main_head = query_remote_main_head(project_root)
+    if remote_main_head == "NOT_VERIFIABLE":
+        errors.append(f"{prefix}_GIT_SNAPSHOT_REMOTE_MAIN_NOT_VERIFIABLE: origin/main could not be queried")
+    elif recorded_remote_head is not None and recorded_remote_head != remote_main_head:
+        errors.append(
+            f"{prefix}_GIT_SNAPSHOT_REMOTE_MAIN_MISMATCH: recorded '{recorded_remote_head}', live origin/main '{remote_main_head}'"
+        )
+
+    branch_tip = resolve_snapshot_branch_tip(project_root)
+    if not branch_tip:
+        errors.append(f"{prefix}_GIT_SNAPSHOT_BRANCH_TIP_NOT_VERIFIABLE: current branch tip unavailable")
+
+    if captured_at:
+        try:
+            captured_dt = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+            if captured_dt.tzinfo is None:
+                raise ValueError("timezone missing")
+            age_seconds = (datetime.now(timezone.utc) - captured_dt).total_seconds()
+            if age_seconds < -300 or age_seconds > 24 * 60 * 60:
+                errors.append(
+                    f"{prefix}_GIT_SNAPSHOT_STALE: captured_at '{captured_at}' is outside the 24-hour validity window"
+                )
+        except Exception as exc:
+            errors.append(f"{prefix}_GIT_SNAPSHOT_CAPTURE_TIME_INVALID: {exc}")
+
+        if branch_tip:
+            rc, expected_capture_head = run_git(
+                project_root,
+                ["log", "-1", "--format=%H", f"--before={captured_at}", branch_tip],
+                timeout=8,
+            )
+            if rc != 0 or not re.fullmatch(r"[0-9a-f]{40}", expected_capture_head):
+                errors.append(
+                    f"{prefix}_GIT_SNAPSHOT_CAPTURE_COMMIT_NOT_VERIFIABLE: could not resolve branch history at '{captured_at}'"
+                )
+            elif recorded_local_head is not None and recorded_local_head != expected_capture_head:
+                errors.append(
+                    f"{prefix}_GIT_SNAPSHOT_LOCAL_HEAD_MISMATCH: recorded '{recorded_local_head}', expected '{expected_capture_head}' from branch history at '{captured_at}'"
+                )
+
+    return errors
+
+
 def extract_line_field_matches(target_text: str, patterns: List[str]) -> List[str]:
     matches: List[str] = []
     seen_capture_spans: set[Tuple[int, int, int]] = set()
@@ -648,8 +809,7 @@ def build_engineering_baseline(
         errors.append("BASELINE_CONFLICT_INVALID_COMMIT: Local Git HEAD is not a valid 40-character SHA")
         source_commit = ""
 
-    rc_branch, git_branch = run_git(project_root, ["branch", "--show-current"])
-    branch_name = git_branch if rc_branch == 0 and git_branch else "HEAD"
+    branch_name = resolve_snapshot_branch_name(project_root)
     rc_status, git_status_out = run_git(project_root, ["status", "--porcelain"])
     worktree_clean = (len(git_status_out.strip()) == 0) if rc_status == 0 else None
 
@@ -752,10 +912,26 @@ def build_engineering_baseline(
 
     # Load release evidence if available
     evidence_data: Optional[Dict[str, Any]] = release_evidence
-    if evidence_data is None:
-        ev_ok, _, ev_loaded = load_release_evidence(project_root, release_evidence_path)
+    if snapshot_evidence_path:
+        snap_ok, snap_errors, _ = load_release_evidence(project_root, snapshot_evidence_path)
+        if not snap_ok:
+            errors.extend([f"BASELINE_SNAPSHOT_EVIDENCE_INVALID: {e}" for e in snap_errors])
+    if release_evidence_path and final_evidence_path:
+        pr9_ok, pr9_errors, _ = load_release_evidence(project_root, release_evidence_path)
+        if not pr9_ok:
+            errors.extend([f"BASELINE_HISTORICAL_RELEASE_EVIDENCE_INVALID: {e}" for e in pr9_errors])
+    if final_evidence_path:
+        final_ok, final_errors, final_loaded = load_release_evidence(project_root, final_evidence_path)
+        if not final_ok or final_loaded is None:
+            errors.extend([f"BASELINE_FINAL_RELEASE_EVIDENCE_INVALID: {e}" for e in final_errors])
+        else:
+            evidence_data = final_loaded
+    elif evidence_data is None:
+        ev_ok, ev_errors, ev_loaded = load_release_evidence(project_root, release_evidence_path)
         if ev_ok and ev_loaded:
             evidence_data = ev_loaded
+        elif release_evidence_path:
+            errors.extend([f"BASELINE_RELEASE_EVIDENCE_INVALID: {e}" for e in ev_errors])
 
     # Extract capabilities, boundaries, contracts, ADRs from authoritative sources
     pb_items = extract_bullet_items(source_docs["PRODUCT_BASELINE"][2], max_items=8) or [
@@ -1539,6 +1715,9 @@ def main() -> None:
             actual_content, expected_final_facts, scope="STD019_FINAL_RELEASE"
         )
         mismatches.extend([f"[STD019_SCOPE] {m}" for m in final_mismatches])
+        mismatches.extend(
+            [f"[GIT_SNAPSHOT] {m}" for m in verify_git_snapshot_facts(project_root, actual_content, "baseline")]
+        )
 
         if mismatches:
             print(f"[FAIL] Committed baseline mismatches generated facts ({len(mismatches)} issues):")

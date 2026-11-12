@@ -1738,7 +1738,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             self.assertTrue("RELEASE_EVIDENCE_NOT_FOUND" in (res12_h.stdout + res12_h.stderr) or "snapshot evidence error" in res12_h.stdout)
 
     def test_b18_v300_released_evidence_and_three_chains_authenticity_governance(self) -> None:
-        """STD-034 / STD-035 (Std-019): 20 test cases for v3.0.0 RELEASED evidence, three independent verification
+        """STD-034 / STD-035 (Std-019): 22 test cases for v3.0.0 RELEASED evidence, three independent verification
         chains (Main CI, PR CI, PR Merge Authenticity), remote Tag verification, and dynamic Git state governance.
         """
         canonical_repo = "xiefeifeihu/AI-Engineering-Standards"
@@ -2055,23 +2055,66 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         self.assertEqual(st16, "NOT_VERIFIABLE")
         self.assertTrue(any("service unavailable" in e.lower() or "not accessible" in e.lower() for e in errs16))
 
-        # 17. 显式 version 查询不被 final evidence 覆盖
+        # 17. 负向用例：PR API 缺失 number 必须 FAIL
+        sim17_pr_api = dict(base_pr_api_data)
+        sim17_pr_api.pop("number", None)
+        st17, errs17, _ = verify_github_ci_runs(
+            base_released_evidence,
+            project_root=ROOT,
+            simulate_data_map={
+                main_run_id: base_main_run_data,
+                pr_run_id: base_pr_run_data,
+                "ls_remote": valid_ls_remote,
+            },
+            simulate_pr_data_map={str(pr_number): sim17_pr_api},
+        )
+        self.assertEqual(st17, "FAIL")
+        self.assertTrue(any("PR_NUMBER_MISSING" in e for e in errs17))
+
+        # 18. 正常生成流程必须使用显式 snapshot/final evidence 路径
+        with patch("tools.generate_engineering_baseline.load_release_evidence", wraps=load_release_evidence) as baseline_loader:
+            build_engineering_baseline(
+                project_root=ROOT,
+                release_evidence_path="docs/release-evidence/v3.0.0-reissue.json",
+                snapshot_evidence_path="docs/release-evidence/std018-current-snapshot.json",
+                final_evidence_path="docs/release-evidence/std019-final-release.json",
+            )
+            baseline_paths = [str(call.args[1]) for call in baseline_loader.call_args_list if len(call.args) > 1]
+            self.assertIn("docs/release-evidence/std018-current-snapshot.json", baseline_paths)
+            self.assertIn("docs/release-evidence/std019-final-release.json", baseline_paths)
+        with patch("tools.generate_handoff.load_release_evidence", wraps=load_release_evidence) as handoff_loader:
+            build_handoff_payload(
+                project_root=ROOT,
+                task_id="Std-019-V3-0-0-POST-RELEASE-CLOSEOUT",
+                release_evidence_path="docs/release-evidence/v3.0.0-reissue.json",
+                snapshot_evidence_path="docs/release-evidence/std018-current-snapshot.json",
+                final_evidence_path="docs/release-evidence/std019-final-release.json",
+            )
+            handoff_paths = [str(call.args[1]) for call in handoff_loader.call_args_list if len(call.args) > 1]
+            self.assertIn("docs/release-evidence/std018-current-snapshot.json", handoff_paths)
+            self.assertIn("docs/release-evidence/std019-final-release.json", handoff_paths)
+
+        # 19. 显式 version 查询不被 final evidence 覆盖
         resolved_211 = resolve_release_evidence_path(ROOT, version="2.11.0")
         self.assertIn("v2.11.0", resolved_211.name)
         self.assertNotIn("std019", resolved_211.name)
 
-        # 18. 发布证据三作用域重复/缺失字段负向测试
+        # 20. 发布证据三作用域重复/缺失字段负向测试
         baseline_text = (ROOT / "docs" / "当前权威基线.md").read_text(encoding="utf-8")
         from tools.generate_engineering_baseline import extract_scope_content
         _, miss_errs = extract_scope_content(baseline_text, "NON_EXISTENT_SCOPE_TEST")
         self.assertTrue(any("SCOPE_SECTION_MISSING" in e for e in miss_errs))
 
-        # 19. Handoff 动态 Git HEAD 篡改在 verify-only 被捕获
+        # 21. Handoff 动态 Git HEAD 篡改在 verify-only 被捕获
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp = Path(tmp_dir)
             from tools.validate_approval_contract import compute_canonical_document_sha256
             h_text = (ROOT / "docs" / "CROSS-SESSION-HANDOFF.md").read_text(encoding="utf-8")
-            tampered_h = h_text.replace(peeled_commit, "5555555555555555555555555555555555555555")
+            h_local = re.search(r'本地 HEAD \(\x60local_head\x60\)\*\*：\x60([0-9a-f]{40})\x60', h_text)
+            self.assertIsNotNone(h_local, "Canonical handoff local_head field missing")
+            h_local_line = "- **本地 HEAD (" + chr(96) + "local_head" + chr(96) + ")**：" + chr(96) + h_local.group(1) + chr(96)
+            h_tampered_line = "- **本地 HEAD (" + chr(96) + "local_head" + chr(96) + ")**：" + chr(96) + "5555555555555555555555555555555555555555" + chr(96)
+            tampered_h = h_text.replace(h_local_line, h_tampered_line, 1)
             t_sha = compute_canonical_document_sha256(tampered_h)
             tampered_h = re.sub(r'content_sha256:\s*"[^"]*"', f'content_sha256: "{t_sha}"', tampered_h)
             p_h = tmp / "CROSS-SESSION-HANDOFF.md"
@@ -2083,11 +2126,15 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             self.assertNotEqual(res19.returncode, 0)
             self.assertTrue("mismatches" in res19.stdout or "FAIL" in res19.stdout)
 
-        # 20. Baseline 动态 Git 状态不一致在 verify-only 被捕获
+        # 22. Baseline 动态 Git 状态不一致在 verify-only 被捕获
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp = Path(tmp_dir)
             b_text = (ROOT / "docs" / "当前权威基线.md").read_text(encoding="utf-8")
-            tampered_b = b_text.replace(peeled_commit, "6666666666666666666666666666666666666666")
+            b_local = re.search(r'本地 HEAD \(\x60local_head\x60\)\*\*：\x60([0-9a-f]{40})\x60', b_text)
+            self.assertIsNotNone(b_local, "Canonical baseline local_head field missing")
+            b_local_line = "- **本地 HEAD (" + chr(96) + "local_head" + chr(96) + ")**：" + chr(96) + b_local.group(1) + chr(96)
+            b_tampered_line = "- **本地 HEAD (" + chr(96) + "local_head" + chr(96) + ")**：" + chr(96) + "6666666666666666666666666666666666666666" + chr(96)
+            tampered_b = b_text.replace(b_local_line, b_tampered_line, 1)
             b_sha = compute_canonical_document_sha256(tampered_b)
             tampered_b = re.sub(r'content_sha256:\s*"[^"]*"', f'content_sha256: "{b_sha}"', tampered_b)
             p_b = tmp / "当前权威基线.md"

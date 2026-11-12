@@ -862,7 +862,9 @@ def verify_github_ci_runs(
             # 1. PR number
             actual_pr_num = pr_data.get("number")
             pr_merge_meta["actual_pr_number"] = actual_pr_num
-            if actual_pr_num is not None and str(actual_pr_num) != str(pr_number):
+            if actual_pr_num is None:
+                pr_errors.append(f"PR_NUMBER_MISSING: PR API response is missing the number for expected PR #{pr_number}")
+            elif str(actual_pr_num) != str(pr_number):
                 pr_errors.append(f"PR_NUMBER_MISMATCH: PR #{pr_number} != actual #{actual_pr_num}")
 
             # 2. base.ref must be main
