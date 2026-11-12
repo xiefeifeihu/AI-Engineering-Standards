@@ -825,7 +825,7 @@ def verify_github_ci_runs(
         # =====================================================================
         # Chain C: PR Merge Authenticity & PR API Data Extraction
         # =====================================================================
-        pr_errors: List[str] = []
+        pr_merge_errors: List[str] = []
         pr_merge_meta: Dict[str, Any] = {}
 
         if simulate_pr_error_map is not None and (
@@ -857,33 +857,33 @@ def verify_github_ci_runs(
 
         if not pr_ok or pr_data is None:
             pr_api_st = "NOT_VERIFIABLE"
-            pr_errors.append(f"PR_API_NOT_ACCESSIBLE: {_sanitize_error_message(pr_err_msg)}")
+            pr_merge_errors.append(f"PR_API_NOT_ACCESSIBLE: {_sanitize_error_message(pr_err_msg)}")
         else:
             # 1. PR number
             actual_pr_num = pr_data.get("number")
             pr_merge_meta["actual_pr_number"] = actual_pr_num
             if actual_pr_num is None:
-                pr_errors.append(f"PR_NUMBER_MISSING: PR API response is missing the number for expected PR #{pr_number}")
+                pr_merge_errors.append(f"PR_NUMBER_MISSING: PR API response is missing the number for expected PR #{pr_number}")
             elif str(actual_pr_num) != str(pr_number):
-                pr_errors.append(f"PR_NUMBER_MISMATCH: PR #{pr_number} != actual #{actual_pr_num}")
+                pr_merge_errors.append(f"PR_NUMBER_MISMATCH: PR #{pr_number} != actual #{actual_pr_num}")
 
             # 2. base.ref must be main
             actual_base_ref = pr_data.get("base", {}).get("ref") if isinstance(pr_data.get("base"), dict) else None
             pr_merge_meta["actual_base_ref"] = actual_base_ref
             if actual_base_ref != "main":
-                pr_errors.append(f"PR_BASE_REF_MISMATCH: PR #{pr_number} base.ref is '{actual_base_ref}', expected 'main'")
+                pr_merge_errors.append(f"PR_BASE_REF_MISMATCH: PR #{pr_number} base.ref is '{actual_base_ref}', expected 'main'")
 
             # 3. merged=true
             actual_merged = pr_data.get("merged")
             pr_merge_meta["actual_merged"] = actual_merged
             if actual_merged is not True:
-                pr_errors.append(f"PR_NOT_MERGED: PR #{pr_number} merged status is {actual_merged}, expected True")
+                pr_merge_errors.append(f"PR_NOT_MERGED: PR #{pr_number} merged status is {actual_merged}, expected True")
 
             # 4. merged_at non-empty
             merged_at = pr_data.get("merged_at")
             pr_merge_meta["merged_at"] = merged_at
             if not merged_at:
-                pr_errors.append(f"PR_MERGED_AT_EMPTY: PR #{pr_number} merged_at is empty")
+                pr_merge_errors.append(f"PR_MERGED_AT_EMPTY: PR #{pr_number} merged_at is empty")
 
             # 5. merge_commit_sha must exist and equal peeled_commit
             actual_merge_sha = pr_data.get("merge_commit_sha") or (
@@ -891,9 +891,9 @@ def verify_github_ci_runs(
             )
             pr_merge_meta["actual_merge_commit_sha"] = actual_merge_sha
             if not actual_merge_sha:
-                pr_errors.append(f"PR_MERGE_COMMIT_MISSING: PR #{pr_number} merge_commit_sha is missing")
+                pr_merge_errors.append(f"PR_MERGE_COMMIT_MISSING: PR #{pr_number} merge_commit_sha is missing")
             elif actual_merge_sha != peeled_commit:
-                pr_errors.append(f"PR_MERGE_COMMIT_MISMATCH: PR #{pr_number} merge commit '{actual_merge_sha}' != peeled commit '{peeled_commit}'")
+                pr_merge_errors.append(f"PR_MERGE_COMMIT_MISMATCH: PR #{pr_number} merge commit '{actual_merge_sha}' != peeled commit '{peeled_commit}'")
 
             # 6. merged_by.login must equal repository owner
             actual_merged_by = None
@@ -904,13 +904,13 @@ def verify_github_ci_runs(
 
             pr_merge_meta["actual_merged_by"] = actual_merged_by
             if not actual_merged_by:
-                pr_errors.append(f"PR_MERGED_BY_MISSING: PR #{pr_number} merged_by is missing")
+                pr_merge_errors.append(f"PR_MERGED_BY_MISSING: PR #{pr_number} merged_by is missing")
             else:
                 if actual_merged_by != repo_owner:
-                    pr_errors.append(f"PR_MERGED_BY_NOT_OWNER: PR #{pr_number} merged by '{actual_merged_by}', which is not repository owner '{repo_owner}'")
+                    pr_merge_errors.append(f"PR_MERGED_BY_NOT_OWNER: PR #{pr_number} merged by '{actual_merged_by}', which is not repository owner '{repo_owner}'")
                 exp_merged_by = evidence.get("pr_merged_by")
                 if exp_merged_by and actual_merged_by != exp_merged_by:
-                    pr_errors.append(f"PR_MERGED_BY_MISMATCH: PR #{pr_number} merged by '{actual_merged_by}', expected '{exp_merged_by}'")
+                    pr_merge_errors.append(f"PR_MERGED_BY_MISMATCH: PR #{pr_number} merged by '{actual_merged_by}', expected '{exp_merged_by}'")
 
             # Extract PR head.ref and head.sha for Chain B
             if isinstance(pr_data.get("head"), dict):
@@ -920,6 +920,7 @@ def verify_github_ci_runs(
         # =====================================================================
         # Chain B: PR CI Run Independent Verification
         # =====================================================================
+        pr_ci_errors: List[str] = []
         pr_ci_meta: Dict[str, Any] = {}
         pr_run_id = str(evidence.get("pr_run_id"))
         sim_pr = simulate_data_map.get(pr_run_id) if simulate_data_map else None
@@ -928,7 +929,7 @@ def verify_github_ci_runs(
             pr_ci_st = "NOT_VERIFIABLE"
         elif not pr_head_sha or not pr_head_ref:
             pr_ci_st = "FAIL"
-            pr_errors.append(f"PR_HEAD_INFO_MISSING: PR #{pr_number} head.ref or head.sha missing from PR API data")
+            pr_ci_errors.append(f"PR_HEAD_INFO_MISSING: PR #{pr_number} head.ref or head.sha missing from PR API data")
         else:
             pr_ci_st, pr_ci_errs, pr_ci_meta = verify_single_github_run(
                 repo=repo,
@@ -944,7 +945,7 @@ def verify_github_ci_runs(
                 simulate_pr_data=pr_data,
                 require_tag_publish=False,
             )
-            pr_errors.extend(pr_ci_errs)
+            pr_ci_errors.extend(pr_ci_errs)
 
         # =====================================================================
         # Chain A: Main CI Run Independent Verification
@@ -980,11 +981,18 @@ def verify_github_ci_runs(
             simulate_network_error=sim_tag_net_err,
         )
 
-        all_errors = main_errs + pr_errors + tag_errs
+        chain_c_st = (
+            "NOT_VERIFIABLE"
+            if pr_api_st == "NOT_VERIFIABLE"
+            else ("FAIL" if pr_merge_errors else "PASS")
+        )
+        all_errors = main_errs + pr_merge_errors + pr_ci_errors + tag_errs
         details = {
             "main_ci_run": main_meta,
             "pr_ci_run": pr_ci_meta,
             "pr_merge": pr_merge_meta,
+            "pr_merge_errors": pr_merge_errors,
+            "pr_ci_errors": pr_ci_errors,
             "release_tag": rel_tag,
             "tag_object_sha": tag_obj_sha,
             "peeled_commit": peeled_commit,
@@ -995,17 +1003,17 @@ def verify_github_ci_runs(
             "chains": {
                 "chain_a_main_ci": main_st,
                 "chain_b_pr_ci": pr_ci_st,
-                "chain_c_pr_merge": "FAIL" if pr_errors and pr_api_st != "NOT_VERIFIABLE" else pr_api_st,
+                "chain_c_pr_merge": chain_c_st,
                 "tag_remote": tag_st,
             },
         }
 
         # Any explicit FAIL or error condition fails closed
-        if main_st == "FAIL" or pr_ci_st == "FAIL" or tag_st == "FAIL" or (pr_errors and pr_api_st != "NOT_VERIFIABLE"):
+        if main_st == "FAIL" or pr_ci_st == "FAIL" or tag_st == "FAIL" or chain_c_st == "FAIL":
             return "FAIL", all_errors, details
 
         # If any check was NOT_VERIFIABLE and no explicit FAIL
-        if main_st == "NOT_VERIFIABLE" or pr_ci_st == "NOT_VERIFIABLE" or tag_st == "NOT_VERIFIABLE" or pr_api_st == "NOT_VERIFIABLE":
+        if main_st == "NOT_VERIFIABLE" or pr_ci_st == "NOT_VERIFIABLE" or tag_st == "NOT_VERIFIABLE" or chain_c_st == "NOT_VERIFIABLE":
             return "NOT_VERIFIABLE", all_errors, details
 
         return "PASS", [], details

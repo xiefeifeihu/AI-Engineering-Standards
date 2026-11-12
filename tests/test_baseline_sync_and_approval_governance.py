@@ -1990,6 +1990,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         self.assertTrue(det1["tag_publish_verified"])
         self.assertEqual(det1["chains"]["chain_a_main_ci"], "PASS")
         self.assertEqual(det1["chains"]["chain_b_pr_ci"], "PASS")
+        self.assertEqual(det1["chains"]["chain_c_pr_merge"], "PASS")
 
         # 2. 负向用例：PR Run ID 错误
         ev2 = dict(base_released_evidence, pr_run_id="99999999999")
@@ -2008,7 +2009,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
 
         # 3. 负向用例：PR Run HEAD 与 PR HEAD 不一致
         sim3_pr = dict(base_pr_run_data, head_sha="0000000000000000000000000000000000000000", headSha="0000000000000000000000000000000000000000")
-        st3, errs3, _ = verify_github_ci_runs(
+        st3, errs3, det3 = verify_github_ci_runs(
             base_released_evidence,
             project_root=ROOT,
             simulate_data_map={
@@ -2020,6 +2021,8 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         )
         self.assertEqual(st3, "FAIL")
         self.assertTrue(any("head_sha mismatch" in e.lower() for e in errs3))
+        self.assertEqual(det3["chains"]["chain_b_pr_ci"], "FAIL")
+        self.assertEqual(det3["chains"]["chain_c_pr_merge"], "PASS")
 
         # 4. 负向用例：PR base.ref 不为 main
         sim4_pr_api = dict(base_pr_api_data, base={"ref": "feat/untrusted-branch"})
@@ -2038,7 +2041,7 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
 
         # 5. 负向用例：PR merged_by 不是仓库 Owner
         sim5_pr_api = dict(base_pr_api_data, merged_by={"login": "unauthorized-contributor"})
-        st5, errs5, _ = verify_github_ci_runs(
+        st5, errs5, det5 = verify_github_ci_runs(
             base_released_evidence,
             project_root=ROOT,
             simulate_data_map={
@@ -2050,6 +2053,8 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         )
         self.assertEqual(st5, "FAIL")
         self.assertTrue(any("not repository owner" in e.lower() or "merged by" in e.lower() for e in errs5))
+        self.assertEqual(det5["chains"]["chain_c_pr_merge"], "FAIL")
+        self.assertEqual(det5["chains"]["chain_b_pr_ci"], "PASS")
 
         # 6. 负向用例：PR merge_commit_sha 缺失
         sim6_pr_api = dict(base_pr_api_data, merge_commit_sha=None)
