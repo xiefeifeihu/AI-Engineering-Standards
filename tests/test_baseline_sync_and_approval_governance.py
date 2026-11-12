@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from typing import Optional
 from unittest.mock import patch
 import jsonschema
 import yaml
