@@ -112,6 +112,27 @@ python -m pip install -r .standards/requirements-standards.txt
 
 更完整的模板清单见 `templates/consumer-project/README.md`。
 
+### 4.1 历史版本首次建锁（受控初始化，不是普通升级）
+
+本节仍属 IN_REVIEW / OWNER_MANDATORY 候选协议，不能作为自动批准。v3.0.0 CLI 没有 init-lock；verify-lock 和 prepare-upgrade 在缺少锁时 BLOCK 属于预期行为。禁止浮动 main 或模板哨兵值绕过。
+
+1. 先确认消费端当前实际使用的旧版正式 Standards，检查 Manifest、历史兼容矩阵、本工程 HEAD、历史测试。版本不确定时 NOT_VERIFIABLE，严禁猜测。
+2. 核验旧版官方 Annotated Tag、Tag Object SHA、Peeled Commit、VERSION、main 祖先关系及真实 CI。签名未核验不得宣称已签名。
+3. 使用 templates/standards.lock.template.json 在独立候选分支建立历史 Lock，填入经核实的 repository/version/tag/tag_object_sha/peeled_commit、真实 locked_at 和 lock_reason；首次 previous_locks 为空，不伪造历史锁。
+4. Owner 必须对历史基线和首次锁定明确批准，记录真实候选 Commit、内容摘要和审批引用。缺少可信审批验证适配器时保留 NOT_VERIFIABLE，严禁凭本地 JSON 自行晋升。
+5. 使工程 Manifest 与历史 Lock 对齐；兼容矩阵仅描述兼容范围，不成为第二份锁，也不得要求其他工程跟随。
+6. 完成 schema 与 verify-lock 后，才允许从该历史 Lock 开始 compare/impact/prepare-upgrade；H4 必需测试和 CI 全绿、独立审核和 Owner 批准后，才执行 promote；旧锁必须写入 previous_locks 并校验 rollback。
+
+AI-HUB H1 的只读实例（仅供核验，不是其他工程默认值）：v2.11.0 历史 Tag Object = 2f4b4b54348a5ac8891e5a0b33c04635a27213a0；Peeled Commit = 5e17c0ef560ab8abafe880b988d70f85f380a104。目标 v3.0.0 Tag Object = 8256bb384e62894219db0992a2cb57e16d4fa8cd；Peeled Commit = 8b223019c254e0edeb94576b94af46c1e48b0316。可核实对象事实不等于审批通过。
+
+### 4.2 只读工具的来源和身份语义
+
+- REMOTE_OFFICIAL_DISCOVERY 只用于已查询官方远端 refs 的模式；LOCAL_CLONE_DISCOVERY 只能证明本地 Clone 中的 refs，不得将本地 main 冒充远端实时 main，远端未核实时返回 NOT_VERIFIABLE。
+- 祖先检查退出码 1 表示确证非祖先；退出码非 0/1 表示对象缺失或命令异常，返回 NOT_VERIFIABLE，不可作为 NOT_ON_MAIN_BRANCH 事实失败。
+- INPUT_STANDARDS_COMMIT/TARGET_STANDARDS_COMMIT 是规范仓库的 Commit；CONSUMER_COMMIT 是消费端 Git HEAD，CONSUMER_WORKTREE_STATUS 表示其工作区。消费端身份不可验证时兼容评估不能完整 PASS。
+- impact 的 AGENTS/CLAUDE 文本扫描是辅助静态检查；Tests、Security、Release、Business API、Runtime 未执行时不得标记 COMPATIBLE。
+- verify-lock 负责 Lock、Manifest 和官方 Tag 的精确绑定，不将 compatibility_matrix.yaml 变成第二个锁；矩阵中消费工程自己的兼容范围由工程级适配检查核对。
+
 ## 5. 每次任务启动与工具调用顺序
 
 在消费工程根目录运行：
