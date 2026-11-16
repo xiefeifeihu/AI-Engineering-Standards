@@ -1369,7 +1369,11 @@ def scan_consumer_guidance_files(project_root: Path) -> Dict[str, Any]:
         r"|\bv?\d+\.\d+\.\d+\b[^\r\n]{0,80}\bstandards?\b"
     )
     sha_pattern = re.compile(r"\b[0-9a-f]{40}\b", re.I)
-    machine_path = re.compile(r"(?i)\b[A-Z]:[\\/](?:Projects|Users|ProgramData|workspace)[\\/]")
+    # Detect any Windows drive-rooted or UNC path; custom roots must not be missed.
+    machine_path = re.compile(r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:[\\/]|\\\\[^\\/\s]+[\\/][^\\/\s]+[\\/])")
+    historical_label = re.compile(
+        r"(?i)^\s*(?:historical(?:\s+(?:reference|baseline|version))?|历史(?:记录|版本(?:说明)?|说明|基线))\s*[:：]"
+    )
     findings: List[Dict[str, Any]] = []
     missing: List[str] = []
     pinned: Set[str] = set()
@@ -1378,12 +1382,38 @@ def scan_consumer_guidance_files(project_root: Path) -> Dict[str, Any]:
         if not path.is_file():
             if name in required:
                 missing.append(name)
+                findings.append({
+                    "file": name, "line": 1, "code": "MISSING_REQUIRED_GUIDANCE_FILE",
+                    "excerpt": "Required agent guidance entrypoint does not exist",
+                })
             continue
+
         contents = path.read_text(encoding="utf-8", errors="replace")
-        for line_number, line in enumerate(contents.splitlines(), 1):
-            if not line.strip() or line.strip().startswith("<!--"):
-                continue
-            if re.search(r"(?i)(historical|历史记录|历史版本|过去使用)", line):
+        visible_lines: List[Tuple[int, str]] = []
+        in_html_comment = False
+        for line_number, raw_line in enumerate(contents.splitlines(), 1):
+            visible = raw_line
+            if in_html_comment:
+                close_idx = visible.find("-->")
+                if close_idx < 0:
+                    continue
+                visible = visible[close_idx + 3:]
+                in_html_comment = False
+            while True:
+                open_idx = visible.find("<!--")
+                if open_idx < 0:
+                    break
+                close_idx = visible.find("-->", open_idx + 4)
+                if close_idx < 0:
+                    visible = visible[:open_idx]
+                    in_html_comment = True
+                    break
+                visible = visible[:open_idx] + visible[close_idx + 3:]
+            if visible.strip():
+                visible_lines.append((line_number, visible))
+
+        for line_number, line in visible_lines:
+            if historical_label.search(line):
                 continue
             codes: List[str] = []
             if version_pattern.search(line):
@@ -1393,13 +1423,20 @@ def scan_consumer_guidance_files(project_root: Path) -> Dict[str, Any]:
             if machine_path.search(line):
                 codes.append("MACHINE_ABSOLUTE_PATH")
             for code in codes:
-                findings.append({"file": name, "line": line_number, "code": code, "excerpt": line.strip()[:180]})
+                findings.append({
+                    "file": name, "line": line_number, "code": code, "excerpt": line.strip()[:180]
+                })
                 pinned.add(name)
-        if name in required and "standards.lock.json" not in contents:
-            findings.append({"file": name, "line": 1, "code": "MISSING_LOCK_REFERENCE",
-                             "excerpt": "Agent entrypoint does not reference standards.lock.json"})
+
+        visible_text = "\n".join(line for _, line in visible_lines)
+        if name in required and "standards.lock.json" not in visible_text:
+            findings.append({
+                "file": name, "line": 1, "code": "MISSING_LOCK_REFERENCE",
+                "excerpt": "Agent entrypoint does not reference standards.lock.json",
+            })
             pinned.add(name)
     return {"missing": missing, "hardcoded": sorted(pinned), "findings": findings}
+
 
 
 def analyze_consumer_impact(
@@ -1722,7 +1759,7 @@ def analyze_consumer_impact(
     has_blocked_dim = any(dim["status"] == "UPGRADE_BLOCKED" for dim in dimensions_checked.values())
     has_unverified_dim = any(
         dim["status"] in ("NOT_RUN", "NOT_VERIFIABLE") for dim in dimensions_checked.values()
-    )
+    ) or not consumer_git_verified or consumer_worktree_status != "CLEAN"
     compatibility_status = (
         "UPGRADE_BLOCKED"
         if has_blocked_dim or breaking_items
@@ -1730,7 +1767,7 @@ def analyze_consumer_impact(
         if has_unverified_dim
         else "COMPATIBLE"
     )
-    analysis_status = "PARTIAL" if has_unverified_dim or not consumer_git_verified or consumer_worktree_status == "NOT_VERIFIABLE" else "COMPLETED"
+    analysis_status = "PARTIAL" if has_unverified_dim else "COMPLETED"
     overall_status = (
         "BLOCK"
         if compatibility_status == "UPGRADE_BLOCKED"
@@ -1751,7 +1788,7 @@ def analyze_consumer_impact(
         "TARGET_STANDARDS_COMMIT": target_commit,
         "CONSUMER_COMMIT": consumer_commit,
         "CONSUMER_WORKTREE_STATUS": consumer_worktree_status,
-        "CONSUMER_VERIFICATION_STATUS": "PASS" if consumer_git_verified and consumer_worktree_status != "NOT_VERIFIABLE" else "NOT_VERIFIABLE",
+        "CONSUMER_VERIFICATION_STATUS": "PASS" if consumer_git_verified and consumer_worktree_status == "CLEAN" else "NOT_VERIFIABLE",
         "GUIDANCE_FINDINGS": guidance_findings,
         "BASELINE_STANDARD": eff_from,
         "TARGET_STANDARD": f"v{diff_report['to_version']}",

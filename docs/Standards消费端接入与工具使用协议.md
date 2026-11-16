@@ -131,6 +131,7 @@ AI-HUB H1 的只读实例（仅供核验，不是其他工程默认值）：v2.1
 - 祖先检查退出码 1 表示确证非祖先；退出码非 0/1 表示对象缺失或命令异常，返回 NOT_VERIFIABLE，不可作为 NOT_ON_MAIN_BRANCH 事实失败。
 - INPUT_STANDARDS_COMMIT/TARGET_STANDARDS_COMMIT 是规范仓库的 Commit；CONSUMER_COMMIT 是消费端 Git HEAD，CONSUMER_WORKTREE_STATUS 表示其工作区。消费端身份不可验证时兼容评估不能完整 PASS。
 - impact 的 AGENTS/CLAUDE 文本扫描是辅助静态检查；Tests、Security、Release、Business API、Runtime 未执行时不得标记 COMPATIBLE。
+- 消费端工作区必须为 CLEAN 才能将 `CONSUMER_VERIFICATION_STATUS` 标记为 PASS；DIRTY 或 HEAD 不可读时返回 NOT_VERIFIABLE，并使影响分析保持 PARTIAL。静态扫描必须正确跳过多行 HTML 注释，只忽略以明确历史标签开头的历史说明，并报告 Windows 盘符路径与 UNC 绝对路径的文件/行号。
 - verify-lock 负责 Lock、Manifest 和官方 Tag 的精确绑定，不将 compatibility_matrix.yaml 变成第二个锁；矩阵中消费工程自己的兼容范围由工程级适配检查核对。
 
 ## 5. 每次任务启动与工具调用顺序

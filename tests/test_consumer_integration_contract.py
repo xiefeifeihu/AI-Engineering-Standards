@@ -130,6 +130,165 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
         self.assertEqual(report["hardcoded"], [])
         self.assertEqual(report["findings"], [])
 
+    def test_std020_guidance_scan_handles_multiline_comments_and_custom_absolute_paths(self) -> None:
+        from tools.standards_sync.core import scan_consumer_guidance_files
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "AGENTS.md").write_text(
+                "<!--\n"
+                "Standards v2.11.0 is historical text inside a block comment\n"
+                "D:\\Projects\\AI-Engineering-Standards\\.standards\n"
+                "-->\n"
+                "Read standards.lock.json\n"
+                "Custom checkout: C:\\Work\\AI-Engineering-Standards\\.standards\n",
+                encoding="utf-8",
+            )
+            (root / "CLAUDE.md").write_text(
+                "Read AGENTS.md and standards.lock.json\n", encoding="utf-8"
+            )
+            report = scan_consumer_guidance_files(root)
+        findings = {(f["file"], f["line"], f["code"]) for f in report["findings"]}
+        self.assertIn(("AGENTS.md", 6, "MACHINE_ABSOLUTE_PATH"), findings)
+        self.assertNotIn(("AGENTS.md", 2, "HARDCODED_STANDARDS_VERSION"), findings)
+        self.assertNotIn(("AGENTS.md", 3, "MACHINE_ABSOLUTE_PATH"), findings)
+        self.assertNotIn(("AGENTS.md", 1, "MISSING_LOCK_REFERENCE"), findings)
+
+    def test_std020_dirty_consumer_worktree_is_not_verified(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync import core as sync_core
+        real_run_git = sync_core.run_git
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            def simulated_run_git(repo, args, **kwargs):
+                if Path(repo).resolve() == root.resolve():
+                    if args == ["rev-parse", "HEAD"]:
+                        return 0, "a" * 40, ""
+                    if args == ["status", "--porcelain"]:
+                        return 0, " M docs/README.md", ""
+                return real_run_git(repo, args, **kwargs)
+            with patch("tools.standards_sync.core.run_git", side_effect=simulated_run_git):
+                with patch("tools.standards_sync.core.run_collection_validation", return_value=(True, [])):
+                    result = analyze_consumer_impact(
+                        root, from_ref="v2.11.0", to_ref="v3.0.0", standards_root=ROOT
+                    )
+        self.assertEqual(result["CONSUMER_COMMIT"], "a" * 40)
+        self.assertEqual(result["CONSUMER_WORKTREE_STATUS"], "DIRTY")
+        self.assertEqual(result["CONSUMER_VERIFICATION_STATUS"], "NOT_VERIFIABLE")
+        self.assertEqual(result["analysis_status"], "PARTIAL")
+        self.assertNotEqual(result["compatibility_status"], "COMPATIBLE")
+
+    def test_std020_historical_snapshot_requires_verified_ancestry(self) -> None:
+        from unittest.mock import patch
+        from tools import generate_engineering_baseline as baseline_gen
+        from tools import generate_handoff as handoff_gen
+
+        local_sha = "a" * 40
+        remote_sha = "b" * 40
+        branch_tip = "c" * 40
+        current_branch = "feature/std-020-review"
+        captured_at = "2020-01-01T00:00:00Z"
+        tick = chr(96)
+        baseline_text = (
+            "## 8. Git 分支及 Commit 身份 (" + tick + "git_identity" + tick + ")\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-release-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{local_sha}{tick}\n"
+            f"- **远端 main ({tick}remote_main_head{tick})**：{tick}{remote_sha}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 9. 最近 CI 事实\n"
+            "### 19.3 Std-019 正式发布收口事实与治理追踪\n"
+            f"- **发布状态**：{tick}RELEASE_STATUS=RELEASED{tick}\n"
+            f"- **Git 快照观测时间**：{tick}{captured_at}{tick}\n"
+        )
+        handoff_text = (
+            "TASK_ID=Std-019-V3-0-0-POST-RELEASE-CLOSEOUT\n"
+            "STATUS=COMPLETED\n"
+            f"CAPTURED_AT={captured_at}\n"
+            "## 1. 当前 Git 状态与分支身份 (git_state)\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-release-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{local_sha}{tick}\n"
+            f"- **远端 main ({tick}remote_head{tick})**：{tick}{remote_sha}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 2. 当前 Standards 锁定\n"
+        )
+        for module, kind, content in (
+            (baseline_gen, "baseline", baseline_text),
+            (handoff_gen, "handoff", handoff_text),
+        ):
+            for merge_base_rc, expected_code in ((1, "HISTORICAL_ANCESTRY_MISMATCH"), (128, "HISTORICAL_ANCESTRY_NOT_VERIFIABLE")):
+                with self.subTest(generator=kind, merge_base_rc=merge_base_rc):
+                    with tempfile.TemporaryDirectory() as tmp:
+                        root = Path(tmp)
+                        if kind == "baseline":
+                            (root / "engineering-manifest.yaml").write_text(
+                                "project:\n  id: ai-engineering-standards\n", encoding="utf-8"
+                            )
+                        def simulated_run_git(repo, args, **kwargs):
+                            if args and args[0] == "merge-base":
+                                return merge_base_rc, "", "fatal: missing commit object" if merge_base_rc == 128 else ""
+                            if args and args[0] == "log":
+                                return 0, "d" * 40 if args[-1] == branch_tip else "e" * 40, ""
+                            return 0, "", ""
+                        with patch.object(module, "query_remote_main_head", return_value=remote_sha):
+                            with patch.object(module, "resolve_snapshot_branch_tip", return_value=branch_tip):
+                                with patch.object(module, "resolve_snapshot_branch_name", return_value=current_branch):
+                                    with patch.object(module, "run_git", side_effect=simulated_run_git):
+                                        errors = module.verify_git_snapshot_facts(root, content, kind)
+                    self.assertTrue(any(expected_code in e for e in errors), errors)
+                    self.assertTrue(any("GIT_SNAPSHOT_STALE" in e for e in errors), errors)
+
+    def test_std020_historical_snapshot_accepts_exact_current_branch_head(self) -> None:
+        from unittest.mock import patch
+        from tools import generate_engineering_baseline as baseline_gen
+        from tools import generate_handoff as handoff_gen
+
+        local_sha = "a" * 40
+        remote_sha = "b" * 40
+        captured_at = "2020-01-01T00:00:00Z"
+        tick = chr(96)
+        baseline_text = (
+            "## 8. Git 分支及 Commit 身份 (" + tick + "git_identity" + tick + ")\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-release-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{local_sha}{tick}\n"
+            f"- **远端 main ({tick}remote_main_head{tick})**：{tick}{remote_sha}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 9. 最近 CI 事实\n"
+            "### 19.3 Std-019 正式发布收口事实与治理追踪\n"
+            f"- **发布状态**：{tick}RELEASE_STATUS=RELEASED{tick}\n"
+            f"- **Git 快照观测时间**：{tick}{captured_at}{tick}\n"
+        )
+        handoff_text = (
+            "TASK_ID=Std-019-V3-0-0-POST-RELEASE-CLOSEOUT\n"
+            "STATUS=COMPLETED\n"
+            f"CAPTURED_AT={captured_at}\n"
+            "## 1. 当前 Git 状态与分支身份 (git_state)\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-release-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{local_sha}{tick}\n"
+            f"- **远端 main ({tick}remote_head{tick})**：{tick}{remote_sha}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 2. 当前 Standards 锁定\n"
+        )
+        for module, kind, content in (
+            (baseline_gen, "baseline", baseline_text),
+            (handoff_gen, "handoff", handoff_text),
+        ):
+            with self.subTest(generator=kind):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    if kind == "baseline":
+                        (root / "engineering-manifest.yaml").write_text(
+                            "project:\n  id: ai-engineering-standards\n", encoding="utf-8"
+                        )
+                    def simulated_run_git(repo, args, **kwargs):
+                        if args and args[0] == "log":
+                            return 0, local_sha if args[-1] == local_sha else remote_sha, ""
+                        raise AssertionError(f"Unexpected Git call for exact HEAD ancestry: {args}")
+                    with patch.object(module, "query_remote_main_head", return_value=remote_sha):
+                        with patch.object(module, "resolve_snapshot_branch_tip", return_value=local_sha):
+                            with patch.object(module, "resolve_snapshot_branch_name", return_value="feature/current"):
+                                with patch.object(module, "run_git", side_effect=simulated_run_git):
+                                    errors = module.verify_git_snapshot_facts(root, content, kind)
+                self.assertEqual(errors, [], errors)
+
     def test_std020_baseline_and_handoff_verify_only_succeeds_on_ancestor_feature_branch(self) -> None:
         import subprocess
         import sys

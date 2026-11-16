@@ -40,6 +40,20 @@ content_sha256: null
 | `python tools/validate_approval_contract.py` | `--approval-file <JSON> [--document-file <MD>] [--expected-commit <SHA>]` | 校验双层审批契约、反自批及 SHA-256/Commit 一致性；通过返回 `0`，违例返回 `1` |
 
 
+## 2.1 消费端影响分析输出契约（`impact`）
+
+`python tools/standards_sync/cli.py impact --project-root <PROJECT_ROOT> --to-ref <TAG>` 返回结构化 JSON。以下字段用于区分规范仓库与消费工程身份：
+
+| 字段 | 含义 | 允许状态/值 |
+| :--- | :--- | :--- |
+| `INPUT_STANDARDS_COMMIT` | 输入端正式 Standards Tag 对应的 Peeled Commit；无 Lock 时仅在显式 `--from-ref` 且可解析时填入 | 完整 40 位 SHA 或 `UNKNOWN` |
+| `TARGET_STANDARDS_COMMIT` | 目标正式 Tag 的 Peeled Commit；目标为 `WORKTREE` 时保留 `WORKTREE`，不得伪装成 Commit SHA | 完整 40 位 SHA 或 `WORKTREE` / `NOT_VERIFIABLE` |
+| `CONSUMER_COMMIT` | 被评估消费工程自身的 Git HEAD，不是 Standards Commit | 完整 40 位 SHA 或 `NOT_VERIFIABLE` |
+| `CONSUMER_WORKTREE_STATUS` | 消费工程工作区状态 | `CLEAN` / `DIRTY` / `NOT_VERIFIABLE` |
+| `CONSUMER_VERIFICATION_STATUS` | 消费工程身份是否可绑定到当前评估内容 | 仅当 HEAD 可读且工作区为 `CLEAN` 时为 `PASS`；否则为 `NOT_VERIFIABLE` |
+| `GUIDANCE_FINDINGS` | `AGENTS.md`、`CLAUDE.md`、`README.md` 中的静态扫描发现 | 数组元素包含 `file`、`line`、`code`、`excerpt` |
+
+`analysis_status` 与 `compatibility_status` 必须分开解释。消费端 HEAD 不可读或工作区非 CLEAN 时，影响分析为 `PARTIAL`，兼容性不得汇总为 `COMPATIBLE`。任一必需维度为 `NOT_RUN` 或 `NOT_VERIFIABLE` 时，整体状态不得为 `PASS`。静态指引扫描不替代真实测试、安全、发布、业务 API 或 Runtime 验收。
 ## 3. 消费端调用与权限边界
 
 完整接入步骤、共享工具引用方式、依赖安装、模板复制、Windows/Linux 命令、CI 示例及升级/回滚流程统一见 [`Standards消费端接入与工具使用协议`](./Standards消费端接入与工具使用协议.md)。消费工程 **MUST NOT** 复制并分叉 `tools/`、`schemas/` 或标准正文；应通过固定版本的官方仓库引用调用。

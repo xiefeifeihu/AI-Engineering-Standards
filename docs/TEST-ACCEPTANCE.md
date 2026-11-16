@@ -50,3 +50,8 @@ content_sha256: null
 - `TC-CONSUMER-003`：模板不得将某一历史正式版本写成所有工程的默认最新版本。
 - `TC-CONSUMER-004`：迁移计划仅将 AI-Engineering-Hub 标记为首个试点；AI-KB、VTIP、SideCar 不得被静态标记为兼容或要求升级。
 - `TC-CONSUMER-005`：兼容性维度未执行测试/安全/业务回归时，结果必须保持 `NOT_RUN` 或 `NOT_VERIFIABLE`，不得汇总为 `COMPATIBLE`。
+- `TC-CONSUMER-006`：官方 Tag 祖先核验区分 Git 退出码 0/1/其他；对象缺失必须为 `NOT_VERIFIABLE`，不得误报 `NOT_ON_MAIN_BRANCH`。
+- `TC-CONSUMER-007`：本地 Clone 发现结果不得冒充官方远端 main；多行 HTML 注释中的历史版本和 SHA 不得被扫描为当前规则，任意 Windows 盘符/UNC 绝对路径必须带文件行号报告。
+- `TC-CONSUMER-008`：消费端 HEAD 与 Standards 输入/目标 Commit 独立记录；工作区 DIRTY 或 HEAD 不可读时 `CONSUMER_VERIFICATION_STATUS=NOT_VERIFIABLE`，影响分析不得报告完整兼容。
+- `TC-CONSUMER-009`：历史快照只有在记录的 local_head 与当前分支 HEAD 相同或经 Git 对象图证明为当前分支/官方 main 祖先时才豁免 24 小时窗口；非祖先与谱系不可核验分别阻断。
+- `TC-CONSUMER-010`：历史快照的 captured_at、分支身份、local_head 和 remote main at capture 必须与真实 Git 历史一致；不得通过手工改时间或仅添加 RELEASED/COMPLETED 标记绕过。

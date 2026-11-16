@@ -5,7 +5,12 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 ## [Unreleased]
 
 ### Added
-- None yet.
+- Standards consumer impact now reports separate Standards input/target commits and consumer HEAD/worktree identity, with line-addressable guidance findings.
+- Added regression coverage for local-clone discovery provenance, missing Git ancestry objects, dirty consumer worktrees, multiline HTML comments, absolute paths, and historical snapshot ancestry.
+
+### Changed
+- Historical baseline/handoff snapshots only bypass the 24-hour freshness window after Git ancestry is proven; unknown or non-ancestor history remains non-verifiable or blocked.
+- Consumer guidance scanning now handles multiline HTML comments and Windows/UNC absolute paths without suppressing non-historical current pins.
 
 ## [3.0.0] - 2026-11-11
 

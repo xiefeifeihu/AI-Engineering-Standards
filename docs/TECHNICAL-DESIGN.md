@@ -38,6 +38,13 @@ content_sha256: null
 - **受控晋升与回滚 (`promote` / `rollback`)**：`promote` 强制验证非降级、`ci_status == PASS`、`validate_upgrade_candidate == PASS` 及有效审批记录，晋升前自动将当前锁定压入 `previous_locks` 栈；`rollback` 从 `previous_locks` 弹出最近一次已验证锁定并原子写回 `standards.lock.json` 与 `engineering-manifest.yaml`。
 
 
+### 3.1 消费端身份、发现来源与历史快照验证（Std-020）
+
+- **Commit 身份分离**：`INPUT_STANDARDS_COMMIT` 与 `TARGET_STANDARDS_COMMIT` 指向 Standards 仓库；`CONSUMER_COMMIT` 单独记录消费工程 HEAD。不得将两仓 Commit 混写为同一字段。
+- **工作区绑定**：只有消费工程 HEAD 可读且 `git status --porcelain` 为空时，`CONSUMER_VERIFICATION_STATUS` 才能为 `PASS`。工作区为 `DIRTY` 或无法读取时，身份状态为 `NOT_VERIFIABLE`，影响分析保持 `PARTIAL`，不得声称完整兼容。
+- **远端发现来源**：本地 Clone 仅证明本地 refs；没有独立查询官方远端时，`remote_latest_status` 为 `NOT_VERIFIABLE`。官方远端身份与本地对象谱系必须分别记录。
+- **祖先判定**：`git merge-base --is-ancestor` 退出码 0 表示祖先、1 表示确证非祖先；其他退出码表示对象或命令不可核验，不得映射为非祖先。
+- **历史快照**：历史发布/完成标记本身不构成免检凭据。只有记录的 `local_head` 与当前分支 HEAD 相同，或经 Git 对象图证明其为当前分支/官方 main 的祖先时，才可按历史快照豁免 24 小时新鲜度窗口；祖先关系无法核验或不成立时必须阻断历史豁免。生成器仍须核对 `captured_at` 时刻的提交和远端 main 快照。
 ## 4. 消费端接入模式与首个试点
 
 - **共享实现原则**：消费工程通过固定版本的 Git 子模块（推荐路径 `.standards/`）或受控共享检出目录引用本仓库；不得复制后分叉维护公共脚本、Schema 和规范正文。
