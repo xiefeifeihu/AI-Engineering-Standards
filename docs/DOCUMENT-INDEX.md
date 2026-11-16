@@ -31,19 +31,21 @@ content_sha256: null
 | 序号 | 文档类型 (`document_type`) | 权威文档路径 | 文档 ID (`document_id`) | 状态 | 职责说明 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | 1 | `DOCUMENT_INDEX` | [`docs/DOCUMENT-INDEX.md`](./DOCUMENT-INDEX.md) | `DOC-STANDARDS-DOCUMENT-INDEX` | `IN_REVIEW` | 全库文档集合总入口、适用性声明与归档导航 |
-| 2 | `ENGINEERING_BASELINE` | [`docs/当前权威基线.md`](./当前权威基线.md) | `DOC-AI-ENGINEERING-STANDARDS-ENGINEERING-BASELINE-001` | `ACTIVE` | 11 类正式文档与 10 类实时工程事实自动生成综合视图 |
-| 3 | `PROJECT_BLUEPRINT` | [`docs/PROJECT-BLUEPRINT.md`](./PROJECT-BLUEPRINT.md) | `DOC-STANDARDS-PROJECT-BLUEPRINT` | `ACTIVE` | 跨工程规范权威源顶层愿景、仓库边界与阶段演进蓝图 |
-| 4 | `PRODUCT_BASELINE` | [`docs/PRODUCT-BASELINE.md`](./PRODUCT-BASELINE.md) | `DOC-STANDARDS-PRODUCT-BASELINE` | `ACTIVE` | `STD-001` 至 `STD-035` 规范族、30 个 Schema 与官方工具能力基线 |
-| 5 | `SYSTEM_ARCHITECTURE` | [`docs/SYSTEM-ARCHITECTURE.md`](./SYSTEM-ARCHITECTURE.md) | `DOC-STANDARDS-SYSTEM-ARCHITECTURE` | `ACTIVE` | 唯一规范权威源架构、四库单向依赖拓扑与变更同步边界 |
-| 6 | `TECHNICAL_DESIGN` | [`docs/TECHNICAL-DESIGN.md`](./TECHNICAL-DESIGN.md) | `DOC-STANDARDS-TECHNICAL-DESIGN` | `ACTIVE` | Schema 校验引擎、17 项文档集合校验器、基线生成器与 `standards_sync` 设计 |
-| 7 | `API_CONTRACT` | [`docs/API-CONTRACT.md`](./API-CONTRACT.md) | `DOC-STANDARDS-API-CONTRACT` | `ACTIVE` | CLI 子命令契约、JSON Schema 契约与审批证据数据结构契约 |
-| 8 | `PROTOTYPE_UX` | [`docs/PROTOTYPE-UX.md`](./PROTOTYPE-UX.md) | `DOC-STANDARDS-PROTOTYPE-UX` | `ACTIVE` | 非运行时规范制品库 CLI 诊断交互与 `STD-018` 中文展示规范映射 |
-| 9 | `TEST_ACCEPTANCE` | [`docs/TEST-ACCEPTANCE.md`](./TEST-ACCEPTANCE.md) | `DOC-STANDARDS-TEST-ACCEPTANCE` | `ACTIVE` | Schema、文档集合、同步状态机、防伪造审批与跨平台测试基线 |
-| 10 | `RELEASE_OPERATIONS` | [`docs/RELEASE-OPERATIONS.md`](./RELEASE-OPERATIONS.md) | `DOC-STANDARDS-RELEASE-OPERATIONS` | `ACTIVE` | `main` 主干 CI 门禁、Annotated Tag 附注标签发布、锁定晋升与回滚规程 |
-| 11 | `DECISION_RECORD` | [`docs/DECISION-RECORD.md`](./DECISION-RECORD.md) | `DOC-STANDARDS-DECISION-RECORD` | `ACTIVE` | 已批准架构决策记录（含 `D1`–`D5` 正式批准记录） |
-| 12 | `CROSS_SESSION_HANDOFF` | [`docs/CROSS-SESSION-HANDOFF.md`](./CROSS-SESSION-HANDOFF.md) | `DOC-AI-ENGINEERING-STANDARDS-CROSS-SESSION-HANDOFF-001` | `ACTIVE` | 当前活跃跨会话交接唯一入口（`STD-020` 自动采集） |
+| 2 | `ENGINEERING_BASELINE` | [`docs/当前权威基线.md`](./当前权威基线.md) | `DOC-AI-ENGINEERING-STANDARDS-ENGINEERING-BASELINE-001` | `IN_REVIEW` | 11 类正式文档与 10 类实时工程事实自动生成综合视图 |
+| 3 | `PROJECT_BLUEPRINT` | [`docs/PROJECT-BLUEPRINT.md`](./PROJECT-BLUEPRINT.md) | `DOC-STANDARDS-PROJECT-BLUEPRINT` | `IN_REVIEW` | 跨工程规范权威源顶层愿景、仓库边界与阶段演进蓝图 |
+| 4 | `PRODUCT_BASELINE` | [`docs/PRODUCT-BASELINE.md`](./PRODUCT-BASELINE.md) | `DOC-STANDARDS-PRODUCT-BASELINE` | `IN_REVIEW` | `STD-001` 至 `STD-035` 规范族、30 个 Schema 与官方工具能力基线 |
+| 5 | `SYSTEM_ARCHITECTURE` | [`docs/SYSTEM-ARCHITECTURE.md`](./SYSTEM-ARCHITECTURE.md) | `DOC-STANDARDS-SYSTEM-ARCHITECTURE` | `IN_REVIEW` | 唯一规范权威源架构、四库单向依赖拓扑与变更同步边界 |
+| 6 | `TECHNICAL_DESIGN` | [`docs/TECHNICAL-DESIGN.md`](./TECHNICAL-DESIGN.md) | `DOC-STANDARDS-TECHNICAL-DESIGN` | `IN_REVIEW` | Schema 校验引擎、17 项文档集合校验器、基线生成器与 `standards_sync` 设计 |
+| 7 | `API_CONTRACT` | [`docs/API-CONTRACT.md`](./API-CONTRACT.md) | `DOC-STANDARDS-API-CONTRACT` | `IN_REVIEW` | CLI 子命令契约、JSON Schema 契约与审批证据数据结构契约 |
+| 8 | `PROTOTYPE_UX` | [`docs/PROTOTYPE-UX.md`](./PROTOTYPE-UX.md) | `DOC-STANDARDS-PROTOTYPE-UX` | `IN_REVIEW` | 非运行时规范制品库 CLI 诊断交互与 `STD-018` 中文展示规范映射 |
+| 9 | `TEST_ACCEPTANCE` | [`docs/TEST-ACCEPTANCE.md`](./TEST-ACCEPTANCE.md) | `DOC-STANDARDS-TEST-ACCEPTANCE` | `IN_REVIEW` | Schema、文档集合、同步状态机、防伪造审批与跨平台测试基线 |
+| 10 | `RELEASE_OPERATIONS` | [`docs/RELEASE-OPERATIONS.md`](./RELEASE-OPERATIONS.md) | `DOC-STANDARDS-RELEASE-OPERATIONS` | `IN_REVIEW` | `main` 主干 CI 门禁、Annotated Tag 附注标签发布、锁定晋升与回滚规程 |
+| 11 | `DECISION_RECORD` | [`docs/DECISION-RECORD.md`](./DECISION-RECORD.md) | `DOC-STANDARDS-DECISION-RECORD` | `IN_REVIEW` | 已批准架构决策记录（含 `D1`–`D5` 正式批准记录） |
+| 12 | `CROSS_SESSION_HANDOFF` | [`docs/CROSS-SESSION-HANDOFF.md`](./CROSS-SESSION-HANDOFF.md) | `DOC-AI-ENGINEERING-STANDARDS-CROSS-SESSION-HANDOFF-001` | `IN_REVIEW` | 当前活跃跨会话交接唯一入口（`STD-020` 自动采集） |
 
 ---
+
+> **生命周期核验（Std-020 评审候选）**：本表逐项反映各文件 Frontmatter 当前的真实 `status`，不因已存在正式 Tag 或成功合并 PR 而自动提升为 `ACTIVE`。目前 12 类入口的 Frontmatter 均为 `IN_REVIEW` 且缺少可核验的对应审批事件；因此本表不将它们伪标为正式活跃主入口。根据 STD-035 §2、§3，正式活跃入口门禁仍为待整改事项，须在获得内容摘要与候选 Commit 绑定的独立审核及相应 Owner 批准、Schema/CI 验证后逐份受控晋升。以上是文档治理缺口，不影响已存在的 v3.0.0 正式 Tag 的历史事实。
 
 ## 2. 补充规范、接入协议与迁移资料（`primary_entrypoint: false`）
 
