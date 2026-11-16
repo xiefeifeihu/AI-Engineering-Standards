@@ -224,9 +224,9 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
                             )
                         def simulated_run_git(repo, args, **kwargs):
                             if args and args[0] == "merge-base":
-                                return merge_base_rc, "", "fatal: missing commit object" if merge_base_rc == 128 else ""
+                                return merge_base_rc, "fatal: missing commit object" if merge_base_rc == 128 else ""
                             if args and args[0] == "log":
-                                return 0, "d" * 40 if args[-1] == branch_tip else "e" * 40, ""
+                                return 0, "d" * 40 if args[-1] == branch_tip else "e" * 40
                             return 0, "", ""
                         with patch.object(module, "query_remote_main_head", return_value=remote_sha):
                             with patch.object(module, "resolve_snapshot_branch_tip", return_value=branch_tip):
@@ -280,7 +280,7 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
                         )
                     def simulated_run_git(repo, args, **kwargs):
                         if args and args[0] == "log":
-                            return 0, local_sha if args[-1] == local_sha else remote_sha, ""
+                            return 0, local_sha if args[-1] == local_sha else remote_sha
                         raise AssertionError(f"Unexpected Git call for exact HEAD ancestry: {args}")
                     with patch.object(module, "query_remote_main_head", return_value=remote_sha):
                         with patch.object(module, "resolve_snapshot_branch_tip", return_value=local_sha):

@@ -286,7 +286,7 @@ def verify_git_snapshot_facts(
     ancestry_details: List[str] = []
 
     if recorded_local_head and branch_tip and not is_ancestor:
-        rc_anc, _, anc_err = run_git(
+        rc_anc, anc_err = run_git(
             project_root,
             ["merge-base", "--is-ancestor", recorded_local_head, branch_tip],
             timeout=8,
@@ -301,7 +301,7 @@ def verify_git_snapshot_facts(
         if recorded_local_head == remote_main_head:
             is_ancestor = True
         else:
-            rc_anc_remote, _, remote_anc_err = run_git(
+            rc_anc_remote, remote_anc_err = run_git(
                 project_root,
                 ["merge-base", "--is-ancestor", recorded_local_head, remote_main_head],
                 timeout=8,
