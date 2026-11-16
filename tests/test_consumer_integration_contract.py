@@ -38,6 +38,99 @@ class FakeResponse:
 
 
 class ConsumerIntegrationContractTests(unittest.TestCase):
+    def test_std020_missing_remote_git_object_is_not_false_non_ancestor(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import run_git as real_run_git
+
+        refs = {
+            "refs/heads/main": "0b309b82c37acdf6236296987a55de169f5ece30",
+            "refs/tags/v3.0.0": "8256bb384e62894219db0992a2cb57e16d4fa8cd",
+            "refs/tags/v3.0.0^{}": "8b223019c254e0edeb94576b94af46c1e48b0316",
+        }
+        def simulated_git(repo, args, **kwargs):
+            if args[:2] == ["merge-base", "--is-ancestor"]:
+                return 128, "", "fatal: Not a valid commit name"
+            return real_run_git(repo, args, **kwargs)
+        with patch("tools.standards_sync.core.query_remote_ls_remote", return_value=("PASS", refs, "")):
+            with patch("tools.standards_sync.core.run_git", side_effect=simulated_git):
+                res = discover_latest_official_tag(standards_root=ROOT)
+        self.assertEqual(res["status"], "NOT_VERIFIABLE", res)
+        self.assertIn("MAIN_ANCESTRY_NOT_VERIFIABLE", res["reason"])
+        self.assertNotIn("NOT_ON_MAIN_BRANCH", res["reason"])
+
+    def test_std020_real_non_ancestor_remains_blocked(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import run_git as real_run_git
+        refs = {
+            "refs/heads/main": "0b309b82c37acdf6236296987a55de169f5ece30",
+            "refs/tags/v3.0.0": "8256bb384e62894219db0992a2cb57e16d4fa8cd",
+            "refs/tags/v3.0.0^{}": "8b223019c254e0edeb94576b94af46c1e48b0316",
+        }
+        def simulated_git(repo, args, **kwargs):
+            if args[:2] == ["merge-base", "--is-ancestor"]:
+                return 1, "", ""
+            return real_run_git(repo, args, **kwargs)
+        with patch("tools.standards_sync.core.query_remote_ls_remote", return_value=("PASS", refs, "")):
+            with patch("tools.standards_sync.core.run_git", side_effect=simulated_git):
+                res = discover_latest_official_tag(standards_root=ROOT)
+        self.assertEqual(res["status"], "BLOCK", res)
+        self.assertIn("NOT_ON_MAIN_BRANCH", res["reason"])
+
+    def test_std020_local_clone_never_claims_canonical_remote_main(self) -> None:
+        from unittest.mock import patch
+        refs = {
+            "refs/heads/main": "8b223019c254e0edeb94576b94af46c1e48b0316",
+            "refs/tags/v3.0.0": "8256bb384e62894219db0992a2cb57e16d4fa8cd",
+            "refs/tags/v3.0.0^{}": "8b223019c254e0edeb94576b94af46c1e48b0316",
+        }
+        with patch("tools.standards_sync.core.query_remote_ls_remote", return_value=("PASS", refs, "")):
+            with patch("tools.standards_sync.core.check_remote_main_ci", return_value=("PASS", 42996232217, "CI confirmed")):
+                res = discover_latest_official_tag(standards_root=ROOT, remote_url=str(ROOT))
+        self.assertEqual(res["status"], "NOT_VERIFIABLE", res)
+        self.assertEqual(res["remote_latest_status"], "NOT_VERIFIABLE")
+        self.assertEqual(res["discovery_mode"], "LOCAL_CLONE_DISCOVERY")
+        self.assertEqual(res["observed_main_source"], "LOCAL_CLONE_REFS")
+        self.assertFalse(res["canonical_remote_verified"])
+
+    def test_std020_guidance_scan_reports_pins_with_line_locations(self) -> None:
+        from tools.standards_sync.core import scan_consumer_guidance_files
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "AGENTS.md").write_text(
+                "Standards v2.11.0 is pinned\n"
+                "standards commit 5e17c0ef560ab8abafe880b988d70f85f380a104\n"
+                "Tools D:\\Projects\\AI-Engineering-Standards\\tools\n",
+                encoding="utf-8",
+            )
+            (root / "CLAUDE.md").write_text(
+                "Read AGENTS.md and standards.lock.json\n", encoding="utf-8"
+            )
+            report = scan_consumer_guidance_files(root)
+        codes = {(f["file"], f["line"], f["code"]) for f in report["findings"]}
+        self.assertIn(("AGENTS.md", 1, "HARDCODED_STANDARDS_VERSION"), codes)
+        self.assertIn(("AGENTS.md", 2, "HARDCODED_STANDARDS_COMMIT"), codes)
+        self.assertIn(("AGENTS.md", 3, "MACHINE_ABSOLUTE_PATH"), codes)
+        self.assertIn(("AGENTS.md", 1, "MISSING_LOCK_REFERENCE"), codes)
+        self.assertNotIn("CLAUDE.md", report["hardcoded"])
+
+    def test_std020_impact_preserves_unknown_consumer_head_as_not_verifiable(self) -> None:
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("tools.standards_sync.core.run_collection_validation",
+                       return_value=(False, ["MISSING_DOCUMENT_INDEX"])):
+                result = analyze_consumer_impact(
+                    root, from_ref="v2.11.0", to_ref="v3.0.0", standards_root=ROOT
+                )
+        self.assertEqual(result["CONSUMER_COMMIT"], "NOT_VERIFIABLE")
+        self.assertEqual(result["CONSUMER_WORKTREE_STATUS"], "NOT_VERIFIABLE")
+        self.assertEqual(result["CONSUMER_VERIFICATION_STATUS"], "NOT_VERIFIABLE")
+        self.assertEqual(result["analysis_status"], "PARTIAL")
+        self.assertEqual(result["INPUT_STANDARDS_COMMIT"],
+                         "5e17c0ef560ab8abafe880b988d70f85f380a104")
+        self.assertEqual(result["TARGET_STANDARDS_COMMIT"],
+                         "8b223019c254e0edeb94576b94af46c1e48b0316")
+
     def test_deep_schema_diff_detects_nested_tightening(self) -> None:
         old_schema = {
             "type": "object",
