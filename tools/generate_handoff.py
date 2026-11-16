@@ -45,8 +45,10 @@ def run_git(project_root: Path, args: List[str], timeout: int = 5) -> Tuple[int,
             timeout=timeout,
         )
         return res.returncode, (res.stdout or "").strip()
+    except subprocess.TimeoutExpired as e:
+        return 124, f"TIMEOUT: {e}"
     except Exception as e:
-        return 1, str(e)
+        return 128, f"GIT_EXECUTION_NOT_VERIFIABLE: {e}"
 
 
 def query_remote_main_head(project_root: Path, timeout: int = 8) -> str:

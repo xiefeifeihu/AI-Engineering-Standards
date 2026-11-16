@@ -380,7 +380,7 @@ def run_git(repo_dir: Path, args: List[str], timeout: int = 10) -> Tuple[int, st
     except subprocess.TimeoutExpired as te:
         return 124, "", f"TIMEOUT: {te}"
     except Exception as e:
-        return 1, "", str(e)
+        return 128, "", f"GIT_EXECUTION_NOT_VERIFIABLE: {e}"
 
 
 def query_remote_ls_remote(

@@ -38,6 +38,24 @@ class FakeResponse:
 
 
 class ConsumerIntegrationContractTests(unittest.TestCase):
+    def test_std020_git_helpers_preserve_non_ancestor_exit_code_semantics(self) -> None:
+        import subprocess
+        from unittest.mock import patch
+        from tools.standards_sync import core as sync_core
+        from tools import generate_engineering_baseline as baseline_gen
+        from tools import generate_handoff as handoff_gen
+
+        for module in (sync_core, baseline_gen, handoff_gen):
+            with self.subTest(module=module.__name__, failure="execution_error"):
+                with patch.object(module.subprocess, "run", side_effect=OSError("git executable unavailable")):
+                    result = module.run_git(ROOT, ["merge-base", "--is-ancestor", "a" * 40, "b" * 40])
+                self.assertEqual(result[0], 128, result)
+            with self.subTest(module=module.__name__, failure="timeout"):
+                timeout = subprocess.TimeoutExpired(cmd="git", timeout=1)
+                with patch.object(module.subprocess, "run", side_effect=timeout):
+                    result = module.run_git(ROOT, ["merge-base", "--is-ancestor", "a" * 40, "b" * 40])
+                self.assertEqual(result[0], 124, result)
+
     def test_std020_missing_remote_git_object_is_not_false_non_ancestor(self) -> None:
         from unittest.mock import patch
         from tools.standards_sync.core import run_git as real_run_git
