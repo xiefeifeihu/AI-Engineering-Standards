@@ -158,7 +158,8 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
                 "D:\\Projects\\AI-Engineering-Standards\\.standards\n"
                 "-->\n"
                 "Read standards.lock.json\n"
-                "Custom checkout: C:\\Work\\AI-Engineering-Standards\\.standards\n",
+                "Custom checkout: C:\\Work\\AI-Engineering-Standards\\.standards\n"
+                "UNC checkout: \\\\buildhost\\share\n",
                 encoding="utf-8",
             )
             (root / "CLAUDE.md").write_text(
@@ -167,6 +168,7 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
             report = scan_consumer_guidance_files(root)
         findings = {(f["file"], f["line"], f["code"]) for f in report["findings"]}
         self.assertIn(("AGENTS.md", 6, "MACHINE_ABSOLUTE_PATH"), findings)
+        self.assertIn(("AGENTS.md", 7, "MACHINE_ABSOLUTE_PATH"), findings)
         self.assertNotIn(("AGENTS.md", 2, "HARDCODED_STANDARDS_VERSION"), findings)
         self.assertNotIn(("AGENTS.md", 3, "MACHINE_ABSOLUTE_PATH"), findings)
         self.assertNotIn(("AGENTS.md", 1, "MISSING_LOCK_REFERENCE"), findings)

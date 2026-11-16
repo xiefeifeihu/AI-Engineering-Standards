@@ -9,9 +9,9 @@ approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
-last_updated: "2026-11-05"
+last_updated: "2026-11-16"
 supersedes: null
-change_summary: "CLI, JSON Schema, and Cross-Project Governance Data Contracts for AI-Engineering-Standards v3.0.0."
+change_summary: "扩展消费端 impact 输出契约，明确 Standards 与消费工程 Git 身份字段及 NOT_VERIFIABLE 状态。"
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
 content_sha256: null

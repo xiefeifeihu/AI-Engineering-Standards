@@ -9,9 +9,9 @@ approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
-last_updated: "2026-11-05"
+last_updated: "2026-11-16"
 supersedes: null
-change_summary: "Continuous Test & Acceptance Baseline for AI-Engineering-Standards v3.0.0 covering Schema, Document Collection, Standards Sync, Approval Authenticity, and Cross-Platform gates."
+change_summary: "补充 Std-020 F01-F07 回归验收用例及历史快照、消费端工作区边界测试。"
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
 content_sha256: null

@@ -9,9 +9,9 @@ approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
-last_updated: "2026-11-05"
+last_updated: "2026-11-16"
 supersedes: null
-change_summary: "Consumer integration, shared tool invocation, templates, exact Standards locking, CI, upgrade and rollback protocol."
+change_summary: "补充历史 Lock 首次建锁、工具发现来源、消费端身份和历史快照验证协议。"
 history_reference: "docs/API-CONTRACT.md"
 primary_entrypoint: false
 content_sha256: null

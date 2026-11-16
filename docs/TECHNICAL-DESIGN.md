@@ -9,9 +9,9 @@ approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
-last_updated: "2026-11-05"
+last_updated: "2026-11-16"
 supersedes: null
-change_summary: "Technical Design for deterministic baseline generation, dual-layer approval verification, STD-020 auto-handoff, and standards_sync state machine."
+change_summary: "补充消费端身份、远端发现来源与历史快照 Git 谱系验证设计。"
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
 content_sha256: null

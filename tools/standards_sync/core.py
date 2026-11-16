@@ -1370,7 +1370,7 @@ def scan_consumer_guidance_files(project_root: Path) -> Dict[str, Any]:
     )
     sha_pattern = re.compile(r"\b[0-9a-f]{40}\b", re.I)
     # Detect any Windows drive-rooted or UNC path; custom roots must not be missed.
-    machine_path = re.compile(r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:[\\/]|\\\\[^\\/\s]+[\\/][^\\/\s]+[\\/])")
+    machine_path = re.compile(r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:[\\/]|\\\\[^\\/\s]+[\\/][^\\/\s]+(?:[\\/]|$))")
     historical_label = re.compile(
         r"(?i)^\s*(?:historical(?:\s+(?:reference|baseline|version))?|历史(?:记录|版本(?:说明)?|说明|基线))\s*[:：]"
     )

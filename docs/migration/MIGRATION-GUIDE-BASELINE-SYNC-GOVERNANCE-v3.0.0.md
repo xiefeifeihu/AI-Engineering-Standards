@@ -9,9 +9,9 @@ approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
-last_updated: "2026-11-12"
+last_updated: "2026-11-16"
 supersedes: null
-change_summary: "AI-Engineering-Hub first consumer pilot plan for Standards v3.0.0 official release; other consumers excluded."
+change_summary: "汇总 AI-HUB H1 F01-F07 反馈与 H2-H5 受控迁移计划。"
 history_reference: null
 primary_entrypoint: false
 content_sha256: null

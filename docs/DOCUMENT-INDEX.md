@@ -9,9 +9,9 @@ approval_scope: "AI_APPROVABLE"
 approval_evidence_ref: null
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
-last_updated: "2026-11-12"
+last_updated: "2026-11-16"
 supersedes: null
-change_summary: "Canonical 12-type documentation index for AI-Engineering-Standards v3.0.0 (STD-035)."
+change_summary: "同步 12 类文档实际 Frontmatter 生命周期状态，记录待激活治理缺口。"
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
 content_sha256: null
