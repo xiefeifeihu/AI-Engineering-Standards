@@ -555,6 +555,7 @@ def discover_latest_official_tag(
 
     official_remote = f"https://github.com/{DEFAULT_OFFICIAL_REPO}.git"
     effective_remote = official_remote
+    discovery_mode = "REMOTE_OFFICIAL_DISCOVERY"
     if remote_url:
         supplied_remote = str(remote_url).rstrip("/")
         if is_canonical_repository_url(supplied_remote, repository):
@@ -568,6 +569,7 @@ def discover_latest_official_tag(
                     "reason": "UNOFFICIAL_REMOTE_FORBIDDEN: A local clone is accepted only when its origin is the canonical official repository",
                 }
             effective_remote = supplied_remote
+            discovery_mode = "LOCAL_CLONE_DISCOVERY"
         else:
             return {
                 "status": "BLOCK",
@@ -694,15 +696,21 @@ def discover_latest_official_tag(
                 "tag_refs": {name: sha for name, sha in refs.items() if name.startswith("refs/tags/")},
             }
         if remote_main:
-            rc_anc, _, _ = run_git(std_root, ["merge-base", "--is-ancestor", peeled_sha, remote_main])
-            if rc_anc != 0:
+            rc_anc, _, anc_err = run_git(std_root, ["merge-base", "--is-ancestor", peeled_sha, remote_main])
+            if rc_anc == 1:
                 return {
-                    "status": "BLOCK",
-                    "repository": repository,
-                    "tag": latest_tag,
-                    "peeled_commit": peeled_sha,
-                    "remote_main": remote_main,
+                    "status": "BLOCK", "repository": repository,
+                    "tag": latest_tag, "peeled_commit": peeled_sha,
+                    "remote_main": remote_main, "discovery_mode": discovery_mode,
                     "reason": f"NOT_ON_MAIN_BRANCH: Tag '{latest_tag}' commit {peeled_sha} is not an ancestor of main ({remote_main})",
+                }
+            if rc_anc not in (0, 1):
+                return {
+                    "status": "NOT_VERIFIABLE", "remote_latest_status": "NOT_VERIFIABLE",
+                    "repository": repository, "tag": latest_tag,
+                    "tag_object_sha": tag_obj_sha, "peeled_commit": peeled_sha,
+                    "remote_main": remote_main, "discovery_mode": discovery_mode,
+                    "reason": f"MAIN_ANCESTRY_NOT_VERIFIABLE: local object graph unavailable (exit_code={rc_anc}, detail={anc_err})",
                 }
 
     ci_status, ci_run_id, ci_detail = check_remote_main_ci(
@@ -738,19 +746,20 @@ def discover_latest_official_tag(
             "tag_refs": {name: sha for name, sha in refs.items() if name.startswith("refs/tags/")},
         }
 
+    # A clone's origin URL proves repository identity, not live official main state.
+    local_only = discovery_mode == "LOCAL_CLONE_DISCOVERY"
     return {
-        "status": "PASS",
-        "remote_latest_status": "PASS",
-        "repository": repository,
-        "version": latest_version,
-        "tag": latest_tag,
-        "tag_object_sha": tag_obj_sha,
-        "peeled_commit": peeled_sha,
+        "status": "NOT_VERIFIABLE" if local_only else "PASS",
+        "remote_latest_status": "NOT_VERIFIABLE" if local_only else "PASS",
+        "repository": repository, "version": latest_version, "tag": latest_tag,
+        "tag_object_sha": tag_obj_sha, "peeled_commit": peeled_sha,
         "remote_main": remote_main,
-        "ci_verification_status": ci_status,
-        "ci_run_id": ci_run_id,
-        "ci_detail": ci_detail,
-        "all_tags": sorted_tags,
+        "observed_main_source": "LOCAL_CLONE_REFS" if local_only else "CANONICAL_REMOTE_REFS",
+        "discovery_mode": discovery_mode,
+        "canonical_remote_verified": not local_only,
+        "reason": "LOCAL_CLONE_ONLY: canonical remote refs/main not queried" if local_only else None,
+        "ci_verification_status": ci_status, "ci_run_id": ci_run_id,
+        "ci_detail": ci_detail, "all_tags": sorted_tags,
         "tag_refs": {name: sha for name, sha in refs.items() if name.startswith("refs/tags/")},
     }
 
@@ -762,8 +771,10 @@ def verify_project_lock(
     allow_offline: bool = True,
     simulate_offline: bool = False,
 ) -> Dict[str, Any]:
-    """Verify project's standards.lock.json, cross-check against engineering-manifest.yaml
-    and compatibility_matrix.yaml, and verify Tag object & Peeled Commit integrity.
+    """Verify exact Lock and Manifest binding and official Tag integrity.
+
+    compatibility_matrix.yaml is a compatibility description and must not
+    become a second authoritative Standards lock source (STD-034 section 4.1).
     """
     project_root = project_root.resolve()
     std_root = resolve_standards_root(standards_root)
@@ -1349,6 +1360,48 @@ def compare_versions_and_artifacts(
     }
 
 
+def scan_consumer_guidance_files(project_root: Path) -> Dict[str, Any]:
+    """Scan current agent guidance for nonportable Standards pins with line evidence."""
+    required = ("AGENTS.md", "CLAUDE.md")
+    guidance = ("AGENTS.md", "CLAUDE.md", "README.md")
+    version_pattern = re.compile(
+        r"(?i)\bstandards?\b[^\r\n]{0,120}\bv?\d+\.\d+\.\d+\b"
+        r"|\bv?\d+\.\d+\.\d+\b[^\r\n]{0,80}\bstandards?\b"
+    )
+    sha_pattern = re.compile(r"\b[0-9a-f]{40}\b", re.I)
+    machine_path = re.compile(r"(?i)\b[A-Z]:[\\/](?:Projects|Users|ProgramData|workspace)[\\/]")
+    findings: List[Dict[str, Any]] = []
+    missing: List[str] = []
+    pinned: Set[str] = set()
+    for name in guidance:
+        path = project_root / name
+        if not path.is_file():
+            if name in required:
+                missing.append(name)
+            continue
+        contents = path.read_text(encoding="utf-8", errors="replace")
+        for line_number, line in enumerate(contents.splitlines(), 1):
+            if not line.strip() or line.strip().startswith("<!--"):
+                continue
+            if re.search(r"(?i)(historical|历史记录|历史版本|过去使用)", line):
+                continue
+            codes: List[str] = []
+            if version_pattern.search(line):
+                codes.append("HARDCODED_STANDARDS_VERSION")
+            if sha_pattern.search(line) and re.search(r"(?i)standards?|standard_commit|peeled_commit", line):
+                codes.append("HARDCODED_STANDARDS_COMMIT")
+            if machine_path.search(line):
+                codes.append("MACHINE_ABSOLUTE_PATH")
+            for code in codes:
+                findings.append({"file": name, "line": line_number, "code": code, "excerpt": line.strip()[:180]})
+                pinned.add(name)
+        if name in required and "standards.lock.json" not in contents:
+            findings.append({"file": name, "line": 1, "code": "MISSING_LOCK_REFERENCE",
+                             "excerpt": "Agent entrypoint does not reference standards.lock.json"})
+            pinned.add(name)
+    return {"missing": missing, "hardcoded": sorted(pinned), "findings": findings}
+
+
 def analyze_consumer_impact(
     project_root: Path,
     from_ref: Optional[str] = None,
@@ -1433,6 +1486,20 @@ def analyze_consumer_impact(
     breaking_items: List[str] = list(diff_report.get("breaking_changes") or [])
     migration_tasks: List[str] = []
 
+    # A consumer HEAD is distinct from the Standards source and target commits.
+    consumer_rc, consumer_commit, _ = run_git(project_root, ["rev-parse", "HEAD"])
+    consumer_git_verified = consumer_rc == 0 and bool(re.fullmatch(r"[0-9a-f]{40}", consumer_commit))
+    if not consumer_git_verified:
+        consumer_commit = "NOT_VERIFIABLE"
+    worktree_rc, porcelain, _ = run_git(project_root, ["status", "--porcelain"])
+    consumer_worktree_status = (
+        "NOT_VERIFIABLE" if worktree_rc != 0 else "DIRTY" if porcelain else "CLEAN"
+    )
+    if input_commit == "UNKNOWN" and eff_from:
+        old_rc, old_commit, _ = run_git(std_root, ["rev-parse", f"{eff_from}^{{commit}}"])
+        if old_rc == 0 and re.fullmatch(r"[0-9a-f]{40}", old_commit):
+            input_commit = old_commit
+
     # Check manifest
     manifest_path = project_root / "engineering-manifest.yaml"
     project_name = project_root.name
@@ -1493,31 +1560,16 @@ def analyze_consumer_impact(
         breaking_items.append("Missing mandatory primary entrypoint for ENGINEERING_BASELINE (docs/当前权威基线.md)")
         migration_tasks.append("Generate docs/当前权威基线.md using tools/generate_engineering_baseline.py and register in DOCUMENT-INDEX")
 
-    # Check mandatory agent entrypoints and version literals in all guidance files.
-    required_agent_docs = ("AGENTS.md", "CLAUDE.md")
-    guidance_docs = ("AGENTS.md", "CLAUDE.md", "README.md")
-    missing_agent_docs: List[str] = []
-    hardcoded_agent_docs: List[str] = []
-    standards_version_patterns = (
-        re.compile(r"(?i)\\bstandards?\\b[^\\r\\n]{0,120}\\bv?\\d+\\.\\d+\\.\\d+\\b"),
-        re.compile(r"(?i)\\bv?\\d+\\.\\d+\\.\\d+\\b[^\\r\\n]{0,80}\\bstandards?\\b"),
-    )
-    for guidance_name in guidance_docs:
-        guidance_path = project_root / guidance_name
-        if not guidance_path.exists():
-            if guidance_name in required_agent_docs:
-                missing_agent_docs.append(guidance_name)
-            continue
-        guidance_text = guidance_path.read_text(encoding="utf-8", errors="ignore")
-        if any(pattern.search(guidance_text) for pattern in standards_version_patterns):
-            hardcoded_agent_docs.append(guidance_name)
-
+    guidance_result = scan_consumer_guidance_files(project_root)
+    missing_agent_docs = guidance_result["missing"]
+    hardcoded_agent_docs = guidance_result["hardcoded"]
+    guidance_findings = guidance_result["findings"]
     if missing_agent_docs:
         breaking_items.append(f"Missing mandatory agent guidance entrypoints: {missing_agent_docs}")
         migration_tasks.append(f"Create required agent guidance entrypoints: {missing_agent_docs}")
     if hardcoded_agent_docs:
         migration_tasks.append(
-            f"Replace hardcoded Standards version strings in {hardcoded_agent_docs} with thin references to standards.lock.json"
+            f"Replace Standards pins, absolute paths, and obsolete guidance in {hardcoded_agent_docs} with references to standards.lock.json"
         )
 
     # Execute documentation collection and baseline verification; do not infer PASS from file presence.
@@ -1581,7 +1633,7 @@ def analyze_consumer_impact(
             "target_commit": target_commit,
             "command": "read AGENTS.md and scan Standards version literals",
             "executed_at": now_iso,
-            "raw_evidence": f"missing={missing_agent_docs}; hardcoded={hardcoded_agent_docs}",
+            "raw_evidence": json.dumps(guidance_result, ensure_ascii=False),
             "exit_code": 0 if ("AGENTS.md" not in missing_agent_docs and "AGENTS.md" not in hardcoded_agent_docs) else 1,
             "status": "UPGRADE_BLOCKED" if ("AGENTS.md" in missing_agent_docs or "AGENTS.md" in hardcoded_agent_docs) else "COMPATIBLE",
         },
@@ -1591,7 +1643,7 @@ def analyze_consumer_impact(
             "target_commit": target_commit,
             "command": "read CLAUDE.md and scan Standards version literals",
             "executed_at": now_iso,
-            "raw_evidence": f"missing={missing_agent_docs}; hardcoded={hardcoded_agent_docs}",
+            "raw_evidence": json.dumps(guidance_result, ensure_ascii=False),
             "exit_code": 0 if ("CLAUDE.md" not in missing_agent_docs and "CLAUDE.md" not in hardcoded_agent_docs) else 1,
             "status": "UPGRADE_BLOCKED" if ("CLAUDE.md" in missing_agent_docs or "CLAUDE.md" in hardcoded_agent_docs) else "COMPATIBLE",
         },
@@ -1678,7 +1730,7 @@ def analyze_consumer_impact(
         if has_unverified_dim
         else "COMPATIBLE"
     )
-    analysis_status = "PARTIAL" if has_unverified_dim else "COMPLETED"
+    analysis_status = "PARTIAL" if has_unverified_dim or not consumer_git_verified or consumer_worktree_status == "NOT_VERIFIABLE" else "COMPLETED"
     overall_status = (
         "BLOCK"
         if compatibility_status == "UPGRADE_BLOCKED"
@@ -1695,6 +1747,12 @@ def analyze_consumer_impact(
         "PROJECT": project_name,
         "INPUT_COMMIT": input_commit,
         "TARGET_COMMIT": target_commit,
+        "INPUT_STANDARDS_COMMIT": input_commit,
+        "TARGET_STANDARDS_COMMIT": target_commit,
+        "CONSUMER_COMMIT": consumer_commit,
+        "CONSUMER_WORKTREE_STATUS": consumer_worktree_status,
+        "CONSUMER_VERIFICATION_STATUS": "PASS" if consumer_git_verified and consumer_worktree_status != "NOT_VERIFIABLE" else "NOT_VERIFIABLE",
+        "GUIDANCE_FINDINGS": guidance_findings,
         "BASELINE_STANDARD": eff_from,
         "TARGET_STANDARD": f"v{diff_report['to_version']}",
         "MIGRATION_REQUIRED": len(breaking_items) > 0 or len(migration_tasks) > 0,
