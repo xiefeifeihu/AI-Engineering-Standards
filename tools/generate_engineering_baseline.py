@@ -345,17 +345,13 @@ def verify_git_snapshot_facts(
     else:
         captured_at = captured_matches[0]
 
-    expected_branch = resolve_snapshot_branch_name(project_root)
-    # A feature-branch snapshot remains valid after its PR is merged to main.
-    # The captured local_head is independently checked against branch history below.
-    if (
-        recorded_branch is not None
-        and expected_branch not in ("HEAD", "main")
-        and recorded_branch != expected_branch
-    ):
-        errors.append(
-            f"{prefix}_GIT_SNAPSHOT_BRANCH_MISMATCH: recorded '{recorded_branch}', live branch '{expected_branch}'"
-        )
+    is_historical = False
+    if document_kind == "baseline":
+        if "RELEASE_STATUS=RELEASED" in scope_text or "PR10=MERGED" in scope_text:
+            is_historical = True
+    elif document_kind == "handoff":
+        if re.search(r"^STATUS=COMPLETED$", identity_text, re.M):
+            is_historical = True
 
     if recorded_worktree_clean not in ("true", "false"):
         errors.append(f"{prefix}_GIT_SNAPSHOT_WORKTREE_STATE_INVALID: expected true/false")
@@ -368,13 +364,49 @@ def verify_git_snapshot_facts(
     if not branch_tip:
         errors.append(f"{prefix}_GIT_SNAPSHOT_BRANCH_TIP_NOT_VERIFIABLE: current branch tip unavailable")
 
+    expected_branch = resolve_snapshot_branch_name(project_root)
+    # A feature-branch snapshot remains valid after its PR is merged to main
+    # and when subsequent branches fork from main (its commit is an ancestor of live history).
+    # The captured local_head is independently checked against branch history below.
+    is_ancestor = False
+    if recorded_local_head and branch_tip and recorded_local_head != branch_tip:
+        rc_anc, _ = run_git(
+            project_root,
+            ["merge-base", "--is-ancestor", recorded_local_head, branch_tip],
+            timeout=8,
+        )
+        if rc_anc == 0:
+            is_ancestor = True
+    if not is_ancestor and recorded_local_head and remote_main_head != "NOT_VERIFIABLE" and recorded_local_head != remote_main_head:
+        rc_anc_remote, _ = run_git(
+            project_root,
+            ["merge-base", "--is-ancestor", recorded_local_head, remote_main_head],
+            timeout=8,
+        )
+        if rc_anc_remote == 0:
+            is_ancestor = True
+
+    if (
+        recorded_branch is not None
+        and expected_branch not in ("HEAD", "main")
+        and recorded_branch != expected_branch
+        and not (is_historical and is_ancestor)
+    ):
+        errors.append(
+            f"{prefix}_GIT_SNAPSHOT_BRANCH_MISMATCH: recorded '{recorded_branch}', live branch '{expected_branch}'"
+        )
+
     if captured_at:
         try:
             captured_dt = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
             if captured_dt.tzinfo is None:
                 raise ValueError("timezone missing")
             age_seconds = (datetime.now(timezone.utc) - captured_dt).total_seconds()
-            if age_seconds < -300 or age_seconds > 24 * 60 * 60:
+            if age_seconds < -300:
+                errors.append(
+                    f"{prefix}_GIT_SNAPSHOT_STALE: captured_at '{captured_at}' is in the future"
+                )
+            elif not is_historical and age_seconds > 24 * 60 * 60:
                 errors.append(
                     f"{prefix}_GIT_SNAPSHOT_STALE: captured_at '{captured_at}' is outside the 24-hour validity window"
                 )

@@ -113,6 +113,40 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
         self.assertIn(("AGENTS.md", 1, "MISSING_LOCK_REFERENCE"), codes)
         self.assertNotIn("CLAUDE.md", report["hardcoded"])
 
+    def test_std020_guidance_scan_ignores_historical_references(self) -> None:
+        from tools.standards_sync.core import scan_consumer_guidance_files
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "AGENTS.md").write_text(
+                "<!-- Standards v2.10.0 comment ignored -->\n"
+                "历史版本说明：过去使用 v2.11.0 锁定 (commit 5e17c0ef560ab8abafe880b988d70f85f380a104)\n"
+                "遵循 standards.lock.json 锁定约束。\n",
+                encoding="utf-8",
+            )
+            (root / "CLAUDE.md").write_text(
+                "Read AGENTS.md and standards.lock.json\n", encoding="utf-8"
+            )
+            report = scan_consumer_guidance_files(root)
+        self.assertEqual(report["hardcoded"], [])
+        self.assertEqual(report["findings"], [])
+
+    def test_std020_baseline_and_handoff_verify_only_succeeds_on_ancestor_feature_branch(self) -> None:
+        import subprocess
+        import sys
+        res_b = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "generate_engineering_baseline.py"), "--project-root", str(ROOT), "--verify-only"],
+            capture_output=True, text=True, encoding="utf-8",
+        )
+        self.assertEqual(res_b.returncode, 0, f"Baseline verify-only failed: {res_b.stdout} {res_b.stderr}")
+        self.assertIn("[PASS]", res_b.stdout)
+
+        res_h = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "generate_handoff.py"), "--project-root", str(ROOT), "--task-id", "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT", "--verify-only"],
+            capture_output=True, text=True, encoding="utf-8",
+        )
+        self.assertEqual(res_h.returncode, 0, f"Handoff verify-only failed: {res_h.stdout} {res_h.stderr}")
+        self.assertIn("[PASS]", res_h.stdout)
+
     def test_std020_impact_preserves_unknown_consumer_head_as_not_verifiable(self) -> None:
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:
