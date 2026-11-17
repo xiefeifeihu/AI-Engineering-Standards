@@ -110,7 +110,11 @@ def git_commit_exists(repo_root: Path, commit_sha: str) -> bool:
         return False
 
 
-def verify_approval_event_provenance(record: Dict[str, Any]) -> Tuple[str, List[str]]:
+def verify_approval_event_provenance(
+    record: Dict[str, Any],
+    standards_root: Optional[Path] = None,
+    simulate_data: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, List[str]]:
     """Verify Owner approval through GitHub PR merge or review API; never trust JSON status labels."""
     event = record.get("approval_event")
     if not isinstance(event, dict):
@@ -134,11 +138,8 @@ def verify_approval_event_provenance(record: Dict[str, Any]) -> Tuple[str, List[
     service_ref = str(actor.get("service_provenance_ref") or "")
     expected_owner = repository.split("/", 1)[0].lower()
     identity_id = str(actor.get("identity_id") or "")
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    if not token:
-        return "NOT_VERIFIABLE", ["UNVERIFIABLE_APPROVAL_PROVENANCE: GITHUB_TOKEN or GH_TOKEN is unavailable"]
 
-    # 1. GITHUB_PR_MERGE_EVENT: Single Owner PR Merge Approval
+    # 1. GITHUB_PR_MERGE_EVENT: Single Owner PR Merge Approval (Option C)
     if event_type == "GITHUB_PR_MERGE_EVENT" or provenance_type == "GITHUB_PR_MERGE":
         prefix = f"https://api.github.com/repos/{repository}/pulls/"
         match = re.fullmatch(re.escape(prefix) + r"(\d+)", service_ref)
@@ -149,23 +150,30 @@ def verify_approval_event_provenance(record: Dict[str, Any]) -> Tuple[str, List[
         if event_id.isdigit() and int(event_id) != pull_number:
             return "FAILED", ["APPROVAL_PR_ID_MISMATCH: event_id does not match PR number"]
 
-        request = urllib.request.Request(
-            service_ref,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {token}",
-                "User-Agent": "AI-Engineering-Standards-Approval-Verifier/3.0.0",
-            },
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=10) as response:
-                pr = json.loads(response.read().decode("utf-8"))
-        except Exception as exc:
-            return "NOT_VERIFIABLE", [f"UNVERIFIABLE_APPROVAL_PROVENANCE: GitHub PR lookup failed: {exc}"]
+        if simulate_data is not None:
+            pr = simulate_data
+        else:
+            token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+            if not token:
+                return "NOT_VERIFIABLE", ["UNVERIFIABLE_APPROVAL_PROVENANCE: GITHUB_TOKEN or GH_TOKEN is unavailable"]
+            request = urllib.request.Request(
+                service_ref,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "Authorization": f"Bearer {token}",
+                    "User-Agent": "AI-Engineering-Standards-Approval-Verifier/3.0.0",
+                },
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    pr = json.loads(response.read().decode("utf-8"))
+            except Exception as exc:
+                return "NOT_VERIFIABLE", [f"UNVERIFIABLE_APPROVAL_PROVENANCE: GitHub PR lookup failed: {exc}"]
 
+        # Agent permission boundaries: Coding agents cannot hold merge permissions or authorize Owner approvals
         merged_by = (pr.get("merged_by") or {}).get("login") or ""
         if merged_by.upper() in FORBIDDEN_SELF_APPROVAL_ROLES or identity_id.upper() in FORBIDDEN_SELF_APPROVAL_ROLES or "AGENT" in merged_by.upper():
-            return "FAILED", [f"AGENT_SELF_APPROVAL_FORBIDDEN: Coding agent ({merged_by or identity_id}) cannot issue OWNER approval"]
+            return "FAILED", [f"AGENT_SELF_APPROVAL_FORBIDDEN: Coding agent ({merged_by or identity_id}) cannot merge PR or issue OWNER approval"]
 
         if not pr.get("merged"):
             return "FAILED", ["APPROVAL_PR_NOT_MERGED: PR is not merged; approval state must remain OWNER_APPROVAL_REQUIRED"]
@@ -179,59 +187,100 @@ def verify_approval_event_provenance(record: Dict[str, Any]) -> Tuple[str, List[
         if base_ref != "main":
             return "FAILED", [f"APPROVAL_PR_BASE_BRANCH_MISMATCH: Base branch is '{base_ref}', expected 'main'"]
 
+        # Scope verification
+        record_scope = record.get("approval_scope") or record.get("decision_scope")
+        event_scope = event.get("approval_scope")
+        if event_scope and record_scope and event_scope != record_scope:
+            return "FAILED", [f"EVENT_SCOPE_MISMATCH: event.approval_scope '{event_scope}' != '{record_scope}'"]
+
+        if record_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK") or event_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK"):
+            if not record.get("commit_bindings") or not event.get("commit_bindings"):
+                return "FAILED", ["LEGACY_SINGLE_COMMIT_BYPASS_FORBIDDEN: Scope requires dual commit_bindings in both record and event"]
+            if not record.get("content_bindings") or not event.get("content_bindings"):
+                return "FAILED", ["MISSING_CONTENT_BINDINGS: Scope requires content_bindings in both record and event"]
+
+        # Cross-consistency of bindings between record and event
+        rec_cb = record.get("commit_bindings")
+        ev_cb = event.get("commit_bindings")
+        if rec_cb and ev_cb and rec_cb != ev_cb:
+            return "FAILED", ["COMMIT_BINDINGS_MISMATCH: record commit_bindings != event commit_bindings"]
+
+        rec_cnt = record.get("content_bindings")
+        ev_cnt = event.get("content_bindings")
+        if rec_cnt and ev_cnt and rec_cnt != ev_cnt:
+            return "FAILED", ["CONTENT_BINDINGS_MISMATCH: record content_bindings != event content_bindings"]
+
         head_sha = (pr.get("head") or {}).get("sha") or ""
-        commit_bindings = record.get("commit_bindings") or event.get("commit_bindings")
+        commit_bindings = rec_cb or ev_cb
         if commit_bindings:
             consumer_binding = commit_bindings.get("consumer") or {}
             expected_head = consumer_binding.get("candidate_commit") or record.get("candidate_commit") or ""
             expected_repo = consumer_binding.get("repository") or repository
             if expected_repo and repository.lower() != expected_repo.lower():
                 return "FAILED", [f"APPROVAL_PR_REPO_MISMATCH: PR repo '{repository}' != expected consumer repo '{expected_repo}'"]
+            if not expected_head or not re.match(r"^[0-9a-f]{40}$", str(expected_head)):
+                return "FAILED", [f"INVALID_CONSUMER_CANDIDATE_COMMIT: '{expected_head}'"]
             if head_sha != expected_head:
                 return "FAILED", [f"APPROVAL_PR_HEAD_COMMIT_MISMATCH: PR head.sha '{head_sha}' != consumer candidate_commit '{expected_head}'"]
             if event.get("candidate_commit") and event.get("candidate_commit") != expected_head:
                 return "FAILED", ["EVENT_COMMIT_MISMATCH"]
+
             standards_binding = commit_bindings.get("standards") or {}
+            if not standards_binding and (record_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK") or event_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK")):
+                return "FAILED", ["MISSING_STANDARDS_COMMIT_BINDING: commit_bindings.standards is required"]
             if standards_binding:
                 std_repo = standards_binding.get("repository")
                 if std_repo != "xiefeifeihu/AI-Engineering-Standards":
                     return "FAILED", [f"INVALID_STANDARDS_REPOSITORY: '{std_repo}' is not official AI-Engineering-Standards"]
                 std_tag = standards_binding.get("target_tag")
+                std_tag_obj = standards_binding.get("tag_object_sha")
                 std_peeled = standards_binding.get("peeled_commit")
                 if not std_tag or not re.match(r"^v\d+\.\d+\.\d+$", str(std_tag)):
                     return "FAILED", [f"INVALID_STANDARDS_TARGET_TAG: '{std_tag}'"]
+                if not std_tag_obj or not re.match(r"^[0-9a-f]{40}$", str(std_tag_obj)):
+                    return "FAILED", [f"INVALID_STANDARDS_TAG_OBJECT_SHA: '{std_tag_obj}'"]
                 if not std_peeled or not re.match(r"^[0-9a-f]{40}$", str(std_peeled)):
                     return "FAILED", [f"INVALID_STANDARDS_PEELED_COMMIT: '{std_peeled}'"]
         else:
+            if record_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK"):
+                return "FAILED", ["LEGACY_SINGLE_COMMIT_BYPASS_FORBIDDEN: Scope requires dual commit_bindings"]
             cand_commit = record.get("candidate_commit") or ""
-            if head_sha != cand_commit:
+            if not cand_commit or head_sha != cand_commit:
                 return "FAILED", [f"APPROVAL_PR_HEAD_COMMIT_MISMATCH: PR head.sha '{head_sha}' != candidate_commit '{cand_commit}'"]
             if event.get("candidate_commit") != cand_commit:
                 return "FAILED", ["EVENT_COMMIT_MISMATCH"]
 
-        content_bindings = record.get("content_bindings") or event.get("content_bindings")
+        content_bindings = rec_cnt or ev_cnt
         if content_bindings:
-            for k in ("ci_job_mapping_sha256", "lock_manifest_sha256"):
-                val = content_bindings.get(k)
-                if val and not re.match(r"^(sha256:)?[0-9a-f]{64}$", str(val)):
-                    return "FAILED", [f"INVALID_CONTENT_BINDING_DIGEST: '{k}' digest '{val}' is not 64-hex SHA-256"]
+            mapping_sha = content_bindings.get("ci_job_mapping_sha256")
+            lock_sha = content_bindings.get("lock_manifest_sha256")
+            if not mapping_sha or not re.match(r"^(sha256:)?[0-9a-f]{64}$", str(mapping_sha)):
+                return "FAILED", ["INVALID_CONTENT_BINDING_DIGEST: 'ci_job_mapping_sha256' is missing or invalid SHA-256"]
+            if not lock_sha or not re.match(r"^(sha256:)?[0-9a-f]{64}$", str(lock_sha)):
+                return "FAILED", ["INVALID_CONTENT_BINDING_DIGEST: 'lock_manifest_sha256' is missing or invalid SHA-256"]
 
         merged_at = pr.get("merged_at")
         if not merged_at:
             return "FAILED", ["APPROVAL_PR_MERGED_AT_EMPTY: PR merged_at is empty"]
 
-        digest = normalize_sha256(record.get("content_sha256"))
-        if normalize_sha256(event.get("content_sha256")) != digest:
-            return "FAILED", ["EVENT_CONTENT_HASH_MISMATCH"]
+        event_ts = str(event.get("event_timestamp") or event.get("timestamp") or "").strip()
+        if not event_ts and (record_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK") or event_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK")):
+            return "FAILED", ["APPROVAL_EVENT_TIMESTAMP_MISSING: approval_event missing event_timestamp"]
+        elif not event_ts:
+            event_ts = str(record.get("approved_at") or (record.get("owner_approval") or {}).get("approved_at") or "").strip()
+        if not event_ts:
+            return "FAILED", ["APPROVAL_EVENT_TIMESTAMP_MISSING: approval_event missing event_timestamp"]
+        norm_merged = str(merged_at).replace("Z", "+00:00")
+        norm_ev_ts = event_ts.replace("Z", "+00:00")
+        if norm_ev_ts != norm_merged:
+            return "FAILED", [f"APPROVAL_TIME_MISMATCH: event_timestamp '{event_ts}' != GitHub PR merged_at '{merged_at}'"]
 
-        record_scope = record.get("approval_scope") or record.get("decision_scope")
-        event_scope = event.get("approval_scope")
-        if event_scope and record_scope and event_scope != record_scope:
-            return "FAILED", [f"EVENT_SCOPE_MISMATCH: event.approval_scope '{event_scope}' != '{record_scope}'"]
+        digest = normalize_sha256(record.get("content_sha256"))
+        if not digest or normalize_sha256(event.get("content_sha256")) != digest:
+            return "FAILED", ["EVENT_CONTENT_HASH_MISMATCH"]
 
         record_approved_at = str(record.get("approved_at") or (record.get("owner_approval") or {}).get("approved_at") or "").strip()
         if record_approved_at:
-            norm_merged = str(merged_at).replace("Z", "+00:00")
             norm_appr = record_approved_at.replace("Z", "+00:00")
             if norm_merged != norm_appr:
                 return "FAILED", [f"APPROVAL_TIME_MISMATCH: approved_at '{record_approved_at}' does not match GitHub PR merged_at '{merged_at}'"]
@@ -245,19 +294,25 @@ def verify_approval_event_provenance(record: Dict[str, Any]) -> Tuple[str, List[
     if not match or not review_id.isdigit() or match.group(2) != review_id:
         return "FAILED", ["INVALID_APPROVAL_EVENT_REFERENCE: Expected exact GitHub PR review API URL"]
 
-    request = urllib.request.Request(
-        service_ref,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "AI-Engineering-Standards-Approval-Verifier/3.0.0",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            review = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:
-        return "NOT_VERIFIABLE", [f"UNVERIFIABLE_APPROVAL_PROVENANCE: GitHub review lookup failed: {exc}"]
+    if simulate_data is not None:
+        review = simulate_data
+    else:
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if not token:
+            return "NOT_VERIFIABLE", ["UNVERIFIABLE_APPROVAL_PROVENANCE: GITHUB_TOKEN or GH_TOKEN is unavailable"]
+        request = urllib.request.Request(
+            service_ref,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "User-Agent": "AI-Engineering-Standards-Approval-Verifier/3.0.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                review = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            return "NOT_VERIFIABLE", [f"UNVERIFIABLE_APPROVAL_PROVENANCE: GitHub review lookup failed: {exc}"]
 
     actual_actor = str((review.get("user") or {}).get("login") or "")
 
@@ -322,6 +377,8 @@ def validate_approval_record(
     expected_commit: Optional[str] = None,
     repo_root: Optional[Path] = None,
     verify_provenance: bool = True,
+    standards_root: Optional[Path] = None,
+    simulate_provenance_data: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, List[str]]:
     errors: List[str] = []
 
@@ -425,7 +482,11 @@ def validate_approval_record(
 
     # 7. Authenticity & Provenance Check
     if verify_provenance and approval_status in ("AI_APPROVED", "OWNER_APPROVED"):
-        prov_status, prov_errors = verify_approval_event_provenance(record)
+        prov_status, prov_errors = verify_approval_event_provenance(
+            record,
+            standards_root=standards_root,
+            simulate_data=simulate_provenance_data,
+        )
         if prov_status != "VERIFIED":
             errors.extend(prov_errors)
 

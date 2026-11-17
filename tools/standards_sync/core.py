@@ -516,6 +516,77 @@ def is_canonical_repository_url(url: str, canonical_repo: str = DEFAULT_OFFICIAL
     return False
 
 
+def verify_official_historical_tag(
+    standards_root: Optional[Path],
+    tag: str,
+    tag_object_sha: str,
+    peeled_commit: str,
+    expected_version: Optional[str] = None,
+    repository: str = DEFAULT_OFFICIAL_REPO,
+    remote_url: Optional[str] = None,
+    simulate_offline: bool = False,
+    simulate_remote_refs: Optional[Dict[str, str]] = None,
+    timeout: int = 10,
+) -> Tuple[str, Optional[str]]:
+    """Verify an official historical tag against canonical remote.
+    Returns (status, error_message), where status is "PASS", "FAIL", or "NOT_VERIFIABLE".
+    """
+    if repository != DEFAULT_OFFICIAL_REPO:
+        return "FAIL", f"UNOFFICIAL_REPOSITORY_FORBIDDEN: {repository}"
+
+    if simulate_offline:
+        return "NOT_VERIFIABLE", "Simulated offline: remote unreachable"
+
+    if simulate_remote_refs is not None:
+        remote_refs = simulate_remote_refs
+    else:
+        target_url = remote_url or f"https://github.com/{repository}.git"
+        remote_status, remote_refs, remote_error = query_remote_ls_remote(
+            target_url,
+            cwd=standards_root if (standards_root and standards_root.exists()) else None,
+            timeout=timeout,
+        )
+        if remote_status != "PASS":
+            return "NOT_VERIFIABLE", f"Remote repository unreachable or query failed: {remote_error}"
+
+    tag_ref = f"refs/tags/{tag}"
+    peeled_ref = f"refs/tags/{tag}^{{}}"
+
+    remote_tag_obj = remote_refs.get(tag_ref)
+    if not remote_tag_obj:
+        return "FAIL", f"Tag '{tag}' not found on official remote"
+    if remote_tag_obj != tag_object_sha:
+        return "FAIL", f"Tag object SHA mismatch for '{tag}': expected {tag_object_sha}, got {remote_tag_obj}"
+
+    remote_peeled = remote_refs.get(peeled_ref)
+    if not remote_peeled:
+        return "FAIL", f"Tag '{tag}' is not an annotated tag on official remote (missing peeled commit)"
+    if remote_peeled != peeled_commit:
+        return "FAIL", f"Peeled commit SHA mismatch for '{tag}': expected {peeled_commit}, got {remote_peeled}"
+
+    remote_main = remote_refs.get("refs/heads/main")
+    if not remote_main:
+        return "NOT_VERIFIABLE", "Remote main ref not verifiable"
+
+    if standards_root and standards_root.exists():
+        rc_cat, _, _ = run_git(standards_root, ["cat-file", "-e", f"{peeled_commit}^{{commit}}"])
+        if rc_cat != 0:
+            return "NOT_VERIFIABLE", f"Historical peeled commit {peeled_commit} not available locally for ancestry check"
+
+        rc_anc, _, anc_err = run_git(standards_root, ["merge-base", "--is-ancestor", peeled_commit, remote_main])
+        if rc_anc != 0:
+            return "FAIL", f"Historical commit {peeled_commit} is not on official main ancestry: {anc_err}"
+
+        if expected_version:
+            rc_ver, ver_content, _ = run_git(standards_root, ["show", f"{peeled_commit}:VERSION"])
+            if rc_ver == 0:
+                actual_v = ver_content.strip().lstrip("v")
+                if actual_v != expected_version.lstrip("v"):
+                    return "FAIL", f"VERSION file at {peeled_commit} ('{actual_v}') != expected ('{expected_version}')"
+
+    return "PASS", None
+
+
 def discover_latest_official_tag(
     standards_root: Optional[Path] = None,
     remote_url: Optional[str] = None,
@@ -3573,7 +3644,7 @@ def promote_upgrade(
             "reason": f"APPROVAL_COMMIT_MISMATCH: Approval binds {app_cand_commit}, but target is {target_peeled_commit}",
         }
 
-    app_ok, app_errors = validate_approval_record(record=approval_record, verify_provenance=True)
+    app_ok, app_errors = validate_approval_record(record=approval_record, verify_provenance=True, standards_root=std_root)
     if not app_ok:
         return {
             "status": "UPGRADE_BLOCKED",
@@ -3604,6 +3675,37 @@ def promote_upgrade(
                     "reason": f"APPROVAL_COMMIT_MISMATCH in {sub_k}: {sub_c} != target_peeled_commit ({target_peeled_commit})",
                 }
 
+    # Verify commit_bindings and content_bindings for STANDARDS_LOCK_PROMOTION
+    record_scope = approval_record.get("approval_scope") or approval_record.get("decision_scope")
+    if record_scope == "STANDARDS_LOCK_PROMOTION" or approval_record.get("commit_bindings"):
+        commit_bindings = approval_record.get("commit_bindings") or {}
+        std_b = commit_bindings.get("standards") or {}
+        if not std_b:
+            return {"status": "UPGRADE_BLOCKED", "reason": "MISSING_STANDARDS_COMMIT_BINDING: commit_bindings.standards is required"}
+        if std_b.get("repository") != DEFAULT_OFFICIAL_REPO:
+            return {"status": "UPGRADE_BLOCKED", "reason": f"INVALID_STANDARDS_REPOSITORY: {std_b.get('repository')}"}
+        if std_b.get("target_tag") != target_tag:
+            return {"status": "UPGRADE_BLOCKED", "reason": f"PROMOTION_BINDING_MISMATCH: standards target_tag '{std_b.get('target_tag')}' != '{target_tag}'"}
+        if std_b.get("tag_object_sha") != target_tag_object_sha:
+            return {"status": "UPGRADE_BLOCKED", "reason": f"PROMOTION_BINDING_MISMATCH: standards tag_object_sha '{std_b.get('tag_object_sha')}' != '{target_tag_object_sha}'"}
+        if std_b.get("peeled_commit") != target_peeled_commit:
+            return {"status": "UPGRADE_BLOCKED", "reason": f"PROMOTION_BINDING_MISMATCH: standards peeled_commit '{std_b.get('peeled_commit')}' != '{target_peeled_commit}'"}
+
+        consumer_b = commit_bindings.get("consumer") or {}
+        if not consumer_b:
+            return {"status": "UPGRADE_BLOCKED", "reason": "MISSING_CONSUMER_COMMIT_BINDING: commit_bindings.consumer is required"}
+        cand_c = consumer_b.get("candidate_commit")
+        if cand_c and approval_record.get("candidate_commit") and cand_c != approval_record.get("candidate_commit"):
+            return {"status": "UPGRADE_BLOCKED", "reason": f"PROMOTION_BINDING_MISMATCH: consumer candidate_commit '{cand_c}' != '{approval_record.get('candidate_commit')}'"}
+
+        content_bindings = approval_record.get("content_bindings") or {}
+        if not content_bindings:
+            return {"status": "UPGRADE_BLOCKED", "reason": "MISSING_CONTENT_BINDINGS: content_bindings is required"}
+        for k in ("ci_job_mapping_sha256", "lock_manifest_sha256"):
+            v = content_bindings.get(k)
+            if not v or not re.match(r"^(sha256:)?[0-9a-f]{64}$", str(v)):
+                return {"status": "UPGRADE_BLOCKED", "reason": f"INVALID_CONTENT_BINDING_DIGEST: '{k}' is missing or invalid SHA-256"}
+
     # 4. Validate compatibility
     compat = validate_upgrade_candidate(project_root=project_root, standards_root=std_root, target_tag=target_tag)
     if compat["status"] != "PASS":
@@ -3626,7 +3728,7 @@ def promote_upgrade(
                 "locked_at": existing_lock.get("locked_at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")),
                 "lock_reason": existing_lock.get("lock_reason", "Preserved historical lock"),
                 "approval_evidence_ref": existing_lock.get("approval_evidence_ref"),
-                "ci_verification_status": existing_lock.get("ci_verification_status", "PASS"),
+                "ci_verification_status": existing_lock.get("ci_verification_status") or "NOT_VERIFIABLE",
             }
         )
 
@@ -3673,15 +3775,21 @@ def promote_upgrade(
 def rollback_lock(
     project_root: Path,
     rollback_authorization_ref: Optional[Union[str, Path]] = None,
-    require_authorization: bool = False,
+    require_authorization: bool = True,
     replace_fn: Optional[Callable[[Path, Path], None]] = None,
+    standards_root: Optional[Path] = None,
+    simulate_provenance_data: Optional[Dict[str, Any]] = None,
+    simulate_remote_refs: Optional[Dict[str, str]] = None,
+    simulate_offline: bool = False,
 ) -> Dict[str, Any]:
     """Rollback standards.lock.json to the most recent entry in previous_locks.
-    Verifies historical lock integrity, preserves historical approval evidence (allowing null for bootstrap),
-    binds rollback authorization if provided, defaults missing CI status to NOT_VERIFIABLE,
+    Verifies historical lock integrity, verifies official historical tag on remote,
+    preserves historical approval evidence (allowing null for bootstrap),
+    requires Owner rollback authorization by default, defaults missing CI status to NOT_VERIFIABLE,
     and applies transactional updates to standards.lock.json and engineering-manifest.yaml.
     """
     project_root = project_root.resolve()
+    std_root = resolve_standards_root(standards_root)
     lock_path = project_root / "standards.lock.json"
     if not lock_path.exists():
         return {"status": "FAIL", "reason": "MISSING_STANDARDS_LOCK"}
@@ -3703,6 +3811,21 @@ def rollback_lock(
         return {"status": "FAIL", "reason": f"CORRUPT_HISTORICAL_LOCK: Tag '{restored.get('tag')}' does not match version 'v{restored.get('version')}'"}
     if not re.match(r"^[0-9a-f]{40}$", restored["tag_object_sha"]) or not re.match(r"^[0-9a-f]{40}$", restored["peeled_commit"]):
         return {"status": "FAIL", "reason": "CORRUPT_HISTORICAL_LOCK: Invalid 40-hex commit or tag object SHA"}
+
+    # Official historical tag verification
+    tag_st, tag_err = verify_official_historical_tag(
+        standards_root=std_root,
+        tag=restored["tag"],
+        tag_object_sha=restored["tag_object_sha"],
+        peeled_commit=restored["peeled_commit"],
+        expected_version=restored["version"],
+        simulate_offline=simulate_offline,
+        simulate_remote_refs=simulate_remote_refs,
+    )
+    if tag_st == "FAIL":
+        return {"status": "FAIL", "reason": f"HISTORICAL_TAG_VERIFICATION_FAILED: {tag_err}"}
+    if tag_st == "NOT_VERIFIABLE":
+        return {"status": "NOT_VERIFIABLE", "reason": f"HISTORICAL_TAG_NOT_VERIFIABLE: {tag_err}"}
 
     # Preserve historical approval evidence ref and CI status; never fabricate fake rollback-restored
     # Historical bootstrap locks may legitimately have approval_evidence_ref as None/null.
@@ -3727,27 +3850,77 @@ def rollback_lock(
         except Exception as exc:
             return {"status": "FAIL", "reason": f"INVALID_ROLLBACK_AUTHORIZATION_JSON: {exc}"}
 
-        from tools.validate_approval_contract import FORBIDDEN_SELF_APPROVAL_ROLES
+        from tools.validate_approval_contract import (
+            validate_approval_record,
+            verify_approval_event_provenance,
+            FORBIDDEN_SELF_APPROVAL_ROLES,
+        )
+
+        rec_ok, rec_errs = validate_approval_record(auth_data, verify_provenance=False)
+        if not rec_ok:
+            return {"status": "FAIL", "reason": f"INVALID_ROLLBACK_AUTHORIZATION_RECORD: {rec_errs}"}
+
         actor_role = str(auth_data.get("actor_role") or "").strip().upper()
         reviewer_type = str(auth_data.get("reviewer_type") or "").strip().upper()
         if actor_role in FORBIDDEN_SELF_APPROVAL_ROLES or reviewer_type in FORBIDDEN_SELF_APPROVAL_ROLES:
             return {"status": "FAIL", "reason": "AGENT_SELF_APPROVAL_FORBIDDEN: Coding agent cannot authorize lock rollback"}
 
+        if reviewer_type != "OWNER" or auth_data.get("approval_status") != "OWNER_APPROVED":
+            return {
+                "status": "FAIL",
+                "reason": f"ROLLBACK_AUTHORIZATION_NOT_OWNER_APPROVED: Rollback requires Owner approval, got reviewer_type='{reviewer_type}', approval_status='{auth_data.get('approval_status')}'",
+            }
+
         decision_scope = auth_data.get("decision_scope") or auth_data.get("approval_scope")
-        if decision_scope not in ("LOCK_ROLLBACK", "STANDARDS_LOCK_ROLLBACK", "OWNER_MANDATORY"):
+        if decision_scope not in ("LOCK_ROLLBACK", "STANDARDS_LOCK_ROLLBACK"):
             return {"status": "FAIL", "reason": f"INVALID_ROLLBACK_AUTHORIZATION_SCOPE: Expected LOCK_ROLLBACK, got '{decision_scope}'"}
 
-        target_tag = auth_data.get("target_tag") or (auth_data.get("commit_bindings", {}).get("standards", {}).get("target_tag"))
-        if target_tag and target_tag != restored["tag"]:
-            return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_TARGET_MISMATCH: Target tag '{target_tag}' != '{restored['tag']}'"}
+        commit_bindings = auth_data.get("commit_bindings") or {}
+        if not commit_bindings:
+            return {"status": "FAIL", "reason": "MISSING_ROLLBACK_COMMIT_BINDINGS: commit_bindings is required for LOCK_ROLLBACK"}
 
-        target_commit = auth_data.get("peeled_commit") or (auth_data.get("commit_bindings", {}).get("standards", {}).get("peeled_commit"))
-        if target_commit and target_commit != restored["peeled_commit"]:
-            return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_TARGET_MISMATCH: Target commit '{target_commit}' != '{restored['peeled_commit']}'"}
+        std_binding = commit_bindings.get("standards") or {}
+        if not std_binding:
+            return {"status": "FAIL", "reason": "MISSING_STANDARDS_COMMIT_BINDING: commit_bindings.standards is required"}
+        if std_binding.get("target_tag") != restored["tag"]:
+            return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_TARGET_MISMATCH: Target tag '{std_binding.get('target_tag')}' != '{restored['tag']}'"}
+        if std_binding.get("tag_object_sha") != restored["tag_object_sha"]:
+            return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_TARGET_MISMATCH: Target tag object SHA '{std_binding.get('tag_object_sha')}' != '{restored['tag_object_sha']}'"}
+        if std_binding.get("peeled_commit") != restored["peeled_commit"]:
+            return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_TARGET_MISMATCH: Target commit '{std_binding.get('peeled_commit')}' != '{restored['peeled_commit']}'"}
 
-        content_sha = auth_data.get("content_sha256")
-        if content_sha and not re.match(r"^(sha256:)?[0-9a-f]{64}$", str(content_sha)):
-            return {"status": "FAIL", "reason": f"INVALID_ROLLBACK_AUTHORIZATION_DIGEST: '{content_sha}'"}
+        consumer_binding = commit_bindings.get("consumer") or {}
+        if not consumer_binding:
+            return {"status": "FAIL", "reason": "MISSING_CONSUMER_COMMIT_BINDING: commit_bindings.consumer is required"}
+        manifest_path = project_root / "engineering-manifest.yaml"
+        if manifest_path.exists():
+            try:
+                import yaml
+                mf = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+                proj_repo = (mf.get("project") or {}).get("repository")
+                if proj_repo and consumer_binding.get("repository") != proj_repo:
+                    return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_CONSUMER_REPO_MISMATCH: '{consumer_binding.get('repository')}' != '{proj_repo}'"}
+            except Exception:
+                pass
+
+        content_bindings = auth_data.get("content_bindings") or {}
+        if not content_bindings:
+            return {"status": "FAIL", "reason": "MISSING_ROLLBACK_CONTENT_BINDINGS: content_bindings is required for LOCK_ROLLBACK"}
+        lock_sha = content_bindings.get("lock_manifest_sha256")
+        if not lock_sha or not re.match(r"^(sha256:)?[0-9a-f]{64}$", str(lock_sha)):
+            return {"status": "FAIL", "reason": "INVALID_CONTENT_BINDING_DIGEST: 'lock_manifest_sha256' is missing or invalid SHA-256"}
+
+        prov_st, prov_errs = verify_approval_event_provenance(
+            record=auth_data,
+            standards_root=std_root,
+            simulate_data=simulate_provenance_data,
+        )
+        if prov_st == "FAILED":
+            return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_PROVENANCE_FAILED: {prov_errs}"}
+        if prov_st == "NOT_VERIFIABLE":
+            return {"status": "NOT_VERIFIABLE", "reason": f"ROLLBACK_AUTHORIZATION_PROVENANCE_NOT_VERIFIABLE: {prov_errs}"}
+        if prov_st != "VERIFIED":
+            return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_PROVENANCE_NOT_VERIFIED: {prov_errs}"}
 
     rolled_back_lock = {
         "schema_version": "1.0.0",

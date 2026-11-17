@@ -168,8 +168,8 @@ AI-Hub 试点完成后，由 Owner 根据独立验收报告评估该接入模式
 | F06 | 跨仓 Commit 必须区分 | 分别记录 Hub HEAD 和输入/目标 Standards Commit | impact 增加独立消费端身份字段 |
 | F07 | 文档状态不得自批或假 ACTIVE | 仅以 ACTIVE 正式 STD 为约束，不把本指南当已批准标准 | 索引按 Frontmatter 同步，并另列审批/生效待办 |
 | F10 | 基线生成器 Scope 彻底解耦 | 消费端运行默认 consumer scope，无需 Standards 发布证据 | 增加 `--scope {consumer,standards-release}`，CI 显式指定 standards-release |
-| F11 | 历史基线 Lock 回滚契约完善 | 允许历史初始 Lock 无审批证据；回滚需当前 Owner 授权 | Schema 允许 null；加 `rollback_authorization_ref`；CI 缺省 NOT_VERIFIABLE；事务原子回滚 |
-| F12 | 单 Owner 双 Commit PR Merge 审批契约 | 解耦消费端候选 Commit 与 Standards Peeled Commit | 采用方案 C 增加 `commit_bindings` 与 `content_bindings`；废除 `SIGNED_OWNER_EVENT` |
+| F11 | 历史基线 Lock 回滚契约完善 | 允许历史初始 Lock 无审批证据；CLI rollback 强制要求当前 Owner 授权与官方 Tag 远端一致性核验 | Schema 允许 null；加 `--rollback-authorization-ref`（默认强制）；官方 Tag 远端与祖先核验；CI 缺省 NOT_VERIFIABLE；事务原子回滚 |
+| F12 | 单 Owner 双 Commit PR Merge 审批契约 | 解耦消费端候选 Commit 与 Standards Peeled Commit，强绑定内容摘要与时间戳 | 采用方案 C 增加 `commit_bindings` 与 `content_bindings`；强时间戳匹配；智能体合并权限阻断；禁止单 Commit 旁路绕过；废除 `SIGNED_OWNER_EVENT` |
 
 ### 7.1 单轮实施的依赖关系
 

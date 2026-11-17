@@ -582,6 +582,116 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision_scope": {
+            "enum": [
+              "STANDARDS_LOCK_PROMOTION",
+              "LOCK_ROLLBACK"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "commit_bindings",
+          "content_bindings"
+        ],
+        "properties": {
+          "commit_bindings": {
+            "required": [
+              "consumer",
+              "standards"
+            ]
+          },
+          "content_bindings": {
+            "required": [
+              "ci_job_mapping_sha256",
+              "lock_manifest_sha256"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "approval_scope": {
+            "enum": [
+              "STANDARDS_LOCK_PROMOTION",
+              "LOCK_ROLLBACK"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "commit_bindings",
+          "content_bindings"
+        ],
+        "properties": {
+          "commit_bindings": {
+            "required": [
+              "consumer",
+              "standards"
+            ]
+          },
+          "content_bindings": {
+            "required": [
+              "ci_job_mapping_sha256",
+              "lock_manifest_sha256"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "approval_event": {
+            "properties": {
+              "approval_scope": {
+                "enum": [
+                  "STANDARDS_LOCK_PROMOTION",
+                  "LOCK_ROLLBACK"
+                ]
+              }
+            },
+            "required": [
+              "approval_scope"
+            ]
+          }
+        },
+        "required": [
+          "approval_event"
+        ]
+      },
+      "then": {
+        "properties": {
+          "approval_event": {
+            "required": [
+              "commit_bindings",
+              "content_bindings"
+            ],
+            "properties": {
+              "commit_bindings": {
+                "required": [
+                  "consumer",
+                  "standards"
+                ]
+              },
+              "content_bindings": {
+                "required": [
+                  "ci_job_mapping_sha256",
+                  "lock_manifest_sha256"
+                ]
+              }
+            }
+          }
+        }
+      }
     }
   ]
 }

@@ -2996,8 +2996,8 @@ COMMIT_HASH=4538b8ba29cb9413782c4197e73bddab64849d82
                     "repository": "xiefeifeihu/AI-Engineering-Standards",
                     "version": "2.10.0",
                     "tag": "v2.10.0",
-                    "tag_object_sha": "3" * 40,
-                    "peeled_commit": "4" * 40,
+                    "tag_object_sha": "370ba069d22f544fec66bd1d4c21c1c69261b547",
+                    "peeled_commit": "ba25353ec0f2ba28f187a356ebaeda0cb13e2edd",
                     "locked_at": "2026-04-12T00:00:00Z",
                     "lock_reason": "Prior official release v2.10.0",
                     "approval_evidence_ref": "CHANGELOG.md",
@@ -3017,7 +3017,12 @@ COMMIT_HASH=4538b8ba29cb9413782c4197e73bddab64849d82
                     raise PermissionError("Injected permission denied on manifest replacement")
                 os.replace(src, target)
 
-            res = rollback_lock(project_root=dst, replace_fn=fault_replace)
+            res = rollback_lock(
+                project_root=dst,
+                replace_fn=fault_replace,
+                require_authorization=False,
+                standards_root=ROOT,
+            )
             self.assertEqual(res["status"], "FAIL")
             self.assertIn("TRANSACTION_FAILED", res.get("reason", ""))
 

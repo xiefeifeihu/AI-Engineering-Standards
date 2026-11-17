@@ -272,8 +272,6 @@ def verify_git_snapshot_facts(
     """
     errors: List[str] = []
     if document_kind == "baseline":
-        # This historical timestamp scope belongs to Standards' own Std-019
-        # release-closeout baseline. Do not impose it on downstream consumers.
         manifest_path = project_root / "engineering-manifest.yaml"
         project_id = ""
         if manifest_path.is_file():
@@ -282,8 +280,6 @@ def verify_git_snapshot_facts(
                 project_id = str((manifest_data.get("project") or {}).get("id") or "")
             except Exception:
                 project_id = ""
-        if project_id != "ai-engineering-standards":
-            return []
 
         identity_match = re.search(
             r"## 8\. Git 分支及 Commit 身份.*?(?=\n## 9\.)",
@@ -293,16 +289,28 @@ def verify_git_snapshot_facts(
         if not identity_match:
             return ["BASELINE_GIT_SNAPSHOT_SECTION_MISSING: Git identity section not found"]
         identity_text = identity_match.group(0)
-        scope_text, scope_errors = extract_scope_content(
-            content, "Std-019 正式发布收口事实与治理追踪"
-        )
-        if scope_errors:
-            return [f"BASELINE_GIT_SNAPSHOT_CAPTURE_SCOPE_INVALID: {e}" for e in scope_errors]
-        captured_matches = re.findall(
-            r"Git 快照观测时间.*?\x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
-            scope_text,
-        )
-        remote_pattern = r"远端 main \(\x60remote_main_head\x60\)\*\*：\x60([0-9a-f]{40})\x60"
+
+        if project_id == "ai-engineering-standards":
+            scope_text, scope_errors = extract_scope_content(
+                content, "Std-019 正式发布收口事实与治理追踪"
+            )
+            if scope_errors:
+                return [f"BASELINE_GIT_SNAPSHOT_CAPTURE_SCOPE_INVALID: {e}" for e in scope_errors]
+            captured_matches = re.findall(
+                r"Git 快照观测时间.*?\x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
+                scope_text,
+            )
+            remote_pattern = r"远端 main \(\x60remote_main_head\x60\)\*\*：\x60([0-9a-f]{40})\x60"
+        else:
+            scope_text = ""
+            captured_matches = re.findall(
+                r"Git 快照观测时间.*?\x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
+                content,
+            ) or re.findall(
+                r"## 17\. 核验时间 \(\x60verified_at\x60\)\n- \x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
+                content,
+            )
+            remote_pattern = r"远端 main \(\x60remote_main_head\x60\)\*\*：\x60([0-9a-f]{40}|NOT_VERIFIABLE)\x60"
         prefix = "BASELINE"
     elif document_kind == "handoff":
         identity_text = content.split("## 2. 当前 Standards 锁定", 1)[0]

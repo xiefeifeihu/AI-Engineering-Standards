@@ -2373,6 +2373,45 @@ class PackageAcceptanceContractTests(unittest.TestCase):
                 package_acceptance("TEST-TASK", version="3.0.0", run_id="run-123", repo_root=self.root)
             self.assertIn("Extraction verification failed", str(ctx.exception))
 
+    def test_09_package_acceptance_rejects_missing_task_id_in_manifest(self) -> None:
+        from scripts.package_acceptance import package_acceptance
+        acc_dir, manifest = self._setup_valid_acceptance()
+        del manifest["task_id"]
+        (acc_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(ValueError) as ctx:
+            package_acceptance("TEST-TASK", version="3.0.0", run_id="run-123", repo_root=self.root)
+        self.assertIn("missing required field: 'task_id'", str(ctx.exception))
+
+    def test_10_package_acceptance_rejects_missing_version_in_manifest(self) -> None:
+        from scripts.package_acceptance import package_acceptance
+        acc_dir, manifest = self._setup_valid_acceptance()
+        del manifest["version"]
+        (acc_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(ValueError) as ctx:
+            package_acceptance("TEST-TASK", version="3.0.0", run_id="run-123", repo_root=self.root)
+        self.assertIn("missing required field: 'version'", str(ctx.exception))
+
+    def test_11_package_acceptance_atomic_rollback_on_failure(self) -> None:
+        from scripts.package_acceptance import package_acceptance
+        acc_dir, manifest = self._setup_valid_acceptance()
+        pkg_dir = self.root / ".artifacts" / "packages"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        old_zip = pkg_dir / "Acceptance-TEST-TASK-v3.0.0.zip"
+        old_sha = pkg_dir / "Acceptance-TEST-TASK-v3.0.0.zip.sha256"
+        old_zip.write_text("OLD_ZIP_CONTENT", encoding="utf-8")
+        old_sha.write_text("OLD_SHA_CONTENT", encoding="utf-8")
+
+        manifest["files"][0]["sha256"] = "0" * 64
+        orig_manifest_content = json.dumps(manifest, indent=2)
+        (acc_dir / "manifest.json").write_text(orig_manifest_content, encoding="utf-8")
+
+        with self.assertRaises(ValueError):
+            package_acceptance("TEST-TASK", version="3.0.0", run_id="new-run-fail", repo_root=self.root)
+
+        self.assertEqual(old_zip.read_text(encoding="utf-8"), "OLD_ZIP_CONTENT")
+        self.assertEqual(old_sha.read_text(encoding="utf-8"), "OLD_SHA_CONTENT")
+        temp_files = list(pkg_dir.glob(".tmp_*"))
+        self.assertEqual(len(temp_files), 0)
 
 
 class BaselineGeneratorScopeContractTests(unittest.TestCase):
@@ -2380,6 +2419,12 @@ class BaselineGeneratorScopeContractTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.root = ROOT
+
+    def _create_valid_consumer_project(self, dst: Path) -> None:
+        _copy_minimal_valid_project(dst)
+        rel_ev_dir = dst / "docs" / "release-evidence"
+        if rel_ev_dir.exists():
+            shutil.rmtree(rel_ev_dir)
 
     def test_f10_consumer_scope_default_passes(self) -> None:
         cp = subprocess.run(
@@ -2403,10 +2448,15 @@ class BaselineGeneratorScopeContractTests(unittest.TestCase):
         """In consumer scope, missing standards release evidence files does not block verification."""
         with tempfile.TemporaryDirectory() as tmp:
             dst = Path(tmp)
-            _copy_minimal_valid_project(dst)
-            rel_ev_dir = dst / "docs" / "release-evidence"
-            if rel_ev_dir.exists():
-                shutil.rmtree(rel_ev_dir)
+            self._create_valid_consumer_project(dst)
+            cp_cons = subprocess.run(
+                [sys.executable, str(self.root / "tools" / "generate_engineering_baseline.py"), "--project-root", str(dst), "--scope", "consumer", "--verify-only"],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(cp_cons.returncode, 0, f"stdout: {cp_cons.stdout}\nstderr: {cp_cons.stderr}")
+            self.assertIn("[PASS] Engineering baseline verified against committed file", cp_cons.stdout)
+
             cp_std = subprocess.run(
                 [sys.executable, str(self.root / "tools" / "generate_engineering_baseline.py"), "--project-root", str(dst), "--scope", "standards-release", "--verify-only"],
                 capture_output=True,
@@ -2425,6 +2475,16 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
         _copy_minimal_valid_project(self.root)
         self.lock_path = self.root / "standards.lock.json"
         self.manifest_path = self.root / "engineering-manifest.yaml"
+        self.v211_tag = "2f4b4b54348a5ac8891e5a0b33c04635a27213a0"
+        self.v211_peeled = "5e17c0ef560ab8abafe880b988d70f85f380a104"
+        self.consumer_sha = "c483a9366df653e0ec0e722a57aa8c41ecb2b719"
+        self.sim_pr = {
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": self.consumer_sha},
+            "merged_at": "2026-11-17T00:00:00Z",
+        }
 
     def tearDown(self) -> None:
         self.tmp_dir.cleanup()
@@ -2434,20 +2494,116 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
         lock_data["previous_locks"] = [restored_lock]
         self.lock_path.write_text(json.dumps(lock_data, indent=2), encoding="utf-8")
 
+    def _create_valid_auth_file(
+        self,
+        rel_path: str = "docs/rollback-auth.json",
+        scope: str = "LOCK_ROLLBACK",
+        reviewer_type: str = "OWNER",
+        actor_role: str = "REPOSITORY_OWNER",
+        target_tag: str = "v2.11.0",
+        peeled_commit: Optional[str] = None,
+        tag_object_sha: Optional[str] = None,
+        omit_commit_bindings: bool = False,
+        omit_content_bindings: bool = False,
+    ) -> Path:
+        p_commit = peeled_commit or self.v211_peeled
+        t_obj = tag_object_sha or self.v211_tag
+        auth_file = self.root / rel_path
+        auth_file.parent.mkdir(parents=True, exist_ok=True)
+        auth_data: Dict[str, Any] = {
+            "schema_version": "1.0.0",
+            "task_id": "ROLLBACK-TASK",
+            "repository": "xiefeifeihu/AI-Engineering-Standards",
+            "candidate_commit": self.consumer_sha,
+            "content_sha256": "sha256:" + "a" * 64,
+            "decision_scope": scope,
+            "approval_scope": scope,
+            "reviewer_type": reviewer_type,
+            "actor_role": actor_role,
+            "review_result": "OWNER_APPROVED",
+            "approval_status": "OWNER_APPROVED",
+            "approved_at": "2026-11-17T00:00:00Z",
+            "approval_reference": "https://github.com/xiefeifeihu/AI-Engineering-Standards/pull/99",
+            "chatgpt_review": {
+                "reviewer": "ChatGPT",
+                "reviewed_at": "2026-11-17T00:00:00Z",
+                "candidate_commit": self.consumer_sha,
+                "content_sha256": "sha256:" + "a" * 64,
+                "review_result": "READY_FOR_OWNER_MERGE",
+                "review_reference": "REF-001",
+                "summary": "Reviewed rollback",
+            },
+            "owner_approval": {
+                "approver": "xiefeifeihu",
+                "approval_channel": "GITHUB_PR_MERGE",
+                "approved_at": "2026-11-17T00:00:00Z",
+                "candidate_commit": self.consumer_sha,
+                "content_sha256": "sha256:" + "a" * 64,
+                "approved_decision_ids": ["D-RB-001"],
+                "approval_reference": "REF-002",
+                "decision": "OWNER_APPROVED",
+            },
+            "approval_event": {
+                "event_id": "99",
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "actor_identity": {
+                    "identity_id": "xiefeifeihu",
+                    "identity_type": "GITHUB_USER",
+                    "service_provenance_ref": "https://api.github.com/repos/xiefeifeihu/AI-Engineering-Standards/pulls/99",
+                },
+                "candidate_commit": self.consumer_sha,
+                "content_sha256": "sha256:" + "a" * 64,
+                "approval_scope": scope,
+                "event_timestamp": "2026-11-17T00:00:00Z",
+            },
+        }
+        if not omit_commit_bindings:
+            cb = {
+                "consumer": {
+                    "repository": "xiefeifeihu/AI-Engineering-Standards",
+                    "candidate_commit": self.consumer_sha,
+                },
+                "standards": {
+                    "repository": "xiefeifeihu/AI-Engineering-Standards",
+                    "target_tag": target_tag,
+                    "tag_object_sha": t_obj,
+                    "peeled_commit": p_commit,
+                },
+            }
+            auth_data["commit_bindings"] = cb
+            auth_data["approval_event"]["commit_bindings"] = cb
+        if not omit_content_bindings:
+            cnt = {
+                "ci_job_mapping_sha256": "sha256:" + "a" * 64,
+                "lock_manifest_sha256": "sha256:" + "b" * 64,
+            }
+            auth_data["content_bindings"] = cnt
+            auth_data["approval_event"]["content_bindings"] = cnt
+
+        auth_file.write_text(json.dumps(auth_data, indent=2), encoding="utf-8")
+        return auth_file
+
     def test_01_rollback_with_null_approval_evidence_ref_succeeds(self) -> None:
         from tools.standards_sync.core import rollback_lock
         self._setup_lock_with_previous({
             "repository": "xiefeifeihu/AI-Engineering-Standards",
             "version": "2.11.0",
             "tag": "v2.11.0",
-            "tag_object_sha": "a" * 40,
-            "peeled_commit": "b" * 40,
+            "tag_object_sha": self.v211_tag,
+            "peeled_commit": self.v211_peeled,
             "locked_at": "2026-05-01T00:00:00Z",
             "lock_reason": "Bootstrap v2.11.0 lock",
             "approval_evidence_ref": None,
             "ci_verification_status": "NOT_VERIFIABLE",
         })
-        res = rollback_lock(self.root)
+        self._create_valid_auth_file()
+        res = rollback_lock(
+            self.root,
+            rollback_authorization_ref="docs/rollback-auth.json",
+            standards_root=ROOT,
+            simulate_provenance_data=self.sim_pr,
+        )
         self.assertEqual(res["status"], "ROLLED_BACK")
         new_lock = json.loads(self.lock_path.read_text(encoding="utf-8"))
         self.assertEqual(new_lock["version"], "2.11.0")
@@ -2458,70 +2614,47 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
         from tools.standards_sync.core import rollback_lock
         self._setup_lock_with_previous({
             "repository": "xiefeifeihu/AI-Engineering-Standards",
-            "version": "2.10.0",
-            "tag": "v2.10.0",
-            "tag_object_sha": "1" * 40,
-            "peeled_commit": "2" * 40,
+            "version": "2.11.0",
+            "tag": "v2.11.0",
+            "tag_object_sha": self.v211_tag,
+            "peeled_commit": self.v211_peeled,
             "locked_at": "2026-04-12T00:00:00Z",
-            "lock_reason": "Prior official release v2.10.0",
-            "approval_evidence_ref": "docs/release-evidence/v2.10.0-approval.json",
+            "lock_reason": "Prior official release v2.11.0",
+            "approval_evidence_ref": "docs/release-evidence/v2.11.0-approval.json",
             "ci_verification_status": "PASS",
         })
-        res = rollback_lock(self.root)
+        self._create_valid_auth_file()
+        res = rollback_lock(
+            self.root,
+            rollback_authorization_ref="docs/rollback-auth.json",
+            standards_root=ROOT,
+            simulate_provenance_data=self.sim_pr,
+        )
         self.assertEqual(res["status"], "ROLLED_BACK")
         new_lock = json.loads(self.lock_path.read_text(encoding="utf-8"))
-        self.assertEqual(new_lock["approval_evidence_ref"], "docs/release-evidence/v2.10.0-approval.json")
+        self.assertEqual(new_lock["approval_evidence_ref"], "docs/release-evidence/v2.11.0-approval.json")
         self.assertEqual(new_lock["ci_verification_status"], "PASS")
 
     def test_03_rollback_records_rollback_authorization_ref(self) -> None:
         from tools.standards_sync.core import rollback_lock
-        auth_file = self.root / "docs" / "rollback-auth.json"
-        auth_file.parent.mkdir(parents=True, exist_ok=True)
-        auth_file.write_text(json.dumps({
-            "schema_version": "1.0.0",
-            "task_id": "ROLLBACK-TASK",
-            "repository": "xiefeifeihu/AI-Engineering-Standards",
-            "candidate_commit": "c" * 40,
-            "content_sha256": "sha256:" + "d" * 64,
-            "decision_scope": "LOCK_ROLLBACK",
-            "reviewer_type": "OWNER",
-            "review_result": "OWNER_APPROVED",
-            "approval_status": "OWNER_APPROVED",
-            "approved_at": "2026-11-17T00:00:00Z",
-            "approval_reference": "https://github.com/xiefeifeihu/AI-Engineering-Standards/pull/99",
-            "target_tag": "v2.11.0",
-            "peeled_commit": "b" * 40,
-            "chatgpt_review": {
-                "reviewer": "ChatGPT",
-                "reviewed_at": "2026-11-17T00:00:00Z",
-                "candidate_commit": "c" * 40,
-                "content_sha256": "sha256:" + "d" * 64,
-                "review_result": "READY_FOR_OWNER_MERGE",
-                "review_reference": "REF-001",
-                "summary": "Reviewed rollback",
-            },
-            "owner_approval": {
-                "approver": "xiefeifeihu",
-                "approval_channel": "GITHUB_PR_MERGE",
-                "approved_at": "2026-11-17T00:00:00Z",
-                "candidate_commit": "c" * 40,
-                "content_sha256": "sha256:" + "d" * 64,
-                "approved_decision_ids": ["D-RB-001"],
-                "approval_reference": "REF-002",
-                "decision": "OWNER_APPROVED",
-            },
-        }), encoding="utf-8")
         self._setup_lock_with_previous({
             "repository": "xiefeifeihu/AI-Engineering-Standards",
             "version": "2.11.0",
             "tag": "v2.11.0",
-            "tag_object_sha": "a" * 40,
-            "peeled_commit": "b" * 40,
+            "tag_object_sha": self.v211_tag,
+            "peeled_commit": self.v211_peeled,
             "locked_at": "2026-05-01T00:00:00Z",
             "lock_reason": "Bootstrap v2.11.0 lock",
             "approval_evidence_ref": None,
         })
-        res = rollback_lock(self.root, rollback_authorization_ref="docs/rollback-auth.json", require_authorization=True)
+        self._create_valid_auth_file()
+        res = rollback_lock(
+            self.root,
+            rollback_authorization_ref="docs/rollback-auth.json",
+            require_authorization=True,
+            standards_root=ROOT,
+            simulate_provenance_data=self.sim_pr,
+        )
         self.assertEqual(res["status"], "ROLLED_BACK")
         new_lock = json.loads(self.lock_path.read_text(encoding="utf-8"))
         self.assertEqual(new_lock["rollback_authorization_ref"], "docs/rollback-auth.json")
@@ -2532,13 +2665,19 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
             "repository": "xiefeifeihu/AI-Engineering-Standards",
             "version": "2.11.0",
             "tag": "v2.11.0",
-            "tag_object_sha": "a" * 40,
-            "peeled_commit": "b" * 40,
+            "tag_object_sha": self.v211_tag,
+            "peeled_commit": self.v211_peeled,
             "locked_at": "2026-05-01T00:00:00Z",
             "lock_reason": "No ci status lock",
             "approval_evidence_ref": None,
         })
-        res = rollback_lock(self.root)
+        self._create_valid_auth_file()
+        res = rollback_lock(
+            self.root,
+            rollback_authorization_ref="docs/rollback-auth.json",
+            standards_root=ROOT,
+            simulate_provenance_data=self.sim_pr,
+        )
         self.assertEqual(res["status"], "ROLLED_BACK")
         new_lock = json.loads(self.lock_path.read_text(encoding="utf-8"))
         self.assertEqual(new_lock["ci_verification_status"], "NOT_VERIFIABLE")
@@ -2549,13 +2688,13 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
             "repository": "attacker/Fake-Standards",
             "version": "2.11.0",
             "tag": "v2.11.0",
-            "tag_object_sha": "a" * 40,
-            "peeled_commit": "b" * 40,
+            "tag_object_sha": self.v211_tag,
+            "peeled_commit": self.v211_peeled,
             "locked_at": "2026-05-01T00:00:00Z",
             "lock_reason": "Malicious lock",
             "approval_evidence_ref": None,
         })
-        res = rollback_lock(self.root)
+        res = rollback_lock(self.root, require_authorization=False, standards_root=ROOT)
         self.assertEqual(res["status"], "FAIL")
         self.assertIn("INVALID_STANDARDS_REPOSITORY", res["reason"])
 
@@ -2566,60 +2705,46 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
             "version": "2.11.0",
             "tag": "v2.11.0",
             "tag_object_sha": "not-a-40-hex-sha",
-            "peeled_commit": "b" * 40,
+            "peeled_commit": self.v211_peeled,
             "locked_at": "2026-05-01T00:00:00Z",
             "lock_reason": "Bad sha lock",
             "approval_evidence_ref": None,
         })
-        res = rollback_lock(self.root)
+        res = rollback_lock(self.root, require_authorization=False, standards_root=ROOT)
         self.assertEqual(res["status"], "FAIL")
         self.assertIn("CORRUPT_HISTORICAL_LOCK", res["reason"])
 
     def test_07_rollback_validates_authorization_scope(self) -> None:
         from tools.standards_sync.core import rollback_lock
-        auth_file = self.root / "docs" / "bad-scope-auth.json"
-        auth_file.parent.mkdir(parents=True, exist_ok=True)
-        auth_file.write_text(json.dumps({
-            "decision_scope": "AI_APPROVABLE",
-            "actor_role": "REPOSITORY_OWNER",
-            "reviewer_type": "OWNER",
-        }), encoding="utf-8")
         self._setup_lock_with_previous({
             "repository": "xiefeifeihu/AI-Engineering-Standards",
             "version": "2.11.0",
             "tag": "v2.11.0",
-            "tag_object_sha": "a" * 40,
-            "peeled_commit": "b" * 40,
+            "tag_object_sha": self.v211_tag,
+            "peeled_commit": self.v211_peeled,
             "locked_at": "2026-05-01T00:00:00Z",
             "lock_reason": "Lock",
             "approval_evidence_ref": None,
         })
-        res = rollback_lock(self.root, rollback_authorization_ref="docs/bad-scope-auth.json")
+        self._create_valid_auth_file(rel_path="docs/bad-scope.json", scope="AI_APPROVABLE")
+        res = rollback_lock(self.root, rollback_authorization_ref="docs/bad-scope.json", standards_root=ROOT, simulate_provenance_data=self.sim_pr)
         self.assertEqual(res["status"], "FAIL")
         self.assertIn("INVALID_ROLLBACK_AUTHORIZATION_SCOPE", res["reason"])
 
     def test_08_rollback_validates_authorization_target_mismatch(self) -> None:
         from tools.standards_sync.core import rollback_lock
-        auth_file = self.root / "docs" / "target-mismatch-auth.json"
-        auth_file.parent.mkdir(parents=True, exist_ok=True)
-        auth_file.write_text(json.dumps({
-            "decision_scope": "LOCK_ROLLBACK",
-            "actor_role": "REPOSITORY_OWNER",
-            "reviewer_type": "OWNER",
-            "target_tag": "v1.0.0",
-            "peeled_commit": "b" * 40,
-        }), encoding="utf-8")
         self._setup_lock_with_previous({
             "repository": "xiefeifeihu/AI-Engineering-Standards",
             "version": "2.11.0",
             "tag": "v2.11.0",
-            "tag_object_sha": "a" * 40,
-            "peeled_commit": "b" * 40,
+            "tag_object_sha": self.v211_tag,
+            "peeled_commit": self.v211_peeled,
             "locked_at": "2026-05-01T00:00:00Z",
             "lock_reason": "Lock",
             "approval_evidence_ref": None,
         })
-        res = rollback_lock(self.root, rollback_authorization_ref="docs/target-mismatch-auth.json")
+        self._create_valid_auth_file(rel_path="docs/mismatch.json", target_tag="v1.0.0")
+        res = rollback_lock(self.root, rollback_authorization_ref="docs/mismatch.json", standards_root=ROOT, simulate_provenance_data=self.sim_pr)
         self.assertEqual(res["status"], "FAIL")
         self.assertIn("ROLLBACK_AUTHORIZATION_TARGET_MISMATCH", res["reason"])
 
@@ -2629,12 +2754,13 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
             "repository": "xiefeifeihu/AI-Engineering-Standards",
             "version": "2.11.0",
             "tag": "v2.11.0",
-            "tag_object_sha": "a" * 40,
-            "peeled_commit": "b" * 40,
+            "tag_object_sha": self.v211_tag,
+            "peeled_commit": self.v211_peeled,
             "locked_at": "2026-05-01T00:00:00Z",
             "lock_reason": "Lock",
             "approval_evidence_ref": None,
         })
+        self._create_valid_auth_file()
         pre_lock = self.lock_path.read_text(encoding="utf-8")
         pre_manifest = self.manifest_path.read_text(encoding="utf-8")
 
@@ -2646,29 +2772,262 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
                 raise OSError("Simulated disk failure on manifest update")
             os.replace(src, target)
 
-        res = rollback_lock(self.root, replace_fn=fault_replace)
+        res = rollback_lock(
+            self.root,
+            rollback_authorization_ref="docs/rollback-auth.json",
+            replace_fn=fault_replace,
+            standards_root=ROOT,
+            simulate_provenance_data=self.sim_pr,
+        )
         self.assertEqual(res["status"], "FAIL")
         self.assertEqual(self.lock_path.read_text(encoding="utf-8"), pre_lock)
         self.assertEqual(self.manifest_path.read_text(encoding="utf-8"), pre_manifest)
 
     def test_10_rollback_cli_execution(self) -> None:
+        from unittest.mock import patch, MagicMock
+        from tools.standards_sync.cli import main
         self._setup_lock_with_previous({
             "repository": "xiefeifeihu/AI-Engineering-Standards",
             "version": "2.11.0",
             "tag": "v2.11.0",
-            "tag_object_sha": "a" * 40,
-            "peeled_commit": "b" * 40,
+            "tag_object_sha": self.v211_tag,
+            "peeled_commit": self.v211_peeled,
             "locked_at": "2026-05-01T00:00:00Z",
             "lock_reason": "CLI rollback lock",
             "approval_evidence_ref": None,
         })
+        auth_file = self._create_valid_auth_file()
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "dummy-token"}):
+            with patch("urllib.request.urlopen") as mock_url:
+                mock_resp = MagicMock()
+                mock_resp.read.return_value = json.dumps(self.sim_pr).encode("utf-8")
+                mock_resp.__enter__.return_value = mock_resp
+                mock_url.return_value = mock_resp
+
+                ret = main([
+                    "rollback",
+                    "--project-root", str(self.root),
+                    "--rollback-authorization-ref", str(auth_file),
+                    "--standards-root", str(ROOT),
+                ])
+                self.assertEqual(ret, 0)
+                new_lock = json.loads(self.lock_path.read_text(encoding="utf-8"))
+                self.assertEqual(new_lock["version"], "2.11.0")
+
+    def test_11_rollback_cli_missing_auth_fails(self) -> None:
         cp = subprocess.run(
             [sys.executable, str(ROOT / "tools" / "standards_sync" / "cli.py"), "rollback", "--project-root", str(self.root)],
             capture_output=True,
             text=True,
         )
-        self.assertEqual(cp.returncode, 0, f"stdout: {cp.stdout}\nstderr: {cp.stderr}")
-        self.assertIn('"status": "ROLLED_BACK"', cp.stdout)
+        self.assertEqual(cp.returncode, 2)
+        self.assertIn("--rollback-authorization-ref", cp.stderr)
+
+    def test_12_rollback_missing_auth_by_default_fails(self) -> None:
+        from tools.standards_sync.core import rollback_lock
+        self._setup_lock_with_previous({
+            "repository": "xiefeifeihu/AI-Engineering-Standards",
+            "version": "2.11.0",
+            "tag": "v2.11.0",
+            "tag_object_sha": self.v211_tag,
+            "peeled_commit": self.v211_peeled,
+            "locked_at": "2026-05-01T00:00:00Z",
+            "lock_reason": "Lock",
+            "approval_evidence_ref": None,
+        })
+        res = rollback_lock(self.root, standards_root=ROOT)
+        self.assertEqual(res["status"], "FAIL")
+        self.assertIn("MISSING_ROLLBACK_AUTHORIZATION", res["reason"])
+
+    def test_13_rollback_agent_self_approval_fails(self) -> None:
+        from tools.standards_sync.core import rollback_lock
+        self._setup_lock_with_previous({
+            "repository": "xiefeifeihu/AI-Engineering-Standards",
+            "version": "2.11.0",
+            "tag": "v2.11.0",
+            "tag_object_sha": self.v211_tag,
+            "peeled_commit": self.v211_peeled,
+            "locked_at": "2026-05-01T00:00:00Z",
+            "lock_reason": "Lock",
+            "approval_evidence_ref": None,
+        })
+        self._create_valid_auth_file(rel_path="docs/agent-auth.json", actor_role="CODING_AGENT")
+        res = rollback_lock(self.root, rollback_authorization_ref="docs/agent-auth.json", standards_root=ROOT, simulate_provenance_data=self.sim_pr)
+        self.assertEqual(res["status"], "FAIL")
+        self.assertIn("AGENT_SELF_APPROVAL_FORBIDDEN", res["reason"])
+
+    def test_14_rollback_official_tag_remote_unreachable_returns_not_verifiable(self) -> None:
+        from tools.standards_sync.core import rollback_lock
+        self._setup_lock_with_previous({
+            "repository": "xiefeifeihu/AI-Engineering-Standards",
+            "version": "2.11.0",
+            "tag": "v2.11.0",
+            "tag_object_sha": self.v211_tag,
+            "peeled_commit": self.v211_peeled,
+            "locked_at": "2026-05-01T00:00:00Z",
+            "lock_reason": "Lock",
+            "approval_evidence_ref": None,
+        })
+        self._create_valid_auth_file()
+        res = rollback_lock(
+            self.root,
+            rollback_authorization_ref="docs/rollback-auth.json",
+            standards_root=ROOT,
+            simulate_offline=True,
+            simulate_provenance_data=self.sim_pr,
+        )
+        self.assertEqual(res["status"], "NOT_VERIFIABLE")
+        self.assertIn("HISTORICAL_TAG_NOT_VERIFIABLE", res["reason"])
+
+    def test_15_rollback_official_tag_mismatch_fails(self) -> None:
+        from tools.standards_sync.core import rollback_lock
+        self._setup_lock_with_previous({
+            "repository": "xiefeifeihu/AI-Engineering-Standards",
+            "version": "2.11.0",
+            "tag": "v2.11.0",
+            "tag_object_sha": "f" * 40,
+            "peeled_commit": self.v211_peeled,
+            "locked_at": "2026-05-01T00:00:00Z",
+            "lock_reason": "Lock",
+            "approval_evidence_ref": None,
+        })
+        self._create_valid_auth_file()
+        res = rollback_lock(
+            self.root,
+            rollback_authorization_ref="docs/rollback-auth.json",
+            standards_root=ROOT,
+            simulate_provenance_data=self.sim_pr,
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertIn("HISTORICAL_TAG_VERIFICATION_FAILED", res["reason"])
+
+    def test_16_promote_upgrade_preserves_not_verifiable_when_historical_ci_missing(self) -> None:
+        from tools.standards_sync.core import promote_upgrade
+        cur_lock = json.loads(self.lock_path.read_text(encoding="utf-8"))
+        if "ci_verification_status" in cur_lock:
+            del cur_lock["ci_verification_status"]
+        cur_lock["version"] = "2.11.0"
+        cur_lock["tag"] = "v2.11.0"
+        cur_lock["tag_object_sha"] = self.v211_tag
+        cur_lock["peeled_commit"] = self.v211_peeled
+        cur_lock["previous_locks"] = []
+        self.lock_path.write_text(json.dumps(cur_lock, indent=2), encoding="utf-8")
+
+        target_peeled = "8b223019c254e0edeb94576b94af46c1e48b0316"
+        target_tag_obj = "8256bb384e62894219db0992a2cb57e16d4fa8cd"
+        app_file = self.root / "docs" / "promote-app.json"
+        app_file.parent.mkdir(parents=True, exist_ok=True)
+        app_file.write_text(json.dumps({
+            "schema_version": "1.0.0",
+            "task_id": "PROMOTE-TASK",
+            "repository": "xiefeifeihu/AI-Engineering-Standards",
+            "candidate_commit": target_peeled,
+            "content_sha256": "sha256:" + "a" * 64,
+            "decision_scope": "STANDARDS_LOCK_PROMOTION",
+            "approval_scope": "STANDARDS_LOCK_PROMOTION",
+            "reviewer_type": "OWNER",
+            "actor_role": "REPOSITORY_OWNER",
+            "review_result": "OWNER_APPROVED",
+            "approval_status": "OWNER_APPROVED",
+            "approved_at": "2026-11-17T00:00:00Z",
+            "approval_reference": "https://github.com/xiefeifeihu/AI-Engineering-Standards/pull/12",
+            "commit_bindings": {
+                "consumer": {
+                    "repository": "xiefeifeihu/AI-Engineering-Standards",
+                    "candidate_commit": target_peeled,
+                },
+                "standards": {
+                    "repository": "xiefeifeihu/AI-Engineering-Standards",
+                    "target_tag": "v3.0.0",
+                    "tag_object_sha": target_tag_obj,
+                    "peeled_commit": target_peeled,
+                },
+            },
+            "content_bindings": {
+                "ci_job_mapping_sha256": "sha256:" + "a" * 64,
+                "lock_manifest_sha256": "sha256:" + "b" * 64,
+            },
+            "chatgpt_review": {
+                "reviewer": "ChatGPT",
+                "reviewed_at": "2026-11-17T00:00:00Z",
+                "candidate_commit": target_peeled,
+                "content_sha256": "sha256:" + "a" * 64,
+                "review_result": "READY_FOR_OWNER_MERGE",
+                "review_reference": "REF-001",
+                "summary": "Reviewed promotion",
+            },
+            "owner_approval": {
+                "approver": "xiefeifeihu",
+                "approval_channel": "GITHUB_PR_MERGE",
+                "approved_at": "2026-11-17T00:00:00Z",
+                "candidate_commit": target_peeled,
+                "content_sha256": "sha256:" + "a" * 64,
+                "approved_decision_ids": ["D-001"],
+                "approval_reference": "REF-002",
+                "decision": "OWNER_APPROVED",
+            },
+            "approval_event": {
+                "event_id": "12",
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "actor_identity": {
+                    "identity_id": "xiefeifeihu",
+                    "identity_type": "GITHUB_USER",
+                    "service_provenance_ref": "https://api.github.com/repos/xiefeifeihu/AI-Engineering-Standards/pulls/12",
+                },
+                "candidate_commit": target_peeled,
+                "content_sha256": "sha256:" + "a" * 64,
+                "approval_scope": "STANDARDS_LOCK_PROMOTION",
+                "event_timestamp": "2026-11-17T00:00:00Z",
+                "commit_bindings": {
+                    "consumer": {
+                        "repository": "xiefeifeihu/AI-Engineering-Standards",
+                        "candidate_commit": target_peeled,
+                    },
+                    "standards": {
+                        "repository": "xiefeifeihu/AI-Engineering-Standards",
+                        "target_tag": "v3.0.0",
+                        "tag_object_sha": target_tag_obj,
+                        "peeled_commit": target_peeled,
+                    },
+                },
+                "content_bindings": {
+                    "ci_job_mapping_sha256": "sha256:" + "a" * 64,
+                    "lock_manifest_sha256": "sha256:" + "b" * 64,
+                },
+            },
+        }), encoding="utf-8")
+
+        from unittest.mock import patch, MagicMock
+        sim_merge = {
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": target_peeled},
+            "merged_at": "2026-11-17T00:00:00Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "dummy-token"}):
+            with patch("tools.standards_sync.core.check_remote_main_ci", return_value=("PASS", 12345, "Mocked CI pass")):
+                with patch("tools.standards_sync.core.validate_upgrade_candidate", return_value={"status": "PASS", "errors": []}):
+                    with patch("urllib.request.urlopen") as mock_url:
+                        mock_resp = MagicMock()
+                        mock_resp.read.return_value = json.dumps(sim_merge).encode("utf-8")
+                        mock_resp.__enter__.return_value = mock_resp
+                        mock_url.return_value = mock_resp
+
+                        res = promote_upgrade(
+                            project_root=self.root,
+                            target_tag="v3.0.0",
+                            target_version="3.0.0",
+                            target_tag_object_sha=target_tag_obj,
+                            target_peeled_commit=target_peeled,
+                            approval_file=app_file,
+                            standards_root=ROOT,
+                        )
+                        self.assertEqual(res["status"], "PROMOTED")
+                        prev = res["lock"]["previous_locks"]
+                        self.assertEqual(len(prev), 1)
+                        self.assertEqual(prev[0]["ci_verification_status"], "NOT_VERIFIABLE")
 
 
 class DualCommitApprovalContractTests(unittest.TestCase):
@@ -2775,6 +3134,10 @@ class DualCommitApprovalContractTests(unittest.TestCase):
                     "peeled_commit": standards_sha,
                 },
             },
+            "content_bindings": {
+                "ci_job_mapping_sha256": "sha256:" + "e" * 64,
+                "lock_manifest_sha256": "sha256:" + "f" * 64,
+            },
         }
         record = {
             "repository": "example-owner/consumer-app",
@@ -2784,6 +3147,7 @@ class DualCommitApprovalContractTests(unittest.TestCase):
             "approval_scope": "STANDARDS_LOCK_PROMOTION",
             "approved_at": "2026-11-17T00:00:00Z",
             "commit_bindings": event["commit_bindings"],
+            "content_bindings": event["content_bindings"],
             "approval_event": event,
         }
 
@@ -2811,6 +3175,7 @@ class DualCommitApprovalContractTests(unittest.TestCase):
         from tools.validate_approval_contract import verify_approval_event_provenance
 
         consumer_sha = "c" * 40
+        standards_sha = "8b223019c254e0edeb94576b94af46c1e48b0316"
         event = {
             "event_id": "42",
             "event_type": "GITHUB_PR_MERGE_EVENT",
@@ -2826,6 +3191,16 @@ class DualCommitApprovalContractTests(unittest.TestCase):
             "event_timestamp": "2026-11-17T00:00:00Z",
             "commit_bindings": {
                 "consumer": {"repository": "example-owner/consumer-app", "candidate_commit": consumer_sha},
+                "standards": {
+                    "repository": "xiefeifeihu/AI-Engineering-Standards",
+                    "target_tag": "v3.0.0",
+                    "tag_object_sha": "8256bb384e62894219db0992a2cb57e16d4fa8cd",
+                    "peeled_commit": standards_sha,
+                },
+            },
+            "content_bindings": {
+                "ci_job_mapping_sha256": "sha256:" + "e" * 64,
+                "lock_manifest_sha256": "sha256:" + "f" * 64,
             },
         }
         record = {
@@ -2836,6 +3211,7 @@ class DualCommitApprovalContractTests(unittest.TestCase):
             "approval_scope": "STANDARDS_LOCK_PROMOTION",
             "approved_at": "2026-11-17T00:00:00Z",
             "commit_bindings": event["commit_bindings"],
+            "content_bindings": event["content_bindings"],
             "approval_event": event,
         }
         mock_pr_response = {
@@ -2861,6 +3237,7 @@ class DualCommitApprovalContractTests(unittest.TestCase):
         from tools.validate_approval_contract import verify_approval_event_provenance
 
         consumer_sha = "c" * 40
+        standards_sha = "8b223019c254e0edeb94576b94af46c1e48b0316"
         event = {
             "event_id": "42",
             "event_type": "GITHUB_PR_MERGE_EVENT",
@@ -2876,6 +3253,16 @@ class DualCommitApprovalContractTests(unittest.TestCase):
             "event_timestamp": "2026-11-17T00:00:00Z",
             "commit_bindings": {
                 "consumer": {"repository": "example-owner/consumer-app", "candidate_commit": consumer_sha},
+                "standards": {
+                    "repository": "xiefeifeihu/AI-Engineering-Standards",
+                    "target_tag": "v3.0.0",
+                    "tag_object_sha": "8256bb384e62894219db0992a2cb57e16d4fa8cd",
+                    "peeled_commit": standards_sha,
+                },
+            },
+            "content_bindings": {
+                "ci_job_mapping_sha256": "sha256:" + "e" * 64,
+                "lock_manifest_sha256": "sha256:" + "f" * 64,
             },
         }
         record = {
@@ -2886,6 +3273,7 @@ class DualCommitApprovalContractTests(unittest.TestCase):
             "approval_scope": "STANDARDS_LOCK_PROMOTION",
             "approved_at": "2026-11-17T00:00:00Z",
             "commit_bindings": event["commit_bindings"],
+            "content_bindings": event["content_bindings"],
             "approval_event": event,
         }
         mock_pr_response = {
@@ -2911,6 +3299,7 @@ class DualCommitApprovalContractTests(unittest.TestCase):
         from tools.validate_approval_contract import verify_approval_event_provenance
 
         consumer_sha = "c" * 40
+        standards_sha = "8b223019c254e0edeb94576b94af46c1e48b0316"
         event = {
             "event_id": "42",
             "event_type": "GITHUB_PR_MERGE_EVENT",
@@ -2926,6 +3315,16 @@ class DualCommitApprovalContractTests(unittest.TestCase):
             "event_timestamp": "2026-11-17T00:00:00Z",
             "commit_bindings": {
                 "consumer": {"repository": "example-owner/consumer-app", "candidate_commit": consumer_sha},
+                "standards": {
+                    "repository": "xiefeifeihu/AI-Engineering-Standards",
+                    "target_tag": "v3.0.0",
+                    "tag_object_sha": "8256bb384e62894219db0992a2cb57e16d4fa8cd",
+                    "peeled_commit": standards_sha,
+                },
+            },
+            "content_bindings": {
+                "ci_job_mapping_sha256": "sha256:" + "e" * 64,
+                "lock_manifest_sha256": "sha256:" + "f" * 64,
             },
         }
         record = {
@@ -2936,6 +3335,7 @@ class DualCommitApprovalContractTests(unittest.TestCase):
             "approval_scope": "STANDARDS_LOCK_PROMOTION",
             "approved_at": "2026-11-17T00:00:00Z",
             "commit_bindings": event["commit_bindings"],
+            "content_bindings": event["content_bindings"],
             "approval_event": event,
         }
         mock_pr_response = {
@@ -2955,6 +3355,227 @@ class DualCommitApprovalContractTests(unittest.TestCase):
                 status, errors = verify_approval_event_provenance(record)
                 self.assertEqual(status, "FAILED")
                 self.assertTrue(any("APPROVAL_PR_BASE_BRANCH_MISMATCH" in e for e in errors))
+
+    def test_f12_dual_commit_event_timestamp_mismatch_fails(self) -> None:
+        from unittest.mock import patch, MagicMock
+        from tools.validate_approval_contract import verify_approval_event_provenance
+
+        consumer_sha = "c" * 40
+        standards_sha = "8b223019c254e0edeb94576b94af46c1e48b0316"
+        event = {
+            "event_id": "42",
+            "event_type": "GITHUB_PR_MERGE_EVENT",
+            "provenance_type": "GITHUB_PR_MERGE",
+            "actor_identity": {
+                "identity_id": "example-owner",
+                "identity_type": "GITHUB_USER",
+                "service_provenance_ref": "https://api.github.com/repos/example-owner/consumer-app/pulls/42",
+            },
+            "candidate_commit": consumer_sha,
+            "content_sha256": "sha256:" + "e" * 64,
+            "approval_scope": "STANDARDS_LOCK_PROMOTION",
+            "event_timestamp": "2026-11-17T01:00:00Z",
+            "commit_bindings": {
+                "consumer": {"repository": "example-owner/consumer-app", "candidate_commit": consumer_sha},
+                "standards": {
+                    "repository": "xiefeifeihu/AI-Engineering-Standards",
+                    "target_tag": "v3.0.0",
+                    "tag_object_sha": "8256bb384e62894219db0992a2cb57e16d4fa8cd",
+                    "peeled_commit": standards_sha,
+                },
+            },
+            "content_bindings": {
+                "ci_job_mapping_sha256": "sha256:" + "e" * 64,
+                "lock_manifest_sha256": "sha256:" + "f" * 64,
+            },
+        }
+        record = {
+            "repository": "example-owner/consumer-app",
+            "approval_status": "OWNER_APPROVED",
+            "candidate_commit": consumer_sha,
+            "content_sha256": "sha256:" + "e" * 64,
+            "approval_scope": "STANDARDS_LOCK_PROMOTION",
+            "approved_at": "2026-11-17T00:00:00Z",
+            "commit_bindings": event["commit_bindings"],
+            "content_bindings": event["content_bindings"],
+            "approval_event": event,
+        }
+        mock_pr_response = {
+            "merged": True,
+            "merged_by": {"login": "example-owner"},
+            "base": {"ref": "main"},
+            "head": {"sha": consumer_sha},
+            "merged_at": "2026-11-17T00:00:00Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "dummy-token"}):
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                mock_resp = MagicMock()
+                mock_resp.read.return_value = json.dumps(mock_pr_response).encode("utf-8")
+                mock_resp.__enter__.return_value = mock_resp
+                mock_urlopen.return_value = mock_resp
+
+                status, errors = verify_approval_event_provenance(record)
+                self.assertEqual(status, "FAILED")
+                self.assertTrue(any("APPROVAL_TIME_MISMATCH" in e for e in errors))
+
+    def test_f12_dual_commit_binding_mismatch_between_record_and_event_fails(self) -> None:
+        from unittest.mock import patch, MagicMock
+        from tools.validate_approval_contract import verify_approval_event_provenance
+
+        consumer_sha = "c" * 40
+        standards_sha = "8b223019c254e0edeb94576b94af46c1e48b0316"
+        event = {
+            "event_id": "42",
+            "event_type": "GITHUB_PR_MERGE_EVENT",
+            "provenance_type": "GITHUB_PR_MERGE",
+            "actor_identity": {
+                "identity_id": "example-owner",
+                "identity_type": "GITHUB_USER",
+                "service_provenance_ref": "https://api.github.com/repos/example-owner/consumer-app/pulls/42",
+            },
+            "candidate_commit": consumer_sha,
+            "content_sha256": "sha256:" + "e" * 64,
+            "approval_scope": "STANDARDS_LOCK_PROMOTION",
+            "event_timestamp": "2026-11-17T00:00:00Z",
+            "commit_bindings": {
+                "consumer": {"repository": "example-owner/consumer-app", "candidate_commit": consumer_sha},
+                "standards": {
+                    "repository": "xiefeifeihu/AI-Engineering-Standards",
+                    "target_tag": "v3.0.0",
+                    "tag_object_sha": "8256bb384e62894219db0992a2cb57e16d4fa8cd",
+                    "peeled_commit": standards_sha,
+                },
+            },
+            "content_bindings": {
+                "ci_job_mapping_sha256": "sha256:" + "e" * 64,
+                "lock_manifest_sha256": "sha256:" + "f" * 64,
+            },
+        }
+        # Record has different target_tag in commit_bindings
+        import copy
+        rec_cb = copy.deepcopy(event["commit_bindings"])
+        rec_cb["standards"]["target_tag"] = "v2.11.0"
+        record = {
+            "repository": "example-owner/consumer-app",
+            "approval_status": "OWNER_APPROVED",
+            "candidate_commit": consumer_sha,
+            "content_sha256": "sha256:" + "e" * 64,
+            "approval_scope": "STANDARDS_LOCK_PROMOTION",
+            "approved_at": "2026-11-17T00:00:00Z",
+            "commit_bindings": rec_cb,
+            "content_bindings": event["content_bindings"],
+            "approval_event": event,
+        }
+        mock_pr_response = {
+            "merged": True,
+            "merged_by": {"login": "example-owner"},
+            "base": {"ref": "main"},
+            "head": {"sha": consumer_sha},
+            "merged_at": "2026-11-17T00:00:00Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "dummy-token"}):
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                mock_resp = MagicMock()
+                mock_resp.read.return_value = json.dumps(mock_pr_response).encode("utf-8")
+                mock_resp.__enter__.return_value = mock_resp
+                mock_urlopen.return_value = mock_resp
+
+                status, errors = verify_approval_event_provenance(record)
+                self.assertEqual(status, "FAILED")
+                self.assertTrue(any("COMMIT_BINDINGS_MISMATCH" in e for e in errors))
+
+    def test_f12_missing_commit_bindings_in_promotion_fails(self) -> None:
+        from unittest.mock import patch, MagicMock
+        from tools.validate_approval_contract import verify_approval_event_provenance
+
+        consumer_sha = "c" * 40
+        event = {
+            "event_id": "42",
+            "event_type": "GITHUB_PR_MERGE_EVENT",
+            "provenance_type": "GITHUB_PR_MERGE",
+            "actor_identity": {
+                "identity_id": "example-owner",
+                "identity_type": "GITHUB_USER",
+                "service_provenance_ref": "https://api.github.com/repos/example-owner/consumer-app/pulls/42",
+            },
+            "candidate_commit": consumer_sha,
+            "content_sha256": "sha256:" + "e" * 64,
+            "approval_scope": "STANDARDS_LOCK_PROMOTION",
+            "event_timestamp": "2026-11-17T00:00:00Z",
+        }
+        record = {
+            "repository": "example-owner/consumer-app",
+            "approval_status": "OWNER_APPROVED",
+            "candidate_commit": consumer_sha,
+            "content_sha256": "sha256:" + "e" * 64,
+            "approval_scope": "STANDARDS_LOCK_PROMOTION",
+            "approved_at": "2026-11-17T00:00:00Z",
+            "approval_event": event,
+        }
+        mock_pr_response = {
+            "merged": True,
+            "merged_by": {"login": "example-owner"},
+            "base": {"ref": "main"},
+            "head": {"sha": consumer_sha},
+            "merged_at": "2026-11-17T00:00:00Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "dummy-token"}):
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                mock_resp = MagicMock()
+                mock_resp.read.return_value = json.dumps(mock_pr_response).encode("utf-8")
+                mock_resp.__enter__.return_value = mock_resp
+                mock_urlopen.return_value = mock_resp
+
+                status, errors = verify_approval_event_provenance(record)
+                self.assertEqual(status, "FAILED")
+                self.assertTrue(any("LEGACY_SINGLE_COMMIT_BYPASS_FORBIDDEN" in e or "MISSING" in e for e in errors))
+
+    def test_f12_legacy_single_commit_bypass_fails_for_promotion(self) -> None:
+        from unittest.mock import patch, MagicMock
+        from tools.validate_approval_contract import verify_approval_event_provenance
+
+        consumer_sha = "c" * 40
+        # No commit_bindings at all, only single candidate_commit
+        event = {
+            "event_id": "42",
+            "event_type": "GITHUB_PR_MERGE_EVENT",
+            "provenance_type": "GITHUB_PR_MERGE",
+            "actor_identity": {
+                "identity_id": "example-owner",
+                "identity_type": "GITHUB_USER",
+                "service_provenance_ref": "https://api.github.com/repos/example-owner/consumer-app/pulls/42",
+            },
+            "candidate_commit": consumer_sha,
+            "content_sha256": "sha256:" + "e" * 64,
+            "approval_scope": "STANDARDS_LOCK_PROMOTION",
+            "event_timestamp": "2026-11-17T00:00:00Z",
+        }
+        record = {
+            "repository": "example-owner/consumer-app",
+            "approval_status": "OWNER_APPROVED",
+            "candidate_commit": consumer_sha,
+            "content_sha256": "sha256:" + "e" * 64,
+            "approval_scope": "STANDARDS_LOCK_PROMOTION",
+            "approved_at": "2026-11-17T00:00:00Z",
+            "approval_event": event,
+        }
+        mock_pr_response = {
+            "merged": True,
+            "merged_by": {"login": "example-owner"},
+            "base": {"ref": "main"},
+            "head": {"sha": consumer_sha},
+            "merged_at": "2026-11-17T00:00:00Z",
+        }
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "dummy-token"}):
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                mock_resp = MagicMock()
+                mock_resp.read.return_value = json.dumps(mock_pr_response).encode("utf-8")
+                mock_resp.__enter__.return_value = mock_resp
+                mock_urlopen.return_value = mock_resp
+
+                status, errors = verify_approval_event_provenance(record)
+                self.assertEqual(status, "FAILED")
+                self.assertTrue(any("LEGACY_SINGLE_COMMIT_BYPASS_FORBIDDEN" in e for e in errors))
 
 
 if __name__ == "__main__":

@@ -180,6 +180,12 @@ def package_acceptance(
     if not isinstance(manifest_data, dict):
         raise ValueError("manifest.json root must be a JSON object")
 
+    # Enforce non-silent validation of task_id and version in manifest
+    if not manifest_data.get("task_id"):
+        raise ValueError("Manifest missing required field: 'task_id'")
+    if not manifest_data.get("version"):
+        raise ValueError("Manifest missing required field: 'version'")
+
     # run_id resolution and persistence
     if run_id and str(run_id).strip():
         effective_run_id = str(run_id).strip()
@@ -191,21 +197,26 @@ def package_acceptance(
             effective_run_id = f"run-{int(time.time())}"
 
     manifest_changed = False
+    original_manifest_bytes = manifest_path.read_bytes()
     if manifest_data.get("run_id") != effective_run_id:
         manifest_data["run_id"] = effective_run_id
         manifest_changed = True
-    if not manifest_data.get("task_id"):
-        manifest_data["task_id"] = task_id
-        manifest_changed = True
-    if not manifest_data.get("version"):
-        manifest_data["version"] = v_ver
-        manifest_changed = True
-
-    original_manifest_bytes = manifest_path.read_bytes()
-    if manifest_changed:
         tmp_manifest = manifest_path.with_suffix(f".tmp_{os.getpid()}_{int(time.time() * 1000)}")
         tmp_manifest.write_text(json.dumps(manifest_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         os.replace(tmp_manifest, manifest_path)
+
+    pkg_dir = repo_root / ".artifacts" / "packages"
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+    zip_name = f"Acceptance-{task_id}-{v_ver}.zip"
+    zip_path = pkg_dir / zip_name
+    sha_path = pkg_dir / f"{zip_name}.sha256"
+
+    # Pre-existing backups in case we need to restore on failure
+    pre_existing_zip = zip_path.read_bytes() if zip_path.exists() else None
+    pre_existing_sha = sha_path.read_bytes() if sha_path.exists() else None
+
+    tmp_zip = pkg_dir / f".tmp_{zip_name}_{os.getpid()}_{int(time.time() * 1000)}.zip"
+    tmp_sha = pkg_dir / f".tmp_{zip_name}_{os.getpid()}_{int(time.time() * 1000)}.sha256"
 
     try:
         # Validate manifest and files
@@ -216,40 +227,63 @@ def package_acceptance(
             expected_run_id=effective_run_id,
             repo_root=repo_root,
         )
+
+        with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(manifest_path, arcname="manifest.json")
+            for item in validated_entries:
+                zf.write(item["abs_path"], arcname=item["path"])
+
+        zip_sha = sha256_file(tmp_zip)
+        tmp_sha.write_text(f"{zip_sha}  {zip_name}\n", encoding="utf-8")
+
+        # Real extraction verification from temporary zip
+        extract_dir = pkg_dir / f".verify_extract_{int(time.time() * 1000)}_{os.getpid()}"
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            with zipfile.ZipFile(tmp_zip, "r") as zf:
+                zf.extractall(extract_dir)
+            for item in validated_entries:
+                ext_f = extract_dir / item["path"]
+                if not ext_f.exists() or ext_f.stat().st_size != item["size"] or sha256_file(ext_f).lower() != item["sha256"]:
+                    raise ValueError(f"Extraction verification failed for {item['path']}")
+            ext_m = extract_dir / "manifest.json"
+            if not ext_m.exists() or sha256_file(ext_m).lower() != sha256_file(manifest_path).lower():
+                raise ValueError("Extraction verification failed for manifest.json")
+        finally:
+            shutil.rmtree(extract_dir, ignore_errors=True)
+
+        # Atomic replacement: publish finalized package and sidecar
+        os.replace(tmp_zip, zip_path)
+        os.replace(tmp_sha, sha_path)
     except Exception:
+        # Transaction rollback on any failure
+        if tmp_zip.exists():
+            try:
+                tmp_zip.unlink()
+            except Exception:
+                pass
+        if tmp_sha.exists():
+            try:
+                tmp_sha.unlink()
+            except Exception:
+                pass
         if manifest_changed:
             manifest_path.write_bytes(original_manifest_bytes)
+        if pre_existing_zip is not None:
+            zip_path.write_bytes(pre_existing_zip)
+        elif zip_path.exists():
+            try:
+                zip_path.unlink()
+            except Exception:
+                pass
+        if pre_existing_sha is not None:
+            sha_path.write_bytes(pre_existing_sha)
+        elif sha_path.exists():
+            try:
+                sha_path.unlink()
+            except Exception:
+                pass
         raise
-
-    pkg_dir = repo_root / ".artifacts" / "packages"
-    pkg_dir.mkdir(parents=True, exist_ok=True)
-    zip_name = f"Acceptance-{task_id}-{v_ver}.zip"
-    zip_path = pkg_dir / zip_name
-    sha_path = pkg_dir / f"{zip_name}.sha256"
-
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(manifest_path, arcname="manifest.json")
-        for item in validated_entries:
-            zf.write(item["abs_path"], arcname=item["path"])
-
-    zip_sha = sha256_file(zip_path)
-    sha_path.write_text(f"{zip_sha}  {zip_name}\n", encoding="utf-8")
-
-    # Real extraction verification
-    extract_dir = pkg_dir / f".verify_extract_{int(time.time() * 1000)}_{os.getpid()}"
-    extract_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(extract_dir)
-        for item in validated_entries:
-            ext_f = extract_dir / item["path"]
-            if not ext_f.exists() or ext_f.stat().st_size != item["size"] or sha256_file(ext_f).lower() != item["sha256"]:
-                raise ValueError(f"Extraction verification failed for {item['path']}")
-        ext_m = extract_dir / "manifest.json"
-        if not ext_m.exists() or sha256_file(ext_m).lower() != sha256_file(manifest_path).lower():
-            raise ValueError("Extraction verification failed for manifest.json")
-    finally:
-        shutil.rmtree(extract_dir, ignore_errors=True)
 
     return {
         "task_id": task_id,

@@ -55,7 +55,7 @@ content_sha256: null
 - `TC-CONSUMER-008`：消费端 HEAD 与 Standards 输入/目标 Commit 独立记录；工作区 DIRTY 或 HEAD 不可读时 `CONSUMER_VERIFICATION_STATUS=NOT_VERIFIABLE`，影响分析不得报告完整兼容。
 - `TC-CONSUMER-009`：历史快照只有在记录的 local_head 与当前分支 HEAD 相同或经 Git 对象图证明为当前分支/官方 main 祖先时才豁免 24 小时窗口；非祖先与谱系不可核验分别阻断。
 - `TC-CONSUMER-010`：历史快照的 captured_at、分支身份、local_head 和 remote main at capture 必须与真实 Git 历史一致；不得通过手工改时间或仅添加 RELEASED/COMPLETED 标记绕过。
-- `TC-CONSUMER-011` (F10)：基线生成器 `--scope consumer` 仅校验消费工程自身 Commit、文档、SHA256、Git 快照与实时 CI，在缺失 Standards 发布证据时正常 PASS；`--scope standards-release` 严格执行 Standards 发布证据校验。
-- `TC-CONSUMER-012` (F11)：历史锁定回滚契约允许历史 Lock `approval_evidence_ref: null`（初始引导态）；支持通过 `rollback_authorization_ref` 绑定当前 Owner 回滚授权；缺失历史 CI 默认设为 `NOT_VERIFIABLE`；两文件事务更新在故障注入下严格回滚。
-- `TC-CONSUMER-013` (F12)：单 Owner 双 Commit 方案 C 契约通过 `commit_bindings` 分离 `consumer.candidate_commit` 与 `standards.peeled_commit`；彻底移除 `SIGNED_OWNER_EVENT` 伪枚举；GitHub PR Merge 事件必须由仓库属主合并且 Base 为 main。
-- `TC-CONSUMER-014`：验收打包器强制要求 `run_id`、`task_id`、`version` 参数一致性，持久化 `run_id` 到 `manifest.json`，并通过临时文件原子替换与真实解包校验保障制品完整性。
+- `TC-CONSUMER-011` (F10)：基线生成器 `--scope consumer` 针对真实消费端工程夹具运行 `--verify-only` 正常 PASS（解耦 Standards 自身 PR9/STD-018/STD-019 发布证据）；`--scope standards-release --verify-only` 在缺少 Standards 发布证据时阻断失败。
+- `TC-CONSUMER-012` (F11)：官方 CLI `rollback` 强制要求 `--rollback-authorization-ref`（默认 `require_authorization=True`，无授权阻断）；历史 Lock 回滚验证目标 Tag 在官方规范仓远端真实有效且位于 main 祖先链上（远端不可达 `NOT_VERIFIABLE`，不匹配 `FAIL`）；历史 Lock `approval_evidence_ref: null` 合法保留；缺失历史 CI 严格默认 `NOT_VERIFIABLE`；`promote_upgrade` 保存历史 Lock 时同样杜绝假冒 `PASS`；两文件事务在故障注入下原子回退。
+- `TC-CONSUMER-013` (F12)：单 Owner 双 Commit 方案 C 审批契约强制要求双向绑定：`commit_bindings` 包含完整的 `consumer`（repository, candidate_commit）与 `standards`（repository, target_tag, tag_object_sha, peeled_commit），`content_bindings` 包含 2 项有效摘要；审批记录与 `approval_event` 字段严格相等；`event_timestamp` 必须精确等于 GitHub PR `merged_at`；严禁智能体自批或合并；严禁对 Promotion/Rollback 使用单 Commit 遗留旁路绕过。
+- `TC-CONSUMER-014` (Packager)：验收打包器移除静默回填逻辑（缺少必需字段抛出 `ValueError`），强制验证 `run_id`、`task_id`、`version` 一致性并持久化到 `manifest.json`；采用 `.tmp_*` 临时文件与解包真实抽检/SHA-256 自校验，通过后再原子替换；在任何故障注入下回滚 `manifest.json`、还原既有制品并清理临时文件。

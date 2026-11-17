@@ -56,11 +56,12 @@ content_sha256: null
 `analysis_status` 与 `compatibility_status` 必须分开解释。消费端 HEAD 不可读或工作区非 CLEAN 时，影响分析为 `PARTIAL`，兼容性不得汇总为 `COMPATIBLE`。任一必需维度为 `NOT_RUN` 或 `NOT_VERIFIABLE` 时，整体状态不得为 `PASS`。静态指引扫描不替代真实测试、安全、发布、业务 API 或 Runtime 验收。
 ## 2.2 历史基线锁定回滚契约（`rollback`）
 
-`python tools/standards_sync/cli.py rollback --project-root <PROJECT_ROOT> [--rollback-authorization-ref <PATH>] [--require-authorization]`
+`python tools/standards_sync/cli.py rollback --project-root <PROJECT_ROOT> --rollback-authorization-ref <PATH>`
 
-1. **历史 Lock 真实性保持**：历史 Lock 的 `approval_evidence_ref` 允许为 `null`（如初始引导态），严禁篡改或伪造历史审批事实。
-2. **回滚授权独立绑定**：新增 `rollback_authorization_ref` 属性记录当前回滚的 Owner 授权证据；历史 Lock 缺失 CI 记录时默认标记为 `NOT_VERIFIABLE`，严禁假定或自动回退为 `PASS`。
-3. **两文件事务更新**：回滚操作原子更新 `standards.lock.json` 与 `engineering-manifest.yaml`；任一文件写入或校验失败时彻底回退，保留 `previous_locks` 完整审计链。
+1. **强制 Owner 授权**：官方 CLI `rollback` 子命令强制要求 `--rollback-authorization-ref`，默认 `require_authorization=True`，严禁智能体无授权直接修改锁文件。授权记录必须满足 `schemas/documentation-approval.schema.json`、`reviewer_type == "OWNER"` 且 `approval_status == "OWNER_APPROVED"`。
+2. **官方历史 Tag 远端一致性核验**：回滚时必须调用 `verify_official_historical_tag` 核验目标 Tag 在官方规范仓远端存在、Tag 对象与剥离提交匹配、以及位于官方 main 祖先链上；远端不可达或网络超时返回 `NOT_VERIFIABLE`，不匹配返回 `FAIL`。
+3. **历史 Lock 真实性保持与 CI 状态**：历史 Lock 的 `approval_evidence_ref` 允许为 `null`（如初始引导态），严禁篡改或伪造历史审批事实；历史 Lock 缺失或无效 CI 记录时默认标记为 `NOT_VERIFIABLE`，严禁假定或自动回退为 `PASS`。
+4. **两文件事务更新**：回滚操作原子更新 `standards.lock.json` 与 `engineering-manifest.yaml`；任一文件写入或校验失败时彻底回退，保留 `previous_locks` 完整审计链。
 
 ## 2.3 单 Owner 双 Commit PR Merge Event 审批契约（方案 C）
 
@@ -87,7 +88,9 @@ content_sha256: null
 }
 ```
 
-- **验证规则**：GitHub PR Merge 事件必须由仓库属主独立执行（`merged=true`，`merged_by=Owner`，`base.ref=main`，`head.sha=consumer.candidate_commit`）；严禁智能体自批（`CODING_AGENT` 角色严格阻断）。
+- **验证规则**：GitHub PR Merge 事件必须由仓库属主独立执行（`merged=true`，`merged_by=Owner`，`base.ref=main`，`head.sha=consumer.candidate_commit`）；严禁智能体自批或合并（`CODING_AGENT` 角色严格阻断）。
+- **字段双向对齐与时间戳匹配**：审批记录与 `approval_event` 内部的 `commit_bindings`（consumer 2项、standards 4项）与 `content_bindings`（2项有效摘要）必须逐字段完全一致；`event_timestamp` 必须精确匹配 GitHub PR API 返回的 `merged_at`。
+- **禁止单 Commit 旁路绕过**：针对 `STANDARDS_LOCK_PROMOTION` 和 `LOCK_ROLLBACK` 作用域，必须具备上述双向 Commit 绑定与内容绑定，严禁使用旧版单 Commit 结构绕过。
 - **审批范围**：明确区分 `GATE_MAPPING`（门禁配置映射）与 `STANDARDS_LOCK_PROMOTION`（基线晋升）。
 - **枚举清理**：彻底废除未实现的 `SIGNED_OWNER_EVENT` 伪枚举。
 

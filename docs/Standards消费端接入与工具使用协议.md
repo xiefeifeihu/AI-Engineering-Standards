@@ -137,15 +137,18 @@ AI-HUB H1 的只读实例（仅供核验，不是其他工程默认值）：v2.1
 ### 4.3 历史锁定安全回滚契约（F11）
 
 - 历史 Lock（如初始引导态）`approval_evidence_ref: null` 属于合规历史事实，Schema 与工具均允许直接回滚，不得因此报错阻断。
-- 执行回滚必须提供当前 Owner 回滚授权：`python tools/standards_sync/cli.py rollback --project-root . --rollback-authorization-ref <PATH>`。
-- 历史 Lock 若缺少 CI 状态记录，回滚后严格标记为 `NOT_VERIFIABLE`，严禁假定或自动回退为 PASS。
+- 执行回滚必须提供当前 Owner 回滚授权：`python tools/standards_sync/cli.py rollback --project-root . --rollback-authorization-ref <PATH>`。该参数在官方 CLI 中为强制必选（默认 `require_authorization=True`），杜绝智能体无授权直接修改锁文件。
+- 回滚前必须调用 `verify_official_historical_tag` 核验目标 Tag 在官方规范仓远端存在、Tag 对象与剥离提交匹配、且位于官方 main 祖先链上；远端不可达或网络超时返回 `NOT_VERIFIABLE`，不匹配返回 `FAIL`。
+- 历史 Lock 若缺少 CI 状态记录，回滚后严格标记为 `NOT_VERIFIABLE`，严禁假定或自动回退为 PASS；`promote_upgrade` 保存历史 Lock 至 `previous_locks` 时同样严格继承或默认 `NOT_VERIFIABLE`。
 - 回滚过程原子更新 `standards.lock.json` 与 `engineering-manifest.yaml`；任一失败完全还原，保留 `previous_locks` 完整历史审计栈。
 
 ### 4.4 方案 C 单 Owner 双 Commit PR Merge 审批集成（F12）
 
-- 在消费端 PR 审批与晋升中，通过 `commit_bindings` 显式解耦消费端候选 HEAD 与 Standards Peeled Commit，杜绝两者混淆。
+- 在消费端 PR 审批与晋升中，通过 `commit_bindings` 显式解耦消费端候选 HEAD 与 Standards Peeled Commit（包含 repository、target_tag、tag_object_sha、peeled_commit 4 项完整字段），并通过 `content_bindings` 绑定门禁映射与清单摘要，杜绝概念混淆。
+- 审批记录与 `approval_event` 内的 `commit_bindings` 和 `content_bindings` 必须逐字段严格相等；`event_timestamp` 必须精确等于 GitHub PR API 返回的 `merged_at`。
 - 审批凭证通过 GitHub API 读取 PR Merge 事件，强制核验 `merged=true`、`merged_by=Owner`、`base.ref=main`、`head.sha=consumer.candidate_commit`。
-- 编程智能体严禁参与或自批审批（`CODING_AGENT` 角色强阻断）；废除未实现的 `SIGNED_OWNER_EVENT` 伪枚举。
+- 编程智能体严禁参与或自批审批（`CODING_AGENT` 角色强阻断）；严禁智能体执行 PR 合并；废除未实现的 `SIGNED_OWNER_EVENT` 伪枚举。
+- 针对 `STANDARDS_LOCK_PROMOTION` 和 `LOCK_ROLLBACK`，强制要求双向绑定，严禁使用单 Commit 遗留旁路绕过。
 
 ## 5. 每次任务启动与工具调用顺序
 

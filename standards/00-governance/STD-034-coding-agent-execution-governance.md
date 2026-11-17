@@ -85,8 +85,8 @@ SCHEMA_REF=schemas/standards-lock.schema.json, schemas/documentation-approval.sc
 4. `impact`：针对下游消费端工程执行兼容性影响分析（覆盖 Schema、`AGENTS.md`、`CLAUDE.md`、Engineering Manifest、文档元数据、文档集合校验、测试门禁、发布门禁、安全门禁、业务接口与运行时契约）。
 5. `prepare-upgrade`：自动生成升级候选包与迁移计划（`.artifacts/standards_upgrade/`）。
 6. `validate-upgrade`：在候选环境执行工程兼容性回归测试并汇总结果。
-7. `promote`：核验审批契约（`AI_APPROVED` 或 `OWNER_APPROVED`）与测试通过证据后，保留历史锁定并原子更新 `standards.lock.json` 与 `engineering-manifest.yaml`。
-8. `rollback`：从 `previous_locks` 历史锁定记录安全回滚至上一已验证版本。
+7. `promote`：核验审批契约（`AI_APPROVED` 或 `OWNER_APPROVED`，涉及 `STANDARDS_LOCK_PROMOTION` 范围必须具备消费端与 Standards 双向 Commit 绑定及 Content Bindings）与测试通过证据后，保留历史锁定（历史 CI 缺失默认标记 `NOT_VERIFIABLE`，严禁虚标 `PASS`）并原子更新 `standards.lock.json` 与 `engineering-manifest.yaml`。
+8. `rollback`：从 `previous_locks` 历史锁定记录安全回滚至上一已验证版本。**强制要求显式 Owner 授权**（CLI `--rollback-authorization-ref` 必选），核验历史 Tag 远端一致性与祖先关系，缺失 CI 状态默认标记为 `NOT_VERIFIABLE`，严禁智能体无授权直接修改锁文件。
 
 ### 4.3 消费端接入与受控升级（Consumer Adoption & Controlled Upgrade）
 
@@ -102,6 +102,13 @@ DISCOVER ──► VERIFY ──► COMPARE ──► IMPACT_ANALYSIS ──► 
   - 涉及破坏性 Schema 变更、主版本升级或重大治理决策：`OWNER_APPROVAL_REQUIRED`；
   - 全部兼容性门禁通过且仅属兼容刷新无需人工批准：经 ChatGPT 独立审核后记录 `AI_APPROVED`。
 - 在新版本升级与审批晋升完成前，**MUST NOT** 把旧锁定版本伪称为最新版本。
+4. **双向 Commit 绑定与回滚授权契约 (Dual-Commit Binding & Rollback Authorization Contract)**：
+   - **双向 Commit 绑定**：在 `STANDARDS_LOCK_PROMOTION` 或 `LOCK_ROLLBACK` 范围内，审批记录与事件必须双向绑定消费端与规范端事实：
+     - `consumer`: 消费端仓库全称（`repository`）与候选提交（`candidate_commit`）；
+     - `standards`: 权威规范仓库全称（`repository`，固定为 `xiefeifeihu/AI-Engineering-Standards`）、目标 Tag（`target_tag`）、40 位附注 Tag 对象 SHA（`tag_object_sha`）及 40 位剥离提交 SHA（`peeled_commit`）；
+     - `content_bindings`: CI 门禁映射摘要（`ci_job_mapping_sha256`）与锁定清单摘要（`lock_manifest_sha256`）。
+     - 严禁对上述范围采用单 Commit legacy 旁路绕过。
+   - **回滚必须显式授权**：锁文件回滚影响消费端基线安全，**MUST** 具备有效的 Owner 审批证据（`OWNER_APPROVED`），严禁智能体自行决策或无授权触发回滚。
 
 ---
 
@@ -228,4 +235,6 @@ LOCAL_HEAD == REMOTE_HEAD == TAG_COMMIT == BUILD_COMMIT == LIVE_COMMIT
      - 正式合并前，审批状态保持为 `OWNER_APPROVAL_REQUIRED`。
      - Owner 通过 GitHub 界面将审查通过的候选 PR 合并入 `main` 分支作为最终批准动作。PR 作者与仓库 Owner 为同一人时，允许 Owner 直接合并，不强制要求提交 GitHub 自我 PR Review。
      - 审批溯源验证（`tools/validate_approval_contract.py`）调用 GitHub PR API (`GET /repos/{owner}/{repo}/pulls/{pull_number}`) 验证：`merged=true`、`merged_by.login == 仓库 Owner`、`base.ref == "main"`、`head.sha == candidate_commit` 且 `merged_at` 非空。
+     - **双向绑定与时间戳强校验**：对于 `STANDARDS_LOCK_PROMOTION` 和 `LOCK_ROLLBACK` 范围，审批记录与 `approval_event` 必须具有完全一致的 `commit_bindings` 和 `content_bindings`，字段逐项严格相等，且 `event_timestamp` 必须精确等于 `merged_at`。严禁通过单 Commit 遗留旁路绕过。
+     - **智能体权限边界**：严禁智能体执行 PR 合并或扮演 Owner，若 `merged_by.login` 或 `actor.identity_id` 包含智能体角色，门禁必须直接拒绝（`FAILED`）。
      - 满足全部溯源约束后，方可将审批状态标记为 `OWNER_APPROVED`。PR 未真实合入 `main` 前，严禁伪造 `OWNER_APPROVED`。
