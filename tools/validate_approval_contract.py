@@ -47,7 +47,6 @@ TRUSTED_PROVENANCE_TYPES = {
     "GITHUB_PR_REVIEW",
     "GITHUB_PR_MERGE",
     "TRUSTED_CHATGPT_EVENT",
-    "SIGNED_OWNER_EVENT",
 }
 
 
@@ -180,12 +179,42 @@ def verify_approval_event_provenance(record: Dict[str, Any]) -> Tuple[str, List[
         if base_ref != "main":
             return "FAILED", [f"APPROVAL_PR_BASE_BRANCH_MISMATCH: Base branch is '{base_ref}', expected 'main'"]
 
-        cand_commit = record.get("candidate_commit") or ""
         head_sha = (pr.get("head") or {}).get("sha") or ""
-        if head_sha != cand_commit:
-            return "FAILED", [f"APPROVAL_PR_HEAD_COMMIT_MISMATCH: PR head.sha '{head_sha}' != candidate_commit '{cand_commit}'"]
-        if event.get("candidate_commit") != cand_commit:
-            return "FAILED", ["EVENT_COMMIT_MISMATCH"]
+        commit_bindings = record.get("commit_bindings") or event.get("commit_bindings")
+        if commit_bindings:
+            consumer_binding = commit_bindings.get("consumer") or {}
+            expected_head = consumer_binding.get("candidate_commit") or record.get("candidate_commit") or ""
+            expected_repo = consumer_binding.get("repository") or repository
+            if expected_repo and repository.lower() != expected_repo.lower():
+                return "FAILED", [f"APPROVAL_PR_REPO_MISMATCH: PR repo '{repository}' != expected consumer repo '{expected_repo}'"]
+            if head_sha != expected_head:
+                return "FAILED", [f"APPROVAL_PR_HEAD_COMMIT_MISMATCH: PR head.sha '{head_sha}' != consumer candidate_commit '{expected_head}'"]
+            if event.get("candidate_commit") and event.get("candidate_commit") != expected_head:
+                return "FAILED", ["EVENT_COMMIT_MISMATCH"]
+            standards_binding = commit_bindings.get("standards") or {}
+            if standards_binding:
+                std_repo = standards_binding.get("repository")
+                if std_repo != "xiefeifeihu/AI-Engineering-Standards":
+                    return "FAILED", [f"INVALID_STANDARDS_REPOSITORY: '{std_repo}' is not official AI-Engineering-Standards"]
+                std_tag = standards_binding.get("target_tag")
+                std_peeled = standards_binding.get("peeled_commit")
+                if not std_tag or not re.match(r"^v\d+\.\d+\.\d+$", str(std_tag)):
+                    return "FAILED", [f"INVALID_STANDARDS_TARGET_TAG: '{std_tag}'"]
+                if not std_peeled or not re.match(r"^[0-9a-f]{40}$", str(std_peeled)):
+                    return "FAILED", [f"INVALID_STANDARDS_PEELED_COMMIT: '{std_peeled}'"]
+        else:
+            cand_commit = record.get("candidate_commit") or ""
+            if head_sha != cand_commit:
+                return "FAILED", [f"APPROVAL_PR_HEAD_COMMIT_MISMATCH: PR head.sha '{head_sha}' != candidate_commit '{cand_commit}'"]
+            if event.get("candidate_commit") != cand_commit:
+                return "FAILED", ["EVENT_COMMIT_MISMATCH"]
+
+        content_bindings = record.get("content_bindings") or event.get("content_bindings")
+        if content_bindings:
+            for k in ("ci_job_mapping_sha256", "lock_manifest_sha256"):
+                val = content_bindings.get(k)
+                if val and not re.match(r"^(sha256:)?[0-9a-f]{64}$", str(val)):
+                    return "FAILED", [f"INVALID_CONTENT_BINDING_DIGEST: '{k}' digest '{val}' is not 64-hex SHA-256"]
 
         merged_at = pr.get("merged_at")
         if not merged_at:

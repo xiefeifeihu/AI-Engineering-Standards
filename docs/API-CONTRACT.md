@@ -35,7 +35,7 @@ content_sha256: null
 | :--- | :--- | :--- |
 | `python tools/standards_sync/cli.py` | `discover` / `verify-lock` / `compare` / `impact` / `prepare-upgrade` / `validate-upgrade` / `promote` / `rollback` | 标准输出结构化 JSON；成功返回 `0`，阻断或校验失败返回 `1`（远端不可达时 `discover` 返回 `status: NOT_VERIFIABLE`） |
 | `python tools/validate-documentation-collection.py` | `--project-root <DIR> [--schema <PATH>] [--check-templates]` | 执行 17 项文档集合、链接与锚点校验；全部通过返回 `0`，任一违例返回 `1` |
-| `python tools/generate_engineering_baseline.py` | `--project-root <DIR> [--verify-only] [--observed-at <ISO>]` | 确定性生成或校验 `docs/当前权威基线.md` 与 `.artifacts/baseline/engineering_baseline.json`；源冲突时返回 `1` |
+| `python tools/generate_engineering_baseline.py` | `--project-root <DIR> [--scope {consumer,standards-release}] [--verify-only] [--observed-at <ISO>]` | 确定性生成或校验 `docs/当前权威基线.md` 与 `.artifacts/baseline/engineering_baseline.json`；默认 `consumer` 作用域解耦 Standards 自身发布证据，`standards-release` 校验三作用域发布证据；源冲突时返回 `1` |
 | `python tools/generate_handoff.py` | `--project-root <DIR> --task-id <ID> [--version <VER>]` | 自动采集 11 项工程事实并生成 `docs/CROSS-SESSION-HANDOFF.md` 与 `handoff/<TASK-ID>-<VERSION>-handoff.md` |
 | `python tools/validate_approval_contract.py` | `--approval-file <JSON> [--document-file <MD>] [--expected-commit <SHA>]` | 校验双层审批契约、反自批及 SHA-256/Commit 一致性；通过返回 `0`，违例返回 `1` |
 
@@ -54,6 +54,43 @@ content_sha256: null
 | `GUIDANCE_FINDINGS` | `AGENTS.md`、`CLAUDE.md`、`README.md` 中的静态扫描发现 | 数组元素包含 `file`、`line`、`code`、`excerpt` |
 
 `analysis_status` 与 `compatibility_status` 必须分开解释。消费端 HEAD 不可读或工作区非 CLEAN 时，影响分析为 `PARTIAL`，兼容性不得汇总为 `COMPATIBLE`。任一必需维度为 `NOT_RUN` 或 `NOT_VERIFIABLE` 时，整体状态不得为 `PASS`。静态指引扫描不替代真实测试、安全、发布、业务 API 或 Runtime 验收。
+## 2.2 历史基线锁定回滚契约（`rollback`）
+
+`python tools/standards_sync/cli.py rollback --project-root <PROJECT_ROOT> [--rollback-authorization-ref <PATH>] [--require-authorization]`
+
+1. **历史 Lock 真实性保持**：历史 Lock 的 `approval_evidence_ref` 允许为 `null`（如初始引导态），严禁篡改或伪造历史审批事实。
+2. **回滚授权独立绑定**：新增 `rollback_authorization_ref` 属性记录当前回滚的 Owner 授权证据；历史 Lock 缺失 CI 记录时默认标记为 `NOT_VERIFIABLE`，严禁假定或自动回退为 `PASS`。
+3. **两文件事务更新**：回滚操作原子更新 `standards.lock.json` 与 `engineering-manifest.yaml`；任一文件写入或校验失败时彻底回退，保留 `previous_locks` 完整审计链。
+
+## 2.3 单 Owner 双 Commit PR Merge Event 审批契约（方案 C）
+
+在消费端合入升级分支或执行 Standards Lock 变更时，审批契约通过 `commit_bindings` 显式解耦双 Commit 身份：
+
+```json
+{
+  "commit_bindings": {
+    "consumer": {
+      "repository": "<CONSUMER_REPO>",
+      "candidate_commit": "<CONSUMER_HEAD_SHA>"
+    },
+    "standards": {
+      "repository": "xiefeifeihu/AI-Engineering-Standards",
+      "target_tag": "v3.0.0",
+      "tag_object_sha": "8256bb384e62894219db0992a2cb57e16d4fa8cd",
+      "peeled_commit": "8b223019c254e0edeb94576b94af46c1e48b0316"
+    }
+  },
+  "content_bindings": {
+    "ci_job_mapping_sha256": "sha256:<64-HEX>",
+    "lock_manifest_sha256": "sha256:<64-HEX>"
+  }
+}
+```
+
+- **验证规则**：GitHub PR Merge 事件必须由仓库属主独立执行（`merged=true`，`merged_by=Owner`，`base.ref=main`，`head.sha=consumer.candidate_commit`）；严禁智能体自批（`CODING_AGENT` 角色严格阻断）。
+- **审批范围**：明确区分 `GATE_MAPPING`（门禁配置映射）与 `STANDARDS_LOCK_PROMOTION`（基线晋升）。
+- **枚举清理**：彻底废除未实现的 `SIGNED_OWNER_EVENT` 伪枚举。
+
 ## 3. 消费端调用与权限边界
 
 完整接入步骤、共享工具引用方式、依赖安装、模板复制、Windows/Linux 命令、CI 示例及升级/回滚流程统一见 [`Standards消费端接入与工具使用协议`](./Standards消费端接入与工具使用协议.md)。消费工程 **MUST NOT** 复制并分叉 `tools/`、`schemas/` 或标准正文；应通过固定版本的官方仓库引用调用。

@@ -1642,6 +1642,12 @@ def main() -> None:
     parser.add_argument("--release-evidence", default=None, help="Path to PR9 release evidence JSON file")
     parser.add_argument("--snapshot-evidence", default=None, help="Path to snapshot evidence JSON file")
     parser.add_argument("--final-evidence", default=None, help="Path to final release evidence JSON file (Std-019)")
+    parser.add_argument(
+        "--scope",
+        choices=["consumer", "standards-release"],
+        default=None,
+        help="Validation scope: 'consumer' verifies project baseline facts without Standards PR release evidence; 'standards-release' verifies Standards release evidence.",
+    )
     parser.add_argument("--verify-only", action="store_true", help="Verify generation succeeds against committed baseline")
     args = parser.parse_args()
 
@@ -1707,108 +1713,122 @@ def main() -> None:
                 f"field 'content_sha256': committed='{actual_fm.get('content_sha256')}' does not match actual document digest '{actual_digest}'"
             )
 
+        # Determine effective scope: if not explicitly specified, default to standards-release
+        # only when verifying AI-Engineering-Standards repo where reissue evidence exists; otherwise consumer.
+        effective_scope = args.scope
+        if not effective_scope:
+            proj_id = payload.get("project_identity", {}).get("project_id", "")
+            if proj_id == "ai-engineering-standards" and (project_root / "docs" / "release-evidence" / "v3.0.0-reissue.json").exists():
+                effective_scope = "standards-release"
+            else:
+                effective_scope = "consumer"
+
         # Semantic fact verification from independent release evidence (STD-034 / STD-035)
-        pr9_ev_path = (
-            Path(args.release_evidence).resolve()
-            if args.release_evidence
-            else project_root / "docs" / "release-evidence" / "v3.0.0-reissue.json"
-        )
-        ok_ev, ev_errors, release_evidence = load_release_evidence(project_root, pr9_ev_path)
-        if not ok_ev or release_evidence is None:
-            print(f"[FAIL] Baseline verification blocked: PR9 release evidence error ({len(ev_errors)} issues):")
-            for e in ev_errors:
-                print(f"  - {e}")
-            sys.exit(1)
+        # In standards-release scope (or when explicit release evidence is passed), verify PR9, STD018, and STD019 facts.
+        # In consumer scope, skip Standards release evidence verification.
+        if effective_scope == "standards-release" or args.release_evidence or args.snapshot_evidence or args.final_evidence:
+            pr9_ev_path = (
+                Path(args.release_evidence).resolve()
+                if args.release_evidence
+                else project_root / "docs" / "release-evidence" / "v3.0.0-reissue.json"
+            )
+            ok_ev, ev_errors, release_evidence = load_release_evidence(project_root, pr9_ev_path)
+            if not ok_ev or release_evidence is None:
+                print(f"[FAIL] Baseline verification blocked: PR9 release evidence error ({len(ev_errors)} issues):")
+                for e in ev_errors:
+                    print(f"  - {e}")
+                sys.exit(1)
 
-        snapshot_ev_path = (
-            Path(args.snapshot_evidence).resolve()
-            if args.snapshot_evidence
-            else project_root / "docs" / "release-evidence" / "std018-current-snapshot.json"
-        )
-        ok_snap, snap_errors, snapshot_evidence = load_release_evidence(project_root, snapshot_ev_path)
-        if not ok_snap or snapshot_evidence is None:
-            print(f"[FAIL] Baseline verification blocked: snapshot evidence error ({len(snap_errors)} issues):")
-            for e in snap_errors:
-                print(f"  - {e}")
-            sys.exit(1)
+            snapshot_ev_path = (
+                Path(args.snapshot_evidence).resolve()
+                if args.snapshot_evidence
+                else project_root / "docs" / "release-evidence" / "std018-current-snapshot.json"
+            )
+            ok_snap, snap_errors, snapshot_evidence = load_release_evidence(project_root, snapshot_ev_path)
+            if not ok_snap or snapshot_evidence is None:
+                print(f"[FAIL] Baseline verification blocked: snapshot evidence error ({len(snap_errors)} issues):")
+                for e in snap_errors:
+                    print(f"  - {e}")
+                sys.exit(1)
 
-        final_ev_path = (
-            Path(args.final_evidence).resolve()
-            if args.final_evidence
-            else project_root / "docs" / "release-evidence" / "std019-final-release.json"
-        )
-        ok_final, final_errors, final_evidence = load_release_evidence(project_root, final_ev_path)
-        if not ok_final or final_evidence is None:
-            print(f"[FAIL] Baseline verification blocked: final release evidence error ({len(final_errors)} issues):")
-            for e in final_errors:
-                print(f"  - {e}")
-            sys.exit(1)
+            final_ev_path = (
+                Path(args.final_evidence).resolve()
+                if args.final_evidence
+                else project_root / "docs" / "release-evidence" / "std019-final-release.json"
+            )
+            ok_final, final_errors, final_evidence = load_release_evidence(project_root, final_ev_path)
+            if not ok_final or final_evidence is None:
+                print(f"[FAIL] Baseline verification blocked: final release evidence error ({len(final_errors)} issues):")
+                for e in final_errors:
+                    print(f"  - {e}")
+                sys.exit(1)
 
-        expected_pr9_facts = {
-            "candidate_commit": args.candidate_commit or release_evidence["candidate_commit"],
-            "snapshot_commit": args.snapshot_commit or release_evidence["snapshot_commit"],
-            "last_verified_ci_commit": args.last_verified_ci_commit or args.ci_commit or release_evidence["last_verified_ci_commit"],
-            "ci_run_id": args.ci_run_id or release_evidence["push_run_id"],
-            "push_run_id": args.push_run_id or release_evidence["push_run_id"],
-            "pr_run_id": args.pr_run_id or release_evidence["pr_run_id"],
-            "ci_commit": args.ci_commit or release_evidence["last_verified_ci_commit"],
-            "ci_status": args.ci_status or release_evidence["ci_status"],
-            "test_count": args.test_count if args.test_count is not None else release_evidence["test_count"],
-            "pr_status": args.pr_status if (args.pr_status != "DRAFT" or "pr_status" not in release_evidence) else release_evidence["pr_status"],
-            "main_head": release_evidence.get("main_head"),
-            "release_flow_status": release_evidence["release_flow_status"],
-            "old_tag_deleted": release_evidence["old_tag_deleted"],
-        }
-        pr9_mismatches = verify_baseline_semantic_facts(
-            actual_content, expected_pr9_facts, scope="PR9_HISTORICAL_RELEASE_EVIDENCE"
-        )
-        mismatches.extend([f"[PR9_SCOPE] {m}" for m in pr9_mismatches])
+            expected_pr9_facts = {
+                "candidate_commit": args.candidate_commit or release_evidence["candidate_commit"],
+                "snapshot_commit": args.snapshot_commit or release_evidence["snapshot_commit"],
+                "last_verified_ci_commit": args.last_verified_ci_commit or args.ci_commit or release_evidence["last_verified_ci_commit"],
+                "ci_run_id": args.ci_run_id or release_evidence["push_run_id"],
+                "push_run_id": args.push_run_id or release_evidence["push_run_id"],
+                "pr_run_id": args.pr_run_id or release_evidence["pr_run_id"],
+                "ci_commit": args.ci_commit or release_evidence["last_verified_ci_commit"],
+                "ci_status": args.ci_status or release_evidence["ci_status"],
+                "test_count": args.test_count if args.test_count is not None else release_evidence["test_count"],
+                "pr_status": args.pr_status if (args.pr_status != "DRAFT" or "pr_status" not in release_evidence) else release_evidence["pr_status"],
+                "main_head": release_evidence.get("main_head"),
+                "release_flow_status": release_evidence["release_flow_status"],
+                "old_tag_deleted": release_evidence["old_tag_deleted"],
+            }
+            pr9_mismatches = verify_baseline_semantic_facts(
+                actual_content, expected_pr9_facts, scope="PR9_HISTORICAL_RELEASE_EVIDENCE"
+            )
+            mismatches.extend([f"[PR9_SCOPE] {m}" for m in pr9_mismatches])
 
-        expected_snapshot_facts = {
-            "task_id": snapshot_evidence.get("task_id", "Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT"),
-            "candidate_commit": snapshot_evidence["candidate_commit"],
-            "snapshot_commit": snapshot_evidence["snapshot_commit"],
-            "last_verified_ci_commit": snapshot_evidence["last_verified_ci_commit"],
-            "ci_run_id": snapshot_evidence["push_run_id"],
-            "push_run_id": snapshot_evidence["push_run_id"],
-            "pr_run_id": snapshot_evidence["pr_run_id"],
-            "ci_commit": snapshot_evidence["last_verified_ci_commit"],
-            "ci_status": snapshot_evidence["ci_status"],
-            "test_count": snapshot_evidence["test_count"],
-            "pr_status": snapshot_evidence["pr_status"],
-            "main_head": snapshot_evidence.get("main_head"),
-            "release_flow_status": snapshot_evidence["release_flow_status"],
-            "old_tag_deleted": snapshot_evidence["old_tag_deleted"],
-        }
-        snap_mismatches = verify_baseline_semantic_facts(
-            actual_content, expected_snapshot_facts, scope="STD018_CURRENT_SNAPSHOT"
-        )
-        mismatches.extend([f"[STD018_SCOPE] {m}" for m in snap_mismatches])
+            expected_snapshot_facts = {
+                "task_id": snapshot_evidence.get("task_id", "Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT"),
+                "candidate_commit": snapshot_evidence["candidate_commit"],
+                "snapshot_commit": snapshot_evidence["snapshot_commit"],
+                "last_verified_ci_commit": snapshot_evidence["last_verified_ci_commit"],
+                "ci_run_id": snapshot_evidence["push_run_id"],
+                "push_run_id": snapshot_evidence["push_run_id"],
+                "pr_run_id": snapshot_evidence["pr_run_id"],
+                "ci_commit": snapshot_evidence["last_verified_ci_commit"],
+                "ci_status": snapshot_evidence["ci_status"],
+                "test_count": snapshot_evidence["test_count"],
+                "pr_status": snapshot_evidence["pr_status"],
+                "main_head": snapshot_evidence.get("main_head"),
+                "release_flow_status": snapshot_evidence["release_flow_status"],
+                "old_tag_deleted": snapshot_evidence["old_tag_deleted"],
+            }
+            snap_mismatches = verify_baseline_semantic_facts(
+                actual_content, expected_snapshot_facts, scope="STD018_CURRENT_SNAPSHOT"
+            )
+            mismatches.extend([f"[STD018_SCOPE] {m}" for m in snap_mismatches])
 
-        expected_final_facts = {
-            "task_id": final_evidence.get("task_id", "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT"),
-            "candidate_commit": final_evidence["candidate_commit"],
-            "snapshot_commit": final_evidence["snapshot_commit"],
-            "last_verified_ci_commit": final_evidence["last_verified_ci_commit"],
-            "push_run_id": final_evidence.get("main_ci_run_id") or final_evidence["push_run_id"],
-            "pr_run_id": final_evidence["pr_run_id"],
-            "ci_status": final_evidence["ci_status"],
-            "test_count": final_evidence["test_count"],
-            "pr_number": final_evidence["pr_number"],
-            "pr_status": final_evidence["pr_status"],
-            "main_head": final_evidence["main_head"],
-            "release_flow_status": final_evidence["release_flow_status"],
-            "old_tag_deleted": final_evidence["old_tag_deleted"],
-            "release_tag": final_evidence["release_tag"],
-            "tag_object_sha": final_evidence["tag_object_sha"],
-            "peeled_commit": final_evidence["peeled_commit"],
-            "tag_publish_status": final_evidence["tag_publish_status"],
-            "pr_merged_by": final_evidence["pr_merged_by"],
-        }
-        final_mismatches = verify_baseline_semantic_facts(
-            actual_content, expected_final_facts, scope="STD019_FINAL_RELEASE"
-        )
-        mismatches.extend([f"[STD019_SCOPE] {m}" for m in final_mismatches])
+            expected_final_facts = {
+                "task_id": final_evidence.get("task_id", "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT"),
+                "candidate_commit": final_evidence["candidate_commit"],
+                "snapshot_commit": final_evidence["snapshot_commit"],
+                "last_verified_ci_commit": final_evidence["last_verified_ci_commit"],
+                "push_run_id": final_evidence.get("main_ci_run_id") or final_evidence["push_run_id"],
+                "pr_run_id": final_evidence["pr_run_id"],
+                "ci_status": final_evidence["ci_status"],
+                "test_count": final_evidence["test_count"],
+                "pr_number": final_evidence["pr_number"],
+                "pr_status": final_evidence["pr_status"],
+                "main_head": final_evidence["main_head"],
+                "release_flow_status": final_evidence["release_flow_status"],
+                "old_tag_deleted": final_evidence["old_tag_deleted"],
+                "release_tag": final_evidence["release_tag"],
+                "tag_object_sha": final_evidence["tag_object_sha"],
+                "peeled_commit": final_evidence["peeled_commit"],
+                "tag_publish_status": final_evidence["tag_publish_status"],
+                "pr_merged_by": final_evidence["pr_merged_by"],
+            }
+            final_mismatches = verify_baseline_semantic_facts(
+                actual_content, expected_final_facts, scope="STD019_FINAL_RELEASE"
+            )
+            mismatches.extend([f"[STD019_SCOPE] {m}" for m in final_mismatches])
+
         mismatches.extend(
             [f"[GIT_SNAPSHOT] {m}" for m in verify_git_snapshot_facts(project_root, actual_content, "baseline")]
         )

@@ -64,7 +64,7 @@ jobs:
 
       - name: Verify Deterministic Engineering Baseline (STD-035)
         run: |
-          python tools/generate_engineering_baseline.py --project-root . --verify-only
+          python tools/generate_engineering_baseline.py --project-root . --scope standards-release --verify-only
 
       - name: Verify Automated Cross-Session Handoff Contract (STD-020)
         run: |

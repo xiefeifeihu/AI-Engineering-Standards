@@ -250,7 +250,6 @@
                 "GITHUB_PR_REVIEW",
                 "GITHUB_PR_MERGE",
                 "TRUSTED_CHATGPT_EVENT",
-                "SIGNED_OWNER_EVENT",
                 "LOCAL_UNVERIFIED"
               ]
             },

@@ -132,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
     # 8. rollback
     p_rb = sub.add_parser("rollback", help="Rollback standards.lock.json to previous verified lock")
     p_rb.add_argument("--project-root", default=".", help="Target consumer project root directory")
+    p_rb.add_argument("--rollback-authorization-ref", default=None, help="Path to rollback authorization evidence")
+    p_rb.add_argument("--require-authorization", action="store_true", help="Require explicit rollback authorization")
 
     # 9. recover-tx
     p_rc = sub.add_parser("recover-tx", help="Detect and recover from an interrupted transaction")
@@ -232,7 +234,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if res.get("status") == "PROMOTED" else 1
 
     if args.subcommand == "rollback":
-        res = rollback_lock(project_root=Path(args.project_root))
+        res = rollback_lock(
+            project_root=Path(args.project_root),
+            rollback_authorization_ref=args.rollback_authorization_ref,
+            require_authorization=args.require_authorization,
+        )
         print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "ROLLED_BACK" else 1
 

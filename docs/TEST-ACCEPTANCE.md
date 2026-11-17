@@ -55,3 +55,7 @@ content_sha256: null
 - `TC-CONSUMER-008`：消费端 HEAD 与 Standards 输入/目标 Commit 独立记录；工作区 DIRTY 或 HEAD 不可读时 `CONSUMER_VERIFICATION_STATUS=NOT_VERIFIABLE`，影响分析不得报告完整兼容。
 - `TC-CONSUMER-009`：历史快照只有在记录的 local_head 与当前分支 HEAD 相同或经 Git 对象图证明为当前分支/官方 main 祖先时才豁免 24 小时窗口；非祖先与谱系不可核验分别阻断。
 - `TC-CONSUMER-010`：历史快照的 captured_at、分支身份、local_head 和 remote main at capture 必须与真实 Git 历史一致；不得通过手工改时间或仅添加 RELEASED/COMPLETED 标记绕过。
+- `TC-CONSUMER-011` (F10)：基线生成器 `--scope consumer` 仅校验消费工程自身 Commit、文档、SHA256、Git 快照与实时 CI，在缺失 Standards 发布证据时正常 PASS；`--scope standards-release` 严格执行 Standards 发布证据校验。
+- `TC-CONSUMER-012` (F11)：历史锁定回滚契约允许历史 Lock `approval_evidence_ref: null`（初始引导态）；支持通过 `rollback_authorization_ref` 绑定当前 Owner 回滚授权；缺失历史 CI 默认设为 `NOT_VERIFIABLE`；两文件事务更新在故障注入下严格回滚。
+- `TC-CONSUMER-013` (F12)：单 Owner 双 Commit 方案 C 契约通过 `commit_bindings` 分离 `consumer.candidate_commit` 与 `standards.peeled_commit`；彻底移除 `SIGNED_OWNER_EVENT` 伪枚举；GitHub PR Merge 事件必须由仓库属主合并且 Base 为 main。
+- `TC-CONSUMER-014`：验收打包器强制要求 `run_id`、`task_id`、`version` 参数一致性，持久化 `run_id` 到 `manifest.json`，并通过临时文件原子替换与真实解包校验保障制品完整性。

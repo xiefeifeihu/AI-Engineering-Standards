@@ -14,7 +14,7 @@ import re
 import shutil
 import socket
 import subprocess
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -3672,10 +3672,13 @@ def promote_upgrade(
 
 def rollback_lock(
     project_root: Path,
+    rollback_authorization_ref: Optional[Union[str, Path]] = None,
+    require_authorization: bool = False,
     replace_fn: Optional[Callable[[Path, Path], None]] = None,
 ) -> Dict[str, Any]:
     """Rollback standards.lock.json to the most recent entry in previous_locks.
-    Verifies historical lock integrity, preserves historical approval evidence and CI status,
+    Verifies historical lock integrity, preserves historical approval evidence (allowing null for bootstrap),
+    binds rollback authorization if provided, defaults missing CI status to NOT_VERIFIABLE,
     and applies transactional updates to standards.lock.json and engineering-manifest.yaml.
     """
     project_root = project_root.resolve()
@@ -3694,15 +3697,57 @@ def rollback_lock(
     for k in ("repository", "version", "tag", "tag_object_sha", "peeled_commit"):
         if not restored.get(k):
             return {"status": "FAIL", "reason": f"CORRUPT_HISTORICAL_LOCK: Missing '{k}'"}
+    if restored.get("repository") != "xiefeifeihu/AI-Engineering-Standards":
+        return {"status": "FAIL", "reason": f"INVALID_STANDARDS_REPOSITORY: '{restored.get('repository')}' is not official AI-Engineering-Standards"}
+    if restored.get("tag") != f"v{restored.get('version')}":
+        return {"status": "FAIL", "reason": f"CORRUPT_HISTORICAL_LOCK: Tag '{restored.get('tag')}' does not match version 'v{restored.get('version')}'"}
     if not re.match(r"^[0-9a-f]{40}$", restored["tag_object_sha"]) or not re.match(r"^[0-9a-f]{40}$", restored["peeled_commit"]):
         return {"status": "FAIL", "reason": "CORRUPT_HISTORICAL_LOCK: Invalid 40-hex commit or tag object SHA"}
 
     # Preserve historical approval evidence ref and CI status; never fabricate fake rollback-restored
+    # Historical bootstrap locks may legitimately have approval_evidence_ref as None/null.
     hist_approval = restored.get("approval_evidence_ref")
-    if not hist_approval:
-        return {"status": "FAIL", "reason": "RESTORED_LOCK_MISSING_APPROVAL_EVIDENCE: Cannot restore historical lock lacking approval evidence"}
 
-    hist_ci = restored.get("ci_verification_status", "NOT_VERIFIABLE")
+    hist_ci = restored.get("ci_verification_status")
+    if not hist_ci or hist_ci not in ("PASS", "NOT_VERIFIABLE"):
+        hist_ci = "NOT_VERIFIABLE"
+
+    # Rollback authorization verification
+    if require_authorization and not rollback_authorization_ref:
+        return {"status": "FAIL", "reason": "MISSING_ROLLBACK_AUTHORIZATION: Rollback requires explicit Owner authorization"}
+
+    if rollback_authorization_ref:
+        auth_file = Path(rollback_authorization_ref)
+        if not auth_file.is_absolute():
+            auth_file = (project_root / auth_file).resolve()
+        if not auth_file.exists():
+            return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_NOT_FOUND: '{rollback_authorization_ref}' does not exist"}
+        try:
+            auth_data = json.loads(auth_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return {"status": "FAIL", "reason": f"INVALID_ROLLBACK_AUTHORIZATION_JSON: {exc}"}
+
+        from tools.validate_approval_contract import FORBIDDEN_SELF_APPROVAL_ROLES
+        actor_role = str(auth_data.get("actor_role") or "").strip().upper()
+        reviewer_type = str(auth_data.get("reviewer_type") or "").strip().upper()
+        if actor_role in FORBIDDEN_SELF_APPROVAL_ROLES or reviewer_type in FORBIDDEN_SELF_APPROVAL_ROLES:
+            return {"status": "FAIL", "reason": "AGENT_SELF_APPROVAL_FORBIDDEN: Coding agent cannot authorize lock rollback"}
+
+        decision_scope = auth_data.get("decision_scope") or auth_data.get("approval_scope")
+        if decision_scope not in ("LOCK_ROLLBACK", "STANDARDS_LOCK_ROLLBACK", "OWNER_MANDATORY"):
+            return {"status": "FAIL", "reason": f"INVALID_ROLLBACK_AUTHORIZATION_SCOPE: Expected LOCK_ROLLBACK, got '{decision_scope}'"}
+
+        target_tag = auth_data.get("target_tag") or (auth_data.get("commit_bindings", {}).get("standards", {}).get("target_tag"))
+        if target_tag and target_tag != restored["tag"]:
+            return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_TARGET_MISMATCH: Target tag '{target_tag}' != '{restored['tag']}'"}
+
+        target_commit = auth_data.get("peeled_commit") or (auth_data.get("commit_bindings", {}).get("standards", {}).get("peeled_commit"))
+        if target_commit and target_commit != restored["peeled_commit"]:
+            return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_TARGET_MISMATCH: Target commit '{target_commit}' != '{restored['peeled_commit']}'"}
+
+        content_sha = auth_data.get("content_sha256")
+        if content_sha and not re.match(r"^(sha256:)?[0-9a-f]{64}$", str(content_sha)):
+            return {"status": "FAIL", "reason": f"INVALID_ROLLBACK_AUTHORIZATION_DIGEST: '{content_sha}'"}
 
     rolled_back_lock = {
         "schema_version": "1.0.0",
@@ -3714,9 +3759,12 @@ def rollback_lock(
         "locked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "lock_reason": f"Rolled back to {restored['tag']}",
         "approval_evidence_ref": hist_approval,
+        "rollback_authorization_ref": str(rollback_authorization_ref) if rollback_authorization_ref else None,
         "ci_verification_status": hist_ci,
         "previous_locks": prev_locks,
     }
+    if restored.get("ci_run_id") is not None:
+        rolled_back_lock["ci_run_id"] = restored["ci_run_id"]
 
     # Transactional update to standards.lock.json and engineering-manifest.yaml
     manifest_standards = {

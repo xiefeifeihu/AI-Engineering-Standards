@@ -134,6 +134,19 @@ AI-HUB H1 的只读实例（仅供核验，不是其他工程默认值）：v2.1
 - 消费端工作区必须为 CLEAN 才能将 `CONSUMER_VERIFICATION_STATUS` 标记为 PASS；DIRTY 或 HEAD 不可读时返回 NOT_VERIFIABLE，并使影响分析保持 PARTIAL。静态扫描必须正确跳过多行 HTML 注释，只忽略以明确历史标签开头的历史说明，并报告 Windows 盘符路径与 UNC 绝对路径的文件/行号。
 - verify-lock 负责 Lock、Manifest 和官方 Tag 的精确绑定，不将 compatibility_matrix.yaml 变成第二个锁；矩阵中消费工程自己的兼容范围由工程级适配检查核对。
 
+### 4.3 历史锁定安全回滚契约（F11）
+
+- 历史 Lock（如初始引导态）`approval_evidence_ref: null` 属于合规历史事实，Schema 与工具均允许直接回滚，不得因此报错阻断。
+- 执行回滚必须提供当前 Owner 回滚授权：`python tools/standards_sync/cli.py rollback --project-root . --rollback-authorization-ref <PATH>`。
+- 历史 Lock 若缺少 CI 状态记录，回滚后严格标记为 `NOT_VERIFIABLE`，严禁假定或自动回退为 PASS。
+- 回滚过程原子更新 `standards.lock.json` 与 `engineering-manifest.yaml`；任一失败完全还原，保留 `previous_locks` 完整历史审计栈。
+
+### 4.4 方案 C 单 Owner 双 Commit PR Merge 审批集成（F12）
+
+- 在消费端 PR 审批与晋升中，通过 `commit_bindings` 显式解耦消费端候选 HEAD 与 Standards Peeled Commit，杜绝两者混淆。
+- 审批凭证通过 GitHub API 读取 PR Merge 事件，强制核验 `merged=true`、`merged_by=Owner`、`base.ref=main`、`head.sha=consumer.candidate_commit`。
+- 编程智能体严禁参与或自批审批（`CODING_AGENT` 角色强阻断）；废除未实现的 `SIGNED_OWNER_EVENT` 伪枚举。
+
 ## 5. 每次任务启动与工具调用顺序
 
 在消费工程根目录运行：

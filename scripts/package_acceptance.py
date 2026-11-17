@@ -201,17 +201,25 @@ def package_acceptance(
         manifest_data["version"] = v_ver
         manifest_changed = True
 
+    original_manifest_bytes = manifest_path.read_bytes()
     if manifest_changed:
-        manifest_path.write_text(json.dumps(manifest_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        tmp_manifest = manifest_path.with_suffix(f".tmp_{os.getpid()}_{int(time.time() * 1000)}")
+        tmp_manifest.write_text(json.dumps(manifest_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.replace(tmp_manifest, manifest_path)
 
-    # Validate manifest and files
-    validated_manifest, validated_entries = validate_acceptance_manifest(
-        source_acceptance,
-        expected_task_id=task_id,
-        expected_version=v_ver,
-        expected_run_id=effective_run_id,
-        repo_root=repo_root,
-    )
+    try:
+        # Validate manifest and files
+        validated_manifest, validated_entries = validate_acceptance_manifest(
+            source_acceptance,
+            expected_task_id=task_id,
+            expected_version=v_ver,
+            expected_run_id=effective_run_id,
+            repo_root=repo_root,
+        )
+    except Exception:
+        if manifest_changed:
+            manifest_path.write_bytes(original_manifest_bytes)
+        raise
 
     pkg_dir = repo_root / ".artifacts" / "packages"
     pkg_dir.mkdir(parents=True, exist_ok=True)
