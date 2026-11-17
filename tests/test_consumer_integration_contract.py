@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import tempfile
 import unittest
+import zipfile
 import yaml
 from pathlib import Path
 
@@ -1950,6 +1953,418 @@ standards_validation:
         status, errors = parse_runner_test_log(log, commit, 10, 10)
         self.assertEqual(status, "FAILED")
         self.assertTrue(any("CONSUMER_CI_RAW_LOG_CONTAINS_FAILURE" in e for e in errors), errors)
+
+    def test_std020_f07_document_index_frontmatter_consistency(self) -> None:
+        """F07: Verify DOCUMENT-INDEX.md entries match actual document YAML frontmatter status and approval_status."""
+        index_file = ROOT / "docs" / "DOCUMENT-INDEX.md"
+        self.assertTrue(index_file.exists(), f"Missing index: {index_file}")
+        index_text = index_file.read_text(encoding="utf-8")
+        entries = []
+        for line in index_text.splitlines():
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) >= 7 and parts[1].isdigit():
+                doc_type = parts[2].replace("`", "").strip()
+                m = re.search(r"\[([^\]]+)\]", parts[3])
+                path_str = m.group(1).replace("`", "").strip() if m else parts[3].replace("`", "").strip()
+                doc_id = parts[4].replace("`", "").strip()
+                status = parts[5].replace("`", "").strip()
+                entries.append((doc_type, path_str, doc_id, status))
+
+        self.assertEqual(len(entries), 12, f"Expected exactly 12 primary entrypoints in index, found {len(entries)}")
+
+        for doc_type, path_str, doc_id, status in entries:
+            target_path = ROOT / path_str
+            self.assertTrue(target_path.exists(), f"Primary entrypoint document does not exist: {target_path}")
+            content = target_path.read_text(encoding="utf-8")
+            fm_match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+            self.assertIsNotNone(fm_match, f"Document {path_str} missing YAML frontmatter")
+            fm = yaml.safe_load(fm_match.group(1))
+
+            self.assertTrue(fm.get("primary_entrypoint"), f"{path_str} primary_entrypoint is not True")
+            self.assertEqual(fm.get("document_type"), doc_type, f"{path_str} document_type mismatch")
+            self.assertEqual(fm.get("document_id"), doc_id, f"{path_str} document_id mismatch")
+            self.assertEqual(fm.get("status"), status, f"{path_str} status '{fm.get('status')}' != index '{status}'")
+            self.assertEqual(fm.get("approval_status"), "IN_REVIEW", f"{path_str} approval_status '{fm.get('approval_status')}' != IN_REVIEW")
+            self.assertEqual(status, "IN_REVIEW", f"{path_str} index status must be IN_REVIEW")
+
+    def test_std020_historical_snapshot_negative_1_local_head_mismatch_at_capture(self) -> None:
+        """1. 历史快照 local_head 与 captured_at 对应的真实历史 Commit 不一致 -> BLOCK (LOCAL_HEAD_MISMATCH)"""
+        from unittest.mock import patch
+        from tools import generate_engineering_baseline as baseline_gen
+        from tools import generate_handoff as handoff_gen
+
+        recorded_local = "a" * 40
+        different_commit_at_capture = "f" * 40
+        remote_sha = "b" * 40
+        captured_at = "2020-01-01T00:00:00Z"
+        tick = chr(96)
+        baseline_text = (
+            "## 8. Git 分支及 Commit 身份 (" + tick + "git_identity" + tick + ")\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{recorded_local}{tick}\n"
+            f"- **远端 main ({tick}remote_main_head{tick})**：{tick}{remote_sha}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 9. 最近 CI 事实\n"
+            "### 19.3 Std-019 正式发布收口事实与治理追踪\n"
+            f"- **发布状态**：{tick}RELEASE_STATUS=RELEASED{tick}\n"
+            f"- **Git 快照观测时间**：{tick}{captured_at}{tick}\n"
+        )
+        handoff_text = (
+            "TASK_ID=Std-019-V3-0-0-POST-RELEASE-CLOSEOUT\n"
+            "STATUS=COMPLETED\n"
+            f"CAPTURED_AT={captured_at}\n"
+            "## 1. 当前 Git 状态与分支身份 (git_state)\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{recorded_local}{tick}\n"
+            f"- **远端 main ({tick}remote_head{tick})**：{tick}{remote_sha}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 2. 当前 Standards 锁定\n"
+        )
+        for module, kind, content in ((baseline_gen, "baseline", baseline_text), (handoff_gen, "handoff", handoff_text)):
+            with self.subTest(generator=kind):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    if kind == "baseline":
+                        (root / "engineering-manifest.yaml").write_text("project:\n  id: ai-engineering-standards\n", encoding="utf-8")
+                    def simulated_run_git(repo, args, **kwargs):
+                        if args and args[0] == "merge-base":
+                            return 0, ""
+                        if args and args[0] == "log":
+                            if args[-1] == "branch-tip-sha":
+                                return 0, different_commit_at_capture
+                            return 0, remote_sha
+                        return 0, ""
+                    with patch.object(module, "query_remote_main_head", return_value=remote_sha):
+                        with patch.object(module, "resolve_snapshot_branch_tip", return_value="branch-tip-sha"):
+                            with patch.object(module, "resolve_snapshot_branch_name", return_value="feature/test"):
+                                with patch.object(module, "run_git", side_effect=simulated_run_git):
+                                    errors = module.verify_git_snapshot_facts(root, content, kind)
+                self.assertTrue(any("LOCAL_HEAD_MISMATCH" in e for e in errors), errors)
+
+    def test_std020_historical_snapshot_negative_2_remote_main_mismatch_at_capture(self) -> None:
+        """2. recorded remote_main_head 与 captured_at 对应的真实远端历史 Commit 不一致 -> BLOCK (REMOTE_MAIN_MISMATCH)"""
+        from unittest.mock import patch
+        from tools import generate_engineering_baseline as baseline_gen
+        from tools import generate_handoff as handoff_gen
+
+        recorded_local = "a" * 40
+        recorded_remote = "b" * 40
+        different_remote_at_capture = "9" * 40
+        captured_at = "2020-01-01T00:00:00Z"
+        tick = chr(96)
+        baseline_text = (
+            "## 8. Git 分支及 Commit 身份 (" + tick + "git_identity" + tick + ")\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{recorded_local}{tick}\n"
+            f"- **远端 main ({tick}remote_main_head{tick})**：{tick}{recorded_remote}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 9. 最近 CI 事实\n"
+            "### 19.3 Std-019 正式发布收口事实与治理追踪\n"
+            f"- **发布状态**：{tick}RELEASE_STATUS=RELEASED{tick}\n"
+            f"- **Git 快照观测时间**：{tick}{captured_at}{tick}\n"
+        )
+        handoff_text = (
+            "TASK_ID=Std-019-V3-0-0-POST-RELEASE-CLOSEOUT\n"
+            "STATUS=COMPLETED\n"
+            f"CAPTURED_AT={captured_at}\n"
+            "## 1. 当前 Git 状态与分支身份 (git_state)\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{recorded_local}{tick}\n"
+            f"- **远端 main ({tick}remote_head{tick})**：{tick}{recorded_remote}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 2. 当前 Standards 锁定\n"
+        )
+        for module, kind, content in ((baseline_gen, "baseline", baseline_text), (handoff_gen, "handoff", handoff_text)):
+            with self.subTest(generator=kind):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    if kind == "baseline":
+                        (root / "engineering-manifest.yaml").write_text("project:\n  id: ai-engineering-standards\n", encoding="utf-8")
+                    def simulated_run_git(repo, args, **kwargs):
+                        if args and args[0] == "merge-base":
+                            return 0, ""
+                        if args and args[0] == "log":
+                            if args[-1] == "branch-tip-sha":
+                                return 0, recorded_local
+                            if args[-1] == recorded_remote:
+                                return 0, different_remote_at_capture
+                        return 0, ""
+                    with patch.object(module, "query_remote_main_head", return_value=recorded_remote):
+                        with patch.object(module, "resolve_snapshot_branch_tip", return_value="branch-tip-sha"):
+                            with patch.object(module, "resolve_snapshot_branch_name", return_value="feature/test"):
+                                with patch.object(module, "run_git", side_effect=simulated_run_git):
+                                    errors = module.verify_git_snapshot_facts(root, content, kind)
+                self.assertTrue(any("REMOTE_MAIN_MISMATCH" in e for e in errors), errors)
+
+    def test_std020_historical_snapshot_negative_3_unproven_ancestry_blocked(self) -> None:
+        """3. 仅有 RELEASED 或 COMPLETED 标记，但无法证明祖先关系 -> BLOCK (HISTORICAL_ANCESTRY_MISMATCH)"""
+        from unittest.mock import patch
+        from tools import generate_engineering_baseline as baseline_gen
+        from tools import generate_handoff as handoff_gen
+
+        recorded_local = "a" * 40
+        remote_sha = "b" * 40
+        captured_at = "2020-01-01T00:00:00Z"
+        tick = chr(96)
+        baseline_text = (
+            "## 8. Git 分支及 Commit 身份 (" + tick + "git_identity" + tick + ")\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{recorded_local}{tick}\n"
+            f"- **远端 main ({tick}remote_main_head{tick})**：{tick}{remote_sha}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 9. 最近 CI 事实\n"
+            "### 19.3 Std-019 正式发布收口事实与治理追踪\n"
+            f"- **发布状态**：{tick}RELEASE_STATUS=RELEASED{tick}\n"
+            f"- **Git 快照观测时间**：{tick}{captured_at}{tick}\n"
+        )
+        handoff_text = (
+            "TASK_ID=Std-019-V3-0-0-POST-RELEASE-CLOSEOUT\n"
+            "STATUS=COMPLETED\n"
+            f"CAPTURED_AT={captured_at}\n"
+            "## 1. 当前 Git 状态与分支身份 (git_state)\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{recorded_local}{tick}\n"
+            f"- **远端 main ({tick}remote_head{tick})**：{tick}{remote_sha}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 2. 当前 Standards 锁定\n"
+        )
+        for module, kind, content in ((baseline_gen, "baseline", baseline_text), (handoff_gen, "handoff", handoff_text)):
+            with self.subTest(generator=kind):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    if kind == "baseline":
+                        (root / "engineering-manifest.yaml").write_text("project:\n  id: ai-engineering-standards\n", encoding="utf-8")
+                    def simulated_run_git(repo, args, **kwargs):
+                        if args and args[0] == "merge-base":
+                            return 1, ""  # confirmed non-ancestor
+                        if args and args[0] == "log":
+                            return 0, recorded_local
+                        return 0, ""
+                    with patch.object(module, "query_remote_main_head", return_value=remote_sha):
+                        with patch.object(module, "resolve_snapshot_branch_tip", return_value="branch-tip-sha"):
+                            with patch.object(module, "resolve_snapshot_branch_name", return_value="feature/test"):
+                                with patch.object(module, "run_git", side_effect=simulated_run_git):
+                                    errors = module.verify_git_snapshot_facts(root, content, kind)
+                self.assertTrue(any("HISTORICAL_ANCESTRY_MISMATCH" in e for e in errors), errors)
+
+    def test_std020_historical_snapshot_negative_4_git_history_unresolvable_not_verifiable(self) -> None:
+        """4. Git 对象不存在或历史无法读取 -> NOT_VERIFIABLE (CAPTURE_COMMIT_NOT_VERIFIABLE)"""
+        from unittest.mock import patch
+        from tools import generate_engineering_baseline as baseline_gen
+        from tools import generate_handoff as handoff_gen
+
+        recorded_local = "a" * 40
+        remote_sha = "b" * 40
+        captured_at = "2020-01-01T00:00:00Z"
+        tick = chr(96)
+        baseline_text = (
+            "## 8. Git 分支及 Commit 身份 (" + tick + "git_identity" + tick + ")\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{recorded_local}{tick}\n"
+            f"- **远端 main ({tick}remote_main_head{tick})**：{tick}{remote_sha}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 9. 最近 CI 事实\n"
+            "### 19.3 Std-019 正式发布收口事实与治理追踪\n"
+            f"- **发布状态**：{tick}RELEASE_STATUS=RELEASED{tick}\n"
+            f"- **Git 快照观测时间**：{tick}{captured_at}{tick}\n"
+        )
+        handoff_text = (
+            "TASK_ID=Std-019-V3-0-0-POST-RELEASE-CLOSEOUT\n"
+            "STATUS=COMPLETED\n"
+            f"CAPTURED_AT={captured_at}\n"
+            "## 1. 当前 Git 状态与分支身份 (git_state)\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{recorded_local}{tick}\n"
+            f"- **远端 main ({tick}remote_head{tick})**：{tick}{remote_sha}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 2. 当前 Standards 锁定\n"
+        )
+        for module, kind, content in ((baseline_gen, "baseline", baseline_text), (handoff_gen, "handoff", handoff_text)):
+            with self.subTest(generator=kind):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    if kind == "baseline":
+                        (root / "engineering-manifest.yaml").write_text("project:\n  id: ai-engineering-standards\n", encoding="utf-8")
+                    def simulated_run_git(repo, args, **kwargs):
+                        if args and args[0] == "merge-base":
+                            return 0, ""
+                        if args and args[0] == "log":
+                            return 128, "fatal: bad object"
+                        return 0, ""
+                    with patch.object(module, "query_remote_main_head", return_value=remote_sha):
+                        with patch.object(module, "resolve_snapshot_branch_tip", return_value="branch-tip-sha"):
+                            with patch.object(module, "resolve_snapshot_branch_name", return_value="feature/test"):
+                                with patch.object(module, "run_git", side_effect=simulated_run_git):
+                                    errors = module.verify_git_snapshot_facts(root, content, kind)
+                self.assertTrue(any("CAPTURE_COMMIT_NOT_VERIFIABLE" in e for e in errors), errors)
+
+    def test_std020_historical_snapshot_positive_5_normal_ancestry_pass(self) -> None:
+        """5. 正常历史祖先快照仍然 PASS -> errors == []"""
+        from unittest.mock import patch
+        from tools import generate_engineering_baseline as baseline_gen
+        from tools import generate_handoff as handoff_gen
+
+        recorded_local = "a" * 40
+        remote_sha = "b" * 40
+        captured_at = "2020-01-01T00:00:00Z"
+        tick = chr(96)
+        baseline_text = (
+            "## 8. Git 分支及 Commit 身份 (" + tick + "git_identity" + tick + ")\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{recorded_local}{tick}\n"
+            f"- **远端 main ({tick}remote_main_head{tick})**：{tick}{remote_sha}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 9. 最近 CI 事实\n"
+            "### 19.3 Std-019 正式发布收口事实与治理追踪\n"
+            f"- **发布状态**：{tick}RELEASE_STATUS=RELEASED{tick}\n"
+            f"- **Git 快照观测时间**：{tick}{captured_at}{tick}\n"
+        )
+        handoff_text = (
+            "TASK_ID=Std-019-V3-0-0-POST-RELEASE-CLOSEOUT\n"
+            "STATUS=COMPLETED\n"
+            f"CAPTURED_AT={captured_at}\n"
+            "## 1. 当前 Git 状态与分支身份 (git_state)\n"
+            f"- **当前分支 ({tick}branch{tick})**：{tick}old-branch{tick}\n"
+            f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{recorded_local}{tick}\n"
+            f"- **远端 main ({tick}remote_head{tick})**：{tick}{remote_sha}{tick}\n"
+            f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+            "## 2. 当前 Standards 锁定\n"
+        )
+        for module, kind, content in ((baseline_gen, "baseline", baseline_text), (handoff_gen, "handoff", handoff_text)):
+            with self.subTest(generator=kind):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    if kind == "baseline":
+                        (root / "engineering-manifest.yaml").write_text("project:\n  id: ai-engineering-standards\n", encoding="utf-8")
+                    def simulated_run_git(repo, args, **kwargs):
+                        if args and args[0] == "merge-base":
+                            return 0, ""
+                        if args and args[0] == "log":
+                            if args[-1] == "branch-tip-sha":
+                                return 0, recorded_local
+                            if args[-1] == remote_sha:
+                                return 0, remote_sha
+                        return 0, ""
+                    with patch.object(module, "query_remote_main_head", return_value=remote_sha):
+                        with patch.object(module, "resolve_snapshot_branch_tip", return_value="branch-tip-sha"):
+                            with patch.object(module, "resolve_snapshot_branch_name", return_value="feature/test"):
+                                with patch.object(module, "run_git", side_effect=simulated_run_git):
+                                    errors = module.verify_git_snapshot_facts(root, content, kind)
+                self.assertEqual(errors, [], errors)
+
+
+class PackageAcceptanceContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp_dir.name)
+        (self.root / "VERSION").write_text("3.0.0\n", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self.tmp_dir.cleanup()
+
+    def _setup_valid_acceptance(self, task_id="TEST-TASK", version="3.0.0", run_id="run-123"):
+        acc_dir = self.root / ".artifacts" / "acceptance" / task_id / f"v{version}"
+        acc_dir.mkdir(parents=True, exist_ok=True)
+        doc = acc_dir / "report.md"
+        doc.write_text("# Test Report\n", encoding="utf-8")
+        doc_sha = hashlib.sha256(doc.read_bytes()).hexdigest()
+        manifest = {
+            "task_id": task_id,
+            "version": f"v{version}",
+            "run_id": run_id,
+            "created_at": "2026-11-17T02:00:00Z",
+            "files": [
+                {
+                    "path": "report.md",
+                    "size": doc.stat().st_size,
+                    "sha256": doc_sha,
+                }
+            ],
+        }
+        (acc_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return acc_dir, manifest
+
+    def test_01_valid_manifest_packaging_pass(self) -> None:
+        from scripts.package_acceptance import package_acceptance
+        acc_dir, _ = self._setup_valid_acceptance()
+        res = package_acceptance("TEST-TASK", version="3.0.0", run_id="run-123", repo_root=self.root)
+        self.assertEqual(res["status"], "PASS")
+        self.assertEqual(res["task_id"], "TEST-TASK")
+        self.assertEqual(res["version"], "v3.0.0")
+        self.assertEqual(res["run_id"], "run-123")
+        self.assertEqual(res["files_verified"], 1)
+        zip_path = self.root / res["zip_path"]
+        sha_path = self.root / res["sha256_path"]
+        self.assertTrue(zip_path.exists())
+        self.assertTrue(sha_path.exists())
+        self.assertIn(res["zip_sha256"], sha_path.read_text(encoding="utf-8"))
+
+    def test_02_manifest_missing_run_id_rejected(self) -> None:
+        from scripts.package_acceptance import validate_acceptance_manifest
+        acc_dir, manifest = self._setup_valid_acceptance()
+        del manifest["run_id"]
+        (acc_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(ValueError) as ctx:
+            validate_acceptance_manifest(acc_dir, expected_task_id="TEST-TASK", expected_version="3.0.0", repo_root=self.root)
+        self.assertIn("missing required field: 'run_id'", str(ctx.exception))
+
+    def test_03_manifest_missing_task_id_rejected(self) -> None:
+        from scripts.package_acceptance import validate_acceptance_manifest
+        acc_dir, manifest = self._setup_valid_acceptance()
+        del manifest["task_id"]
+        (acc_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(ValueError) as ctx:
+            validate_acceptance_manifest(acc_dir, expected_task_id="TEST-TASK", expected_version="3.0.0", repo_root=self.root)
+        self.assertIn("missing required field: 'task_id'", str(ctx.exception))
+
+    def test_04_manifest_task_id_mismatch_rejected(self) -> None:
+        from scripts.package_acceptance import validate_acceptance_manifest
+        acc_dir, manifest = self._setup_valid_acceptance()
+        with self.assertRaises(ValueError) as ctx:
+            validate_acceptance_manifest(acc_dir, expected_task_id="OTHER-TASK", expected_version="3.0.0", repo_root=self.root)
+        self.assertIn("task_id mismatch", str(ctx.exception))
+
+    def test_05_manifest_version_mismatch_rejected(self) -> None:
+        from scripts.package_acceptance import validate_acceptance_manifest
+        acc_dir, manifest = self._setup_valid_acceptance(version="2.0.0")
+        with self.assertRaises(ValueError) as ctx:
+            validate_acceptance_manifest(acc_dir, expected_task_id="TEST-TASK", expected_version="3.0.0", repo_root=self.root)
+        self.assertIn("version mismatch", str(ctx.exception))
+
+    def test_06_run_id_persisted_to_manifest(self) -> None:
+        from scripts.package_acceptance import package_acceptance
+        acc_dir, manifest = self._setup_valid_acceptance(run_id="old-run")
+        res = package_acceptance("TEST-TASK", version="3.0.0", run_id="new-ci-run-999", repo_root=self.root)
+        self.assertEqual(res["status"], "PASS")
+        self.assertEqual(res["run_id"], "new-ci-run-999")
+        updated_m = json.loads((acc_dir / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(updated_m["run_id"], "new-ci-run-999")
+        zip_p = self.root / res["zip_path"]
+        with zipfile.ZipFile(zip_p, "r") as zf:
+            zip_m = json.loads(zf.read("manifest.json").decode("utf-8"))
+        self.assertEqual(zip_m["run_id"], "new-ci-run-999")
+
+    def test_07_file_sha_mismatch_rejected(self) -> None:
+        from scripts.package_acceptance import validate_acceptance_manifest
+        acc_dir, manifest = self._setup_valid_acceptance()
+        manifest["files"][0]["sha256"] = "0" * 64
+        (acc_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(ValueError) as ctx:
+            validate_acceptance_manifest(acc_dir, expected_task_id="TEST-TASK", expected_version="3.0.0", repo_root=self.root)
+        self.assertIn("Integrity mismatch", str(ctx.exception))
+
+    def test_08_zip_extraction_integrity_verification(self) -> None:
+        from scripts.package_acceptance import package_acceptance, sha256_file as real_sha256_file
+        from unittest.mock import patch
+        acc_dir, _ = self._setup_valid_acceptance()
+        def mocked_sha256(path):
+            if ".verify_extract" in str(path):
+                return "0" * 64
+            return real_sha256_file(path)
+        with patch("scripts.package_acceptance.sha256_file", side_effect=mocked_sha256):
+            with self.assertRaises(ValueError) as ctx:
+                package_acceptance("TEST-TASK", version="3.0.0", run_id="run-123", repo_root=self.root)
+            self.assertIn("Extraction verification failed", str(ctx.exception))
 
 
 if __name__ == "__main__":

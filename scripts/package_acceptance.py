@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 # coding: utf-8
-"""Unified Acceptance Evidence ZIP Packager for AI-Engineering-Standards (STD-016 / STD-019 / STD-034).
+"""Unified Acceptance Evidence ZIP Packager for AI-Engineering-Standards (STD-016 / STD-019 / STD-020 / STD-034).
 
 - Single authoritative acceptance packager for `AI-Engineering-Standards`.
 - Manifest-driven packaging: every file listed in `manifest.json` must exist,
   have size > 0 matching `size`, and match `sha256`.
-- `manifest.json` must NOT contain the final ZIP's own SHA256.
+- Enforces required manifest metadata: `task_id`, `version`, `run_id`, `created_at` (ISO 8601 with timezone), and `files`.
+- Ensures parameter consistency between CLI arguments and manifest data.
+- Persists `run_id` into `manifest.json` so the archive contains the authoritative run_id.
+- `manifest.json` must NOT contain the final ZIP's own SHA256 or self-reference.
 - Formal `output_directory` is strictly pinned to `.artifacts/packages/`.
 - Computes external `<zip_name>.sha256` after ZIP creation and performs real
   extraction + SHA256 verification.
@@ -13,14 +16,13 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import sys
 import time
 from typing import Any
@@ -48,13 +50,19 @@ def sha256_file(path: Path) -> str:
 def normalize_version(version: str | None, repo_root: Path = REPO_ROOT) -> tuple[str, str]:
     if not version:
         v_file = repo_root / "VERSION"
-        version = v_file.read_text(encoding="utf-8-sig").strip() if v_file.exists() else "2.5.0"
+        version = v_file.read_text(encoding="utf-8-sig").strip() if v_file.exists() else "3.0.0"
     clean = str(version).strip()
     raw_ver = clean[1:] if clean.lower().startswith("v") else clean
     return raw_ver, f"v{raw_ver}"
 
 
-def validate_acceptance_manifest(source_acceptance: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def validate_acceptance_manifest(
+    source_acceptance: Path,
+    expected_task_id: str | None = None,
+    expected_version: str | None = None,
+    expected_run_id: str | None = None,
+    repo_root: Path = REPO_ROOT,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if not source_acceptance.exists() or not source_acceptance.is_dir():
         raise FileNotFoundError(f"Acceptance directory not found: {source_acceptance}")
     illegal_zips = [
@@ -76,6 +84,42 @@ def validate_acceptance_manifest(source_acceptance: Path) -> tuple[dict[str, Any
         if k in manifest_data and manifest_data[k]:
             raise ValueError(f"Manifest must not contain final ZIP SHA256 self-reference key: {k}")
 
+    # Required field: task_id
+    task_id = manifest_data.get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ValueError("Manifest missing required field: 'task_id'")
+    if expected_task_id and task_id.strip() != expected_task_id.strip():
+        raise ValueError(f"Manifest task_id mismatch: '{task_id}' != expected '{expected_task_id}'")
+
+    # Required field: version
+    version = manifest_data.get("version")
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError("Manifest missing required field: 'version'")
+    if expected_version:
+        _, exp_v = normalize_version(expected_version, repo_root)
+        _, act_v = normalize_version(version, repo_root)
+        if exp_v != act_v:
+            raise ValueError(f"Manifest version mismatch: '{version}' != expected '{expected_version}'")
+
+    # Required field: run_id
+    run_id = manifest_data.get("run_id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise ValueError("Manifest missing required field: 'run_id'")
+    if expected_run_id and run_id.strip() != expected_run_id.strip():
+        raise ValueError(f"Manifest run_id mismatch: '{run_id}' != expected '{expected_run_id}'")
+
+    # Required field: created_at (ISO 8601 with timezone)
+    created_at = manifest_data.get("created_at")
+    if not isinstance(created_at, str) or not created_at.strip():
+        raise ValueError("Manifest missing required field: 'created_at'")
+    try:
+        dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            raise ValueError("Timezone offset missing")
+    except Exception as exc:
+        raise ValueError(f"Invalid created_at: must be valid ISO 8601 with timezone ({exc})")
+
+    # Required field: files
     files_list = manifest_data.get("files")
     if not isinstance(files_list, list) or not files_list:
         raise ValueError("manifest.json must contain a non-empty 'files' list")
@@ -93,8 +137,15 @@ def validate_acceptance_manifest(source_acceptance: Path) -> tuple[dict[str, Any
         norm_rel = rel_raw.replace("\\", "/").lstrip("/")
         if norm_rel == "manifest.json":
             raise ValueError("Manifest 'files' must not self-reference manifest.json")
+        if ".." in Path(norm_rel).parts:
+            raise ValueError(f"Forbidden path traversal in manifest: '{norm_rel}'")
+
         src_file = (source_acceptance / norm_rel).resolve()
-        src_file.relative_to(resolved_root)
+        try:
+            src_file.relative_to(resolved_root)
+        except ValueError:
+            raise ValueError(f"Path outside acceptance directory: '{norm_rel}'")
+
         if not src_file.exists() or not src_file.is_file():
             raise FileNotFoundError(f"Manifest listed file does not exist: {src_file}")
         actual_size = src_file.stat().st_size
@@ -110,11 +161,57 @@ def validate_acceptance_manifest(source_acceptance: Path) -> tuple[dict[str, Any
     return manifest_data, validated_entries
 
 
-def package_acceptance(task_id: str, version: str | None = None, run_id: str | None = None, repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+def package_acceptance(
+    task_id: str,
+    version: str | None = None,
+    run_id: str | None = None,
+    repo_root: Path = REPO_ROOT,
+) -> dict[str, Any]:
     raw_ver, v_ver = normalize_version(version, repo_root)
-    run_id = run_id or f"run-{int(time.time())}"
     source_acceptance = repo_root / ".artifacts" / "acceptance" / task_id / v_ver
-    manifest_data, validated_entries = validate_acceptance_manifest(source_acceptance)
+    if not source_acceptance.exists() or not source_acceptance.is_dir():
+        raise FileNotFoundError(f"Acceptance directory not found: {source_acceptance}")
+
+    manifest_path = source_acceptance / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"manifest.json not found in {source_acceptance}")
+
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    if not isinstance(manifest_data, dict):
+        raise ValueError("manifest.json root must be a JSON object")
+
+    # run_id resolution and persistence
+    if run_id and str(run_id).strip():
+        effective_run_id = str(run_id).strip()
+    else:
+        existing_run_id = manifest_data.get("run_id")
+        if isinstance(existing_run_id, str) and existing_run_id.strip():
+            effective_run_id = existing_run_id.strip()
+        else:
+            effective_run_id = f"run-{int(time.time())}"
+
+    manifest_changed = False
+    if manifest_data.get("run_id") != effective_run_id:
+        manifest_data["run_id"] = effective_run_id
+        manifest_changed = True
+    if not manifest_data.get("task_id"):
+        manifest_data["task_id"] = task_id
+        manifest_changed = True
+    if not manifest_data.get("version"):
+        manifest_data["version"] = v_ver
+        manifest_changed = True
+
+    if manifest_changed:
+        manifest_path.write_text(json.dumps(manifest_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    # Validate manifest and files
+    validated_manifest, validated_entries = validate_acceptance_manifest(
+        source_acceptance,
+        expected_task_id=task_id,
+        expected_version=v_ver,
+        expected_run_id=effective_run_id,
+        repo_root=repo_root,
+    )
 
     pkg_dir = repo_root / ".artifacts" / "packages"
     pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -123,7 +220,7 @@ def package_acceptance(task_id: str, version: str | None = None, run_id: str | N
     sha_path = pkg_dir / f"{zip_name}.sha256"
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(source_acceptance / "manifest.json", arcname="manifest.json")
+        zf.write(manifest_path, arcname="manifest.json")
         for item in validated_entries:
             zf.write(item["abs_path"], arcname=item["path"])
 
@@ -140,13 +237,16 @@ def package_acceptance(task_id: str, version: str | None = None, run_id: str | N
             ext_f = extract_dir / item["path"]
             if not ext_f.exists() or ext_f.stat().st_size != item["size"] or sha256_file(ext_f).lower() != item["sha256"]:
                 raise ValueError(f"Extraction verification failed for {item['path']}")
+        ext_m = extract_dir / "manifest.json"
+        if not ext_m.exists() or sha256_file(ext_m).lower() != sha256_file(manifest_path).lower():
+            raise ValueError("Extraction verification failed for manifest.json")
     finally:
         shutil.rmtree(extract_dir, ignore_errors=True)
 
     return {
         "task_id": task_id,
         "version": v_ver,
-        "run_id": run_id,
+        "run_id": effective_run_id,
         "zip_path": str(zip_path.relative_to(repo_root)).replace("\\", "/"),
         "sha256_path": str(sha_path.relative_to(repo_root)).replace("\\", "/"),
         "zip_sha256": zip_sha,
