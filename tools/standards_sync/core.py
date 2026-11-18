@@ -14,7 +14,7 @@ import re
 import shutil
 import socket
 import subprocess
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -380,7 +380,7 @@ def run_git(repo_dir: Path, args: List[str], timeout: int = 10) -> Tuple[int, st
     except subprocess.TimeoutExpired as te:
         return 124, "", f"TIMEOUT: {te}"
     except Exception as e:
-        return 1, "", str(e)
+        return 128, "", f"GIT_EXECUTION_NOT_VERIFIABLE: {e}"
 
 
 def query_remote_ls_remote(
@@ -516,6 +516,92 @@ def is_canonical_repository_url(url: str, canonical_repo: str = DEFAULT_OFFICIAL
     return False
 
 
+def verify_official_historical_tag(
+    standards_root: Optional[Path],
+    tag: str,
+    tag_object_sha: str,
+    peeled_commit: str,
+    expected_version: Optional[str] = None,
+    repository: str = DEFAULT_OFFICIAL_REPO,
+    remote_url: Optional[str] = None,
+    simulate_offline: bool = False,
+    simulate_remote_refs: Optional[Dict[str, str]] = None,
+    timeout: int = 10,
+) -> Tuple[str, Optional[str]]:
+    """Verify an official historical tag against canonical remote.
+    Returns (status, error_message), where status is "PASS", "FAIL", or "NOT_VERIFIABLE".
+    """
+    if repository != DEFAULT_OFFICIAL_REPO:
+        return "FAIL", f"UNOFFICIAL_REPOSITORY_FORBIDDEN: {repository}"
+
+    if simulate_offline:
+        return "NOT_VERIFIABLE", "Simulated offline: remote unreachable"
+
+    if simulate_remote_refs is not None:
+        remote_refs = simulate_remote_refs
+    else:
+        target_url = remote_url or f"https://github.com/{repository}.git"
+        remote_status, remote_refs, remote_error = query_remote_ls_remote(
+            target_url,
+            cwd=standards_root if (standards_root and standards_root.exists()) else None,
+            timeout=timeout,
+        )
+        if remote_status != "PASS":
+            return "NOT_VERIFIABLE", f"Remote repository unreachable or query failed: {remote_error}"
+
+    tag_ref = f"refs/tags/{tag}"
+    peeled_ref = f"refs/tags/{tag}^{{}}"
+
+    remote_tag_obj = remote_refs.get(tag_ref)
+    if not remote_tag_obj:
+        return "FAIL", f"Tag '{tag}' not found on official remote"
+    if remote_tag_obj != tag_object_sha:
+        return "FAIL", f"Tag object SHA mismatch for '{tag}': expected {tag_object_sha}, got {remote_tag_obj}"
+
+    remote_peeled = remote_refs.get(peeled_ref)
+    if not remote_peeled:
+        return "FAIL", f"Tag '{tag}' is not an annotated tag on official remote (missing peeled commit)"
+    if remote_peeled != peeled_commit:
+        return "FAIL", f"Peeled commit SHA mismatch for '{tag}': expected {peeled_commit}, got {remote_peeled}"
+
+    remote_main = remote_refs.get("refs/heads/main")
+    if not remote_main:
+        return "NOT_VERIFIABLE", "Remote main ref not verifiable"
+
+    if not standards_root:
+        return "NOT_VERIFIABLE", "STANDARDS_ROOT_MISSING: standards_root is required to verify main ancestry and VERSION"
+    std_path = Path(standards_root)
+    if not std_path.exists() or not std_path.is_dir():
+        return "NOT_VERIFIABLE", f"STANDARDS_ROOT_MISSING: standards_root '{std_path}' does not exist"
+    rc_git, _, git_err = run_git(std_path, ["rev-parse", "--git-dir"])
+    if rc_git != 0:
+        return "NOT_VERIFIABLE", f"STANDARDS_ROOT_INVALID: '{std_path}' is not a valid git repository: {git_err}"
+
+    rc_cat, _, _ = run_git(std_path, ["cat-file", "-e", f"{peeled_commit}^{{commit}}"])
+    if rc_cat != 0:
+        return "NOT_VERIFIABLE", f"GIT_OBJECT_MISSING: Historical peeled commit {peeled_commit} not available locally for ancestry check"
+
+    rc_main, _, _ = run_git(std_path, ["cat-file", "-e", f"{remote_main}^{{commit}}"])
+    if rc_main != 0:
+        return "NOT_VERIFIABLE", f"GIT_OBJECT_MISSING: Remote main commit {remote_main} not available locally for ancestry check"
+
+    rc_anc, _, anc_err = run_git(std_path, ["merge-base", "--is-ancestor", peeled_commit, remote_main])
+    if rc_anc == 1:
+        return "FAIL", f"Historical commit {peeled_commit} is not on official main ancestry: {anc_err}"
+    if rc_anc != 0:
+        return "NOT_VERIFIABLE", f"Git ancestry check failed (exit {rc_anc}): {anc_err}"
+
+    target_expected_v = expected_version.lstrip("v") if expected_version else tag.lstrip("v")
+    rc_ver, ver_content, ver_err = run_git(std_path, ["show", f"{peeled_commit}:VERSION"])
+    if rc_ver != 0 or not ver_content.strip():
+        return "FAIL", f"VERSION_MISSING_OR_UNREADABLE: Cannot read VERSION at {peeled_commit}:VERSION ({ver_err})"
+    actual_v = ver_content.strip().lstrip("v")
+    if actual_v != target_expected_v:
+        return "FAIL", f"VERSION_MISMATCH: VERSION file at {peeled_commit} ('{actual_v}') != expected ('{target_expected_v}')"
+
+    return "PASS", None
+
+
 def discover_latest_official_tag(
     standards_root: Optional[Path] = None,
     remote_url: Optional[str] = None,
@@ -555,6 +641,7 @@ def discover_latest_official_tag(
 
     official_remote = f"https://github.com/{DEFAULT_OFFICIAL_REPO}.git"
     effective_remote = official_remote
+    discovery_mode = "REMOTE_OFFICIAL_DISCOVERY"
     if remote_url:
         supplied_remote = str(remote_url).rstrip("/")
         if is_canonical_repository_url(supplied_remote, repository):
@@ -568,6 +655,7 @@ def discover_latest_official_tag(
                     "reason": "UNOFFICIAL_REMOTE_FORBIDDEN: A local clone is accepted only when its origin is the canonical official repository",
                 }
             effective_remote = supplied_remote
+            discovery_mode = "LOCAL_CLONE_DISCOVERY"
         else:
             return {
                 "status": "BLOCK",
@@ -694,15 +782,21 @@ def discover_latest_official_tag(
                 "tag_refs": {name: sha for name, sha in refs.items() if name.startswith("refs/tags/")},
             }
         if remote_main:
-            rc_anc, _, _ = run_git(std_root, ["merge-base", "--is-ancestor", peeled_sha, remote_main])
-            if rc_anc != 0:
+            rc_anc, _, anc_err = run_git(std_root, ["merge-base", "--is-ancestor", peeled_sha, remote_main])
+            if rc_anc == 1:
                 return {
-                    "status": "BLOCK",
-                    "repository": repository,
-                    "tag": latest_tag,
-                    "peeled_commit": peeled_sha,
-                    "remote_main": remote_main,
+                    "status": "BLOCK", "repository": repository,
+                    "tag": latest_tag, "peeled_commit": peeled_sha,
+                    "remote_main": remote_main, "discovery_mode": discovery_mode,
                     "reason": f"NOT_ON_MAIN_BRANCH: Tag '{latest_tag}' commit {peeled_sha} is not an ancestor of main ({remote_main})",
+                }
+            if rc_anc not in (0, 1):
+                return {
+                    "status": "NOT_VERIFIABLE", "remote_latest_status": "NOT_VERIFIABLE",
+                    "repository": repository, "tag": latest_tag,
+                    "tag_object_sha": tag_obj_sha, "peeled_commit": peeled_sha,
+                    "remote_main": remote_main, "discovery_mode": discovery_mode,
+                    "reason": f"MAIN_ANCESTRY_NOT_VERIFIABLE: local object graph unavailable (exit_code={rc_anc}, detail={anc_err})",
                 }
 
     ci_status, ci_run_id, ci_detail = check_remote_main_ci(
@@ -738,19 +832,20 @@ def discover_latest_official_tag(
             "tag_refs": {name: sha for name, sha in refs.items() if name.startswith("refs/tags/")},
         }
 
+    # A clone's origin URL proves repository identity, not live official main state.
+    local_only = discovery_mode == "LOCAL_CLONE_DISCOVERY"
     return {
-        "status": "PASS",
-        "remote_latest_status": "PASS",
-        "repository": repository,
-        "version": latest_version,
-        "tag": latest_tag,
-        "tag_object_sha": tag_obj_sha,
-        "peeled_commit": peeled_sha,
+        "status": "NOT_VERIFIABLE" if local_only else "PASS",
+        "remote_latest_status": "NOT_VERIFIABLE" if local_only else "PASS",
+        "repository": repository, "version": latest_version, "tag": latest_tag,
+        "tag_object_sha": tag_obj_sha, "peeled_commit": peeled_sha,
         "remote_main": remote_main,
-        "ci_verification_status": ci_status,
-        "ci_run_id": ci_run_id,
-        "ci_detail": ci_detail,
-        "all_tags": sorted_tags,
+        "observed_main_source": "LOCAL_CLONE_REFS" if local_only else "CANONICAL_REMOTE_REFS",
+        "discovery_mode": discovery_mode,
+        "canonical_remote_verified": not local_only,
+        "reason": "LOCAL_CLONE_ONLY: canonical remote refs/main not queried" if local_only else None,
+        "ci_verification_status": ci_status, "ci_run_id": ci_run_id,
+        "ci_detail": ci_detail, "all_tags": sorted_tags,
         "tag_refs": {name: sha for name, sha in refs.items() if name.startswith("refs/tags/")},
     }
 
@@ -762,8 +857,10 @@ def verify_project_lock(
     allow_offline: bool = True,
     simulate_offline: bool = False,
 ) -> Dict[str, Any]:
-    """Verify project's standards.lock.json, cross-check against engineering-manifest.yaml
-    and compatibility_matrix.yaml, and verify Tag object & Peeled Commit integrity.
+    """Verify exact Lock and Manifest binding and official Tag integrity.
+
+    compatibility_matrix.yaml is a compatibility description and must not
+    become a second authoritative Standards lock source (STD-034 section 4.1).
     """
     project_root = project_root.resolve()
     std_root = resolve_standards_root(standards_root)
@@ -1349,6 +1446,85 @@ def compare_versions_and_artifacts(
     }
 
 
+def scan_consumer_guidance_files(project_root: Path) -> Dict[str, Any]:
+    """Scan current agent guidance for nonportable Standards pins with line evidence."""
+    required = ("AGENTS.md", "CLAUDE.md")
+    guidance = ("AGENTS.md", "CLAUDE.md", "README.md")
+    version_pattern = re.compile(
+        r"(?i)\bstandards?\b[^\r\n]{0,120}\bv?\d+\.\d+\.\d+\b"
+        r"|\bv?\d+\.\d+\.\d+\b[^\r\n]{0,80}\bstandards?\b"
+    )
+    sha_pattern = re.compile(r"\b[0-9a-f]{40}\b", re.I)
+    # Detect any Windows drive-rooted or UNC path; custom roots must not be missed.
+    machine_path = re.compile(r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:[\\/]|\\\\[^\\/\s]+[\\/][^\\/\s]+(?:[\\/]|$))")
+    historical_label = re.compile(
+        r"(?i)^\s*(?:historical(?:\s+(?:reference|baseline|version))?|历史(?:记录|版本(?:说明)?|说明|基线))\s*[:：]"
+    )
+    findings: List[Dict[str, Any]] = []
+    missing: List[str] = []
+    pinned: Set[str] = set()
+    for name in guidance:
+        path = project_root / name
+        if not path.is_file():
+            if name in required:
+                missing.append(name)
+                findings.append({
+                    "file": name, "line": 1, "code": "MISSING_REQUIRED_GUIDANCE_FILE",
+                    "excerpt": "Required agent guidance entrypoint does not exist",
+                })
+            continue
+
+        contents = path.read_text(encoding="utf-8", errors="replace")
+        visible_lines: List[Tuple[int, str]] = []
+        in_html_comment = False
+        for line_number, raw_line in enumerate(contents.splitlines(), 1):
+            visible = raw_line
+            if in_html_comment:
+                close_idx = visible.find("-->")
+                if close_idx < 0:
+                    continue
+                visible = visible[close_idx + 3:]
+                in_html_comment = False
+            while True:
+                open_idx = visible.find("<!--")
+                if open_idx < 0:
+                    break
+                close_idx = visible.find("-->", open_idx + 4)
+                if close_idx < 0:
+                    visible = visible[:open_idx]
+                    in_html_comment = True
+                    break
+                visible = visible[:open_idx] + visible[close_idx + 3:]
+            if visible.strip():
+                visible_lines.append((line_number, visible))
+
+        for line_number, line in visible_lines:
+            if historical_label.search(line):
+                continue
+            codes: List[str] = []
+            if version_pattern.search(line):
+                codes.append("HARDCODED_STANDARDS_VERSION")
+            if sha_pattern.search(line) and re.search(r"(?i)standards?|standard_commit|peeled_commit", line):
+                codes.append("HARDCODED_STANDARDS_COMMIT")
+            if machine_path.search(line):
+                codes.append("MACHINE_ABSOLUTE_PATH")
+            for code in codes:
+                findings.append({
+                    "file": name, "line": line_number, "code": code, "excerpt": line.strip()[:180]
+                })
+                pinned.add(name)
+
+        visible_text = "\n".join(line for _, line in visible_lines)
+        if name in required and "standards.lock.json" not in visible_text:
+            findings.append({
+                "file": name, "line": 1, "code": "MISSING_LOCK_REFERENCE",
+                "excerpt": "Agent entrypoint does not reference standards.lock.json",
+            })
+            pinned.add(name)
+    return {"missing": missing, "hardcoded": sorted(pinned), "findings": findings}
+
+
+
 def analyze_consumer_impact(
     project_root: Path,
     from_ref: Optional[str] = None,
@@ -1433,6 +1609,20 @@ def analyze_consumer_impact(
     breaking_items: List[str] = list(diff_report.get("breaking_changes") or [])
     migration_tasks: List[str] = []
 
+    # A consumer HEAD is distinct from the Standards source and target commits.
+    consumer_rc, consumer_commit, _ = run_git(project_root, ["rev-parse", "HEAD"])
+    consumer_git_verified = consumer_rc == 0 and bool(re.fullmatch(r"[0-9a-f]{40}", consumer_commit))
+    if not consumer_git_verified:
+        consumer_commit = "NOT_VERIFIABLE"
+    worktree_rc, porcelain, _ = run_git(project_root, ["status", "--porcelain"])
+    consumer_worktree_status = (
+        "NOT_VERIFIABLE" if worktree_rc != 0 else "DIRTY" if porcelain else "CLEAN"
+    )
+    if input_commit == "UNKNOWN" and eff_from:
+        old_rc, old_commit, _ = run_git(std_root, ["rev-parse", f"{eff_from}^{{commit}}"])
+        if old_rc == 0 and re.fullmatch(r"[0-9a-f]{40}", old_commit):
+            input_commit = old_commit
+
     # Check manifest
     manifest_path = project_root / "engineering-manifest.yaml"
     project_name = project_root.name
@@ -1493,31 +1683,16 @@ def analyze_consumer_impact(
         breaking_items.append("Missing mandatory primary entrypoint for ENGINEERING_BASELINE (docs/当前权威基线.md)")
         migration_tasks.append("Generate docs/当前权威基线.md using tools/generate_engineering_baseline.py and register in DOCUMENT-INDEX")
 
-    # Check mandatory agent entrypoints and version literals in all guidance files.
-    required_agent_docs = ("AGENTS.md", "CLAUDE.md")
-    guidance_docs = ("AGENTS.md", "CLAUDE.md", "README.md")
-    missing_agent_docs: List[str] = []
-    hardcoded_agent_docs: List[str] = []
-    standards_version_patterns = (
-        re.compile(r"(?i)\\bstandards?\\b[^\\r\\n]{0,120}\\bv?\\d+\\.\\d+\\.\\d+\\b"),
-        re.compile(r"(?i)\\bv?\\d+\\.\\d+\\.\\d+\\b[^\\r\\n]{0,80}\\bstandards?\\b"),
-    )
-    for guidance_name in guidance_docs:
-        guidance_path = project_root / guidance_name
-        if not guidance_path.exists():
-            if guidance_name in required_agent_docs:
-                missing_agent_docs.append(guidance_name)
-            continue
-        guidance_text = guidance_path.read_text(encoding="utf-8", errors="ignore")
-        if any(pattern.search(guidance_text) for pattern in standards_version_patterns):
-            hardcoded_agent_docs.append(guidance_name)
-
+    guidance_result = scan_consumer_guidance_files(project_root)
+    missing_agent_docs = guidance_result["missing"]
+    hardcoded_agent_docs = guidance_result["hardcoded"]
+    guidance_findings = guidance_result["findings"]
     if missing_agent_docs:
         breaking_items.append(f"Missing mandatory agent guidance entrypoints: {missing_agent_docs}")
         migration_tasks.append(f"Create required agent guidance entrypoints: {missing_agent_docs}")
     if hardcoded_agent_docs:
         migration_tasks.append(
-            f"Replace hardcoded Standards version strings in {hardcoded_agent_docs} with thin references to standards.lock.json"
+            f"Replace Standards pins, absolute paths, and obsolete guidance in {hardcoded_agent_docs} with references to standards.lock.json"
         )
 
     # Execute documentation collection and baseline verification; do not infer PASS from file presence.
@@ -1581,7 +1756,7 @@ def analyze_consumer_impact(
             "target_commit": target_commit,
             "command": "read AGENTS.md and scan Standards version literals",
             "executed_at": now_iso,
-            "raw_evidence": f"missing={missing_agent_docs}; hardcoded={hardcoded_agent_docs}",
+            "raw_evidence": json.dumps(guidance_result, ensure_ascii=False),
             "exit_code": 0 if ("AGENTS.md" not in missing_agent_docs and "AGENTS.md" not in hardcoded_agent_docs) else 1,
             "status": "UPGRADE_BLOCKED" if ("AGENTS.md" in missing_agent_docs or "AGENTS.md" in hardcoded_agent_docs) else "COMPATIBLE",
         },
@@ -1591,7 +1766,7 @@ def analyze_consumer_impact(
             "target_commit": target_commit,
             "command": "read CLAUDE.md and scan Standards version literals",
             "executed_at": now_iso,
-            "raw_evidence": f"missing={missing_agent_docs}; hardcoded={hardcoded_agent_docs}",
+            "raw_evidence": json.dumps(guidance_result, ensure_ascii=False),
             "exit_code": 0 if ("CLAUDE.md" not in missing_agent_docs and "CLAUDE.md" not in hardcoded_agent_docs) else 1,
             "status": "UPGRADE_BLOCKED" if ("CLAUDE.md" in missing_agent_docs or "CLAUDE.md" in hardcoded_agent_docs) else "COMPATIBLE",
         },
@@ -1670,7 +1845,7 @@ def analyze_consumer_impact(
     has_blocked_dim = any(dim["status"] == "UPGRADE_BLOCKED" for dim in dimensions_checked.values())
     has_unverified_dim = any(
         dim["status"] in ("NOT_RUN", "NOT_VERIFIABLE") for dim in dimensions_checked.values()
-    )
+    ) or not consumer_git_verified or consumer_worktree_status != "CLEAN"
     compatibility_status = (
         "UPGRADE_BLOCKED"
         if has_blocked_dim or breaking_items
@@ -1695,6 +1870,12 @@ def analyze_consumer_impact(
         "PROJECT": project_name,
         "INPUT_COMMIT": input_commit,
         "TARGET_COMMIT": target_commit,
+        "INPUT_STANDARDS_COMMIT": input_commit,
+        "TARGET_STANDARDS_COMMIT": target_commit,
+        "CONSUMER_COMMIT": consumer_commit,
+        "CONSUMER_WORKTREE_STATUS": consumer_worktree_status,
+        "CONSUMER_VERIFICATION_STATUS": "PASS" if consumer_git_verified and consumer_worktree_status == "CLEAN" else "NOT_VERIFIABLE",
+        "GUIDANCE_FINDINGS": guidance_findings,
         "BASELINE_STANDARD": eff_from,
         "TARGET_STANDARD": f"v{diff_report['to_version']}",
         "MIGRATION_REQUIRED": len(breaking_items) > 0 or len(migration_tasks) > 0,
@@ -3378,6 +3559,105 @@ def execute_transactional_two_file_update(
 
     finally:
         release_transaction_lock(project_root, lock_fd)
+
+
+def _verify_consumer_commit_and_content_bindings(
+    project_root: Path,
+    record: Dict[str, Any],
+    consumer_binding: Dict[str, Any],
+    standards_peeled_commit: str,
+    fail_status: str,
+    expected_consumer_commit: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Verify Consumer repository, 40-hex candidate_commit, commit readability in Consumer repo,
+    and canonical content_bindings digests bound strictly to consumer.candidate_commit (prefer_git=True).
+    Never falls back silently to working-tree files when Git objects are missing or unreadable.
+    """
+    cons_repo = str(consumer_binding.get("repository") or "").strip()
+    if not cons_repo:
+        return {"status": fail_status, "reason": "MISSING_CONSUMER_REPOSITORY: commit_bindings.consumer.repository is required"}
+
+    rec_repo = str(record.get("repository") or "").strip()
+    if rec_repo and cons_repo.lower() != rec_repo.lower():
+        return {"status": fail_status, "reason": f"CONSUMER_REPO_BINDING_MISMATCH: '{cons_repo}' != approval repository '{rec_repo}'"}
+
+    manifest_path = project_root / "engineering-manifest.yaml"
+    if not manifest_path.exists():
+        return {"status": "NOT_VERIFIABLE", "reason": f"MISSING_ENGINEERING_MANIFEST: {manifest_path} not found"}
+    try:
+        mf = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(mf, dict):
+            return {"status": fail_status, "reason": "INVALID_ENGINEERING_MANIFEST: must be a YAML mapping"}
+    except Exception as exc:
+        return {"status": fail_status, "reason": f"INVALID_ENGINEERING_MANIFEST: {exc}"}
+
+    proj_repo = str((mf.get("project") or {}).get("repository") or "").strip()
+    if not proj_repo:
+        return {"status": fail_status, "reason": "MISSING_MANIFEST_PROJECT_REPOSITORY: engineering-manifest.yaml missing project.repository"}
+    if cons_repo.lower() != proj_repo.lower():
+        return {"status": fail_status, "reason": f"CONSUMER_REPO_MISMATCH: commit_bindings.consumer.repository '{cons_repo}' != project.repository '{proj_repo}'"}
+
+    cons_commit = str(consumer_binding.get("candidate_commit") or "").strip()
+    if not re.match(r"^[0-9a-f]{40}$", cons_commit):
+        return {"status": fail_status, "reason": f"INVALID_CONSUMER_CANDIDATE_COMMIT: '{cons_commit}'"}
+    if cons_commit == standards_peeled_commit:
+        return {
+            "status": fail_status,
+            "reason": "PROMOTION_COMMIT_CONFUSION_FORBIDDEN: consumer.candidate_commit cannot equal standards.peeled_commit",
+        }
+    if expected_consumer_commit and cons_commit != expected_consumer_commit:
+        return {
+            "status": fail_status,
+            "reason": f"CONSUMER_COMMIT_MISMATCH: commit_bindings.consumer.candidate_commit '{cons_commit}' != consumer PR HEAD '{expected_consumer_commit}'",
+        }
+    rec_cand = str(record.get("candidate_commit") or "").strip()
+    if rec_cand != cons_commit:
+        return {
+            "status": fail_status,
+            "reason": f"CONSUMER_COMMIT_MISMATCH: approval candidate_commit '{rec_cand}' != consumer.candidate_commit '{cons_commit}'",
+        }
+
+    # Verify consumer candidate_commit is genuinely readable in the consumer Git repository
+    rc_cat, _, _ = run_git(project_root, ["cat-file", "-e", f"{cons_commit}^{{commit}}"])
+    if rc_cat != 0:
+        return {
+            "status": "NOT_VERIFIABLE",
+            "reason": f"CONSUMER_COMMIT_NOT_VERIFIABLE: Consumer candidate commit '{cons_commit}' does not exist or is unreadable in {project_root}",
+        }
+
+    # Verify manifest repository inside that exact Git commit matches consumer repository
+    rc_show, commit_mf_raw, _ = run_git(project_root, ["show", f"{cons_commit}:engineering-manifest.yaml"])
+    if rc_show != 0:
+        return {
+            "status": "NOT_VERIFIABLE",
+            "reason": f"CONSUMER_COMMIT_NOT_VERIFIABLE: Cannot read engineering-manifest.yaml at {cons_commit}",
+        }
+    try:
+        commit_mf = yaml.safe_load(commit_mf_raw) or {}
+        commit_proj_repo = str((commit_mf.get("project") or {}).get("repository") or "").strip()
+        if commit_proj_repo and commit_proj_repo.lower() != cons_repo.lower():
+            return {
+                "status": fail_status,
+                "reason": f"CONSUMER_REPO_MISMATCH_AT_COMMIT: commit {cons_commit} repository '{commit_proj_repo}' != '{cons_repo}'",
+            }
+    except Exception as exc:
+        return {"status": fail_status, "reason": f"INVALID_MANIFEST_AT_COMMIT: {exc}"}
+
+    from tools.validate_approval_contract import verify_content_bindings_digests
+    cb_st, cb_errs = verify_content_bindings_digests(
+        record=record,
+        event=record.get("approval_event"),
+        project_root=project_root,
+        git_commit=cons_commit,
+        prefer_git=True,
+    )
+    if cb_st == "NOT_VERIFIABLE":
+        return {"status": "NOT_VERIFIABLE", "reason": f"CONTENT_BINDINGS_NOT_VERIFIABLE: {'; '.join(cb_errs)}"}
+    if cb_st != "PASS":
+        return {"status": fail_status, "reason": f"CONTENT_BINDINGS_MISMATCH: {'; '.join(cb_errs)}"}
+    return None
+
+
 def promote_upgrade(
     project_root: Path,
     target_tag: str,
@@ -3389,14 +3669,18 @@ def promote_upgrade(
     ci_status: Optional[str] = None,
     standards_root: Optional[Path] = None,
     replace_fn: Optional[Callable[[Path, Path], None]] = None,
+    consumer_candidate_commit: Optional[str] = None,
+    simulate_provenance_data: Optional[Dict[str, Any]] = None,
+    simulate_remote_refs: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Promote project lock to target version ONLY if:
     1. Target version is not a downgrade.
-    2. Target peeled commit matches approval record candidate_commit.
+    2. Official target tag object, peeled commit, main ancestry, and VERSION match.
     3. Main CI status is verified PASS (never defaulted or fabricated).
-    4. Compatibility validation is PASS.
-    5. Approval record is valid and satisfies required approval level (AI_APPROVED vs OWNER_APPROVED).
-    Applies transactional write to standards.lock.json and engineering-manifest.yaml.
+    4. Option C dual-commit bindings separately verify consumer PR HEAD != standards peeled commit.
+    5. Content bindings (ci_job_mapping_sha256 & lock_manifest_sha256) are recomputed and match.
+    6. Compatibility validation is PASS.
+    Applies recoverable transactional write to standards.lock.json and engineering-manifest.yaml.
     Preserves previous lock in previous_locks.
     """
     project_root = project_root.resolve()
@@ -3424,29 +3708,17 @@ def promote_upgrade(
 
     if target_tag != f"v{target_version.lstrip('v')}":
         return {"status": "UPGRADE_BLOCKED", "reason": "TARGET_TAG_VERSION_MISMATCH"}
-    remote_status, remote_refs, remote_error = query_remote_ls_remote(
-        f"https://github.com/{DEFAULT_OFFICIAL_REPO}.git",
-        cwd=std_root if std_root.exists() else None,
+
+    tag_st, tag_err = verify_official_historical_tag(
+        standards_root=std_root,
+        tag=target_tag,
+        tag_object_sha=target_tag_object_sha,
+        peeled_commit=target_peeled_commit,
+        expected_version=target_version,
+        simulate_remote_refs=simulate_remote_refs,
     )
-    if remote_status != "PASS":
-        return {"status": "UPGRADE_BLOCKED", "reason": f"TARGET_TAG_NOT_VERIFIABLE: {remote_error}"}
-    if (
-        remote_refs.get(f"refs/tags/{target_tag}") != target_tag_object_sha
-        or remote_refs.get(f"refs/tags/{target_tag}^{{}}") != target_peeled_commit
-    ):
-        return {"status": "UPGRADE_BLOCKED", "reason": "TARGET_TAG_OBJECT_OR_PEELED_COMMIT_MISMATCH"}
-    remote_main = remote_refs.get("refs/heads/main")
-    if not remote_main:
-        return {"status": "UPGRADE_BLOCKED", "reason": "REMOTE_MAIN_NOT_VERIFIABLE"}
-    rc_target, _, _ = run_git(std_root, ["cat-file", "-e", f"{target_peeled_commit}^{{commit}}"])
-    if rc_target != 0:
-        return {"status": "UPGRADE_BLOCKED", "reason": "TARGET_COMMIT_NOT_AVAILABLE_FOR_ANCESTRY_CHECK"}
-    rc_ancestor, _, _ = run_git(std_root, ["merge-base", "--is-ancestor", target_peeled_commit, remote_main])
-    if rc_ancestor != 0:
-        return {"status": "UPGRADE_BLOCKED", "reason": "TARGET_COMMIT_NOT_ON_OFFICIAL_MAIN_ANCESTRY"}
-    rc_version, version_at_target, _ = run_git(std_root, ["show", f"{target_peeled_commit}:VERSION"])
-    if rc_version != 0 or version_at_target.strip().lstrip("v") != target_version.lstrip("v"):
-        return {"status": "UPGRADE_BLOCKED", "reason": "TARGET_VERSION_FILE_MISMATCH"}
+    if tag_st != "PASS":
+        return {"status": "UPGRADE_BLOCKED", "reason": f"TARGET_TAG_VERIFICATION_FAILED: {tag_err}"}
 
     # 2. Check downgrade against existing lock
     lock_path = project_root / "standards.lock.json"
@@ -3461,7 +3733,7 @@ def promote_upgrade(
                 "reason": f"DOWNGRADE_FORBIDDEN: Cannot downgrade from {existing_lock.get('version')} to {target_version}",
             }
 
-    # 3. Validate approval evidence and reconcile candidate_commit against target_peeled_commit
+    # 3. Validate Option C dual-commit approval evidence and real content bindings
     if approval_record is None and approval_file is not None and approval_file.exists():
         approval_record = json.loads(approval_file.read_text(encoding="utf-8"))
 
@@ -3471,43 +3743,71 @@ def promote_upgrade(
             "reason": "UNAUTHORIZED_UPGRADE: Missing approval evidence record",
         }
 
-    app_cand_commit = str(approval_record.get("candidate_commit") or "").strip()
-    if app_cand_commit != target_peeled_commit:
-        return {
-            "status": "UPGRADE_BLOCKED",
-            "reason": f"APPROVAL_COMMIT_MISMATCH: Approval binds {app_cand_commit}, but target is {target_peeled_commit}",
-        }
-
-    app_ok, app_errors = validate_approval_record(record=approval_record, verify_provenance=True)
-    if not app_ok:
-        return {
-            "status": "UPGRADE_BLOCKED",
-            "reason": "INVALID_APPROVAL_EVIDENCE",
-            "errors": app_errors,
-        }
-
     if approval_record.get("approval_status") not in ("AI_APPROVED", "OWNER_APPROVED"):
         return {
             "status": "UPGRADE_BLOCKED",
             "reason": f"APPROVAL_NOT_GRANTED: approval_status is '{approval_record.get('approval_status')}'",
         }
 
-    # Reconcile approval candidate_commit with actual target peeled commit
-    rec_candidate = str(approval_record.get("candidate_commit") or "").strip()
-    if rec_candidate and rec_candidate != target_peeled_commit:
+    record_scope = approval_record.get("approval_scope") or approval_record.get("decision_scope")
+    if record_scope != "STANDARDS_LOCK_PROMOTION":
         return {
             "status": "UPGRADE_BLOCKED",
-            "reason": f"APPROVAL_COMMIT_MISMATCH: approval_record candidate_commit ({rec_candidate}) != target_peeled_commit ({target_peeled_commit})",
+            "reason": f"INVALID_PROMOTION_SCOPE: Expected 'STANDARDS_LOCK_PROMOTION', got '{record_scope}'",
         }
-    for sub_k in ("chatgpt_review", "owner_approval"):
-        sub_rec = approval_record.get(sub_k)
-        if isinstance(sub_rec, dict) and sub_rec.get("candidate_commit"):
-            sub_c = str(sub_rec.get("candidate_commit")).strip()
-            if sub_c != target_peeled_commit:
-                return {
-                    "status": "UPGRADE_BLOCKED",
-                    "reason": f"APPROVAL_COMMIT_MISMATCH in {sub_k}: {sub_c} != target_peeled_commit ({target_peeled_commit})",
-                }
+
+    commit_bindings = approval_record.get("commit_bindings") or {}
+    if not isinstance(commit_bindings, dict) or not commit_bindings:
+        return {
+            "status": "UPGRADE_BLOCKED",
+            "reason": "LEGACY_SINGLE_COMMIT_BYPASS_FORBIDDEN: commit_bindings is required for STANDARDS_LOCK_PROMOTION",
+        }
+
+    # Verify Standards side of dual-commit bindings
+    std_b = commit_bindings.get("standards") or {}
+    if not std_b:
+        return {"status": "UPGRADE_BLOCKED", "reason": "MISSING_STANDARDS_COMMIT_BINDING: commit_bindings.standards is required"}
+    if std_b.get("repository") != DEFAULT_OFFICIAL_REPO:
+        return {"status": "UPGRADE_BLOCKED", "reason": f"INVALID_STANDARDS_REPOSITORY: {std_b.get('repository')}"}
+    if std_b.get("target_tag") != target_tag:
+        return {"status": "UPGRADE_BLOCKED", "reason": f"PROMOTION_BINDING_MISMATCH: standards target_tag '{std_b.get('target_tag')}' != '{target_tag}'"}
+    if std_b.get("tag_object_sha") != target_tag_object_sha:
+        return {"status": "UPGRADE_BLOCKED", "reason": f"PROMOTION_BINDING_MISMATCH: standards tag_object_sha '{std_b.get('tag_object_sha')}' != '{target_tag_object_sha}'"}
+    if std_b.get("peeled_commit") != target_peeled_commit:
+        return {"status": "UPGRADE_BLOCKED", "reason": f"PROMOTION_BINDING_MISMATCH: standards peeled_commit '{std_b.get('peeled_commit')}' != '{target_peeled_commit}'"}
+
+    # Verify Consumer side of dual-commit bindings (never confuse with standards peeled_commit)
+    consumer_b = commit_bindings.get("consumer") or {}
+    if not consumer_b:
+        return {"status": "UPGRADE_BLOCKED", "reason": "MISSING_CONSUMER_COMMIT_BINDING: commit_bindings.consumer is required"}
+
+    cand_c = str(consumer_b.get("candidate_commit") or "").strip()
+    cons_err = _verify_consumer_commit_and_content_bindings(
+        project_root=project_root,
+        record=approval_record,
+        consumer_binding=consumer_b,
+        standards_peeled_commit=target_peeled_commit,
+        fail_status="UPGRADE_BLOCKED",
+        expected_consumer_commit=consumer_candidate_commit,
+    )
+    if cons_err is not None:
+        return cons_err
+
+    app_ok, app_errors = validate_approval_record(
+        record=approval_record,
+        verify_provenance=True,
+        standards_root=std_root,
+        simulate_provenance_data=simulate_provenance_data,
+        project_root=project_root,
+        content_binding_git_commit=cand_c,
+        prefer_git_content=True,
+    )
+    if not app_ok:
+        return {
+            "status": "UPGRADE_BLOCKED",
+            "reason": "INVALID_APPROVAL_EVIDENCE",
+            "errors": app_errors,
+        }
 
     # 4. Validate compatibility
     compat = validate_upgrade_candidate(project_root=project_root, standards_root=std_root, target_tag=target_tag)
@@ -3531,7 +3831,7 @@ def promote_upgrade(
                 "locked_at": existing_lock.get("locked_at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")),
                 "lock_reason": existing_lock.get("lock_reason", "Preserved historical lock"),
                 "approval_evidence_ref": existing_lock.get("approval_evidence_ref"),
-                "ci_verification_status": existing_lock.get("ci_verification_status", "PASS"),
+                "ci_verification_status": existing_lock.get("ci_verification_status") or "NOT_VERIFIABLE",
             }
         )
 
@@ -3577,13 +3877,33 @@ def promote_upgrade(
 
 def rollback_lock(
     project_root: Path,
+    rollback_authorization_ref: Optional[Union[str, Path]] = None,
+    require_authorization: bool = True,
     replace_fn: Optional[Callable[[Path, Path], None]] = None,
+    standards_root: Optional[Path] = None,
+    simulate_provenance_data: Optional[Dict[str, Any]] = None,
+    simulate_remote_refs: Optional[Dict[str, str]] = None,
+    simulate_offline: bool = False,
 ) -> Dict[str, Any]:
     """Rollback standards.lock.json to the most recent entry in previous_locks.
-    Verifies historical lock integrity, preserves historical approval evidence and CI status,
-    and applies transactional updates to standards.lock.json and engineering-manifest.yaml.
+    Authorization is MANDATORY (require_authorization=False bypass is strictly forbidden).
+    Authorization and content binding digests are verified BEFORE any remote calls or file writes.
+    Verifies official historical tag on remote, main ancestry, and VERSION file.
+    Applies recoverable transactional updates to standards.lock.json and engineering-manifest.yaml.
     """
+    if not require_authorization:
+        return {
+            "status": "FAIL",
+            "reason": "ROLLBACK_AUTHORIZATION_BYPASS_FORBIDDEN: require_authorization=False bypass has been removed; Owner authorization is always required",
+        }
+    if not rollback_authorization_ref:
+        return {
+            "status": "FAIL",
+            "reason": "MISSING_ROLLBACK_AUTHORIZATION: Rollback requires explicit Owner authorization",
+        }
+
     project_root = project_root.resolve()
+    std_root = resolve_standards_root(standards_root)
     lock_path = project_root / "standards.lock.json"
     if not lock_path.exists():
         return {"status": "FAIL", "reason": "MISSING_STANDARDS_LOCK"}
@@ -3595,19 +3915,117 @@ def rollback_lock(
 
     restored = prev_locks.pop()
 
-    # Validate restored lock object
+    # Validate restored lock object (read-only)
     for k in ("repository", "version", "tag", "tag_object_sha", "peeled_commit"):
         if not restored.get(k):
             return {"status": "FAIL", "reason": f"CORRUPT_HISTORICAL_LOCK: Missing '{k}'"}
+    if restored.get("repository") != "xiefeifeihu/AI-Engineering-Standards":
+        return {"status": "FAIL", "reason": f"INVALID_STANDARDS_REPOSITORY: '{restored.get('repository')}' is not official AI-Engineering-Standards"}
+    if restored.get("tag") != f"v{restored.get('version')}":
+        return {"status": "FAIL", "reason": f"CORRUPT_HISTORICAL_LOCK: Tag '{restored.get('tag')}' does not match version 'v{restored.get('version')}'"}
     if not re.match(r"^[0-9a-f]{40}$", restored["tag_object_sha"]) or not re.match(r"^[0-9a-f]{40}$", restored["peeled_commit"]):
         return {"status": "FAIL", "reason": "CORRUPT_HISTORICAL_LOCK: Invalid 40-hex commit or tag object SHA"}
 
-    # Preserve historical approval evidence ref and CI status; never fabricate fake rollback-restored
+    # Preserve historical approval evidence ref and CI status; never fabricate fake values
     hist_approval = restored.get("approval_evidence_ref")
-    if not hist_approval:
-        return {"status": "FAIL", "reason": "RESTORED_LOCK_MISSING_APPROVAL_EVIDENCE: Cannot restore historical lock lacking approval evidence"}
+    hist_ci = restored.get("ci_verification_status")
+    if not hist_ci or hist_ci not in ("PASS", "NOT_VERIFIABLE"):
+        hist_ci = "NOT_VERIFIABLE"
 
-    hist_ci = restored.get("ci_verification_status", "NOT_VERIFIABLE")
+    # Mandatory Rollback Authorization verification BEFORE remote queries or any file write
+    auth_file = Path(rollback_authorization_ref)
+    if not auth_file.is_absolute():
+        auth_file = (project_root / auth_file).resolve()
+    if not auth_file.exists():
+        return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_NOT_FOUND: '{rollback_authorization_ref}' does not exist"}
+    try:
+        auth_data = json.loads(auth_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"status": "FAIL", "reason": f"INVALID_ROLLBACK_AUTHORIZATION_JSON: {exc}"}
+
+    from tools.validate_approval_contract import (
+        validate_approval_record,
+        verify_approval_event_provenance,
+        FORBIDDEN_SELF_APPROVAL_ROLES,
+    )
+
+    rec_ok, rec_errs = validate_approval_record(auth_data, verify_provenance=False)
+    if not rec_ok:
+        return {"status": "FAIL", "reason": f"INVALID_ROLLBACK_AUTHORIZATION_RECORD: {rec_errs}"}
+
+    actor_role = str(auth_data.get("actor_role") or "").strip().upper()
+    reviewer_type = str(auth_data.get("reviewer_type") or "").strip().upper()
+    if actor_role in FORBIDDEN_SELF_APPROVAL_ROLES or reviewer_type in FORBIDDEN_SELF_APPROVAL_ROLES:
+        return {"status": "FAIL", "reason": "AGENT_SELF_APPROVAL_FORBIDDEN: Coding agent cannot authorize lock rollback"}
+
+    if reviewer_type != "OWNER" or auth_data.get("approval_status") != "OWNER_APPROVED":
+        return {
+            "status": "FAIL",
+            "reason": f"ROLLBACK_AUTHORIZATION_NOT_OWNER_APPROVED: Rollback requires Owner approval, got reviewer_type='{reviewer_type}', approval_status='{auth_data.get('approval_status')}'",
+        }
+
+    decision_scope = auth_data.get("decision_scope") or auth_data.get("approval_scope")
+    if decision_scope not in ("LOCK_ROLLBACK", "STANDARDS_LOCK_ROLLBACK"):
+        return {"status": "FAIL", "reason": f"INVALID_ROLLBACK_AUTHORIZATION_SCOPE: Expected LOCK_ROLLBACK, got '{decision_scope}'"}
+
+    commit_bindings = auth_data.get("commit_bindings") or {}
+    if not commit_bindings:
+        return {"status": "FAIL", "reason": "MISSING_ROLLBACK_COMMIT_BINDINGS: commit_bindings is required for LOCK_ROLLBACK"}
+
+    std_binding = commit_bindings.get("standards") or {}
+    if not std_binding:
+        return {"status": "FAIL", "reason": "MISSING_STANDARDS_COMMIT_BINDING: commit_bindings.standards is required"}
+    if std_binding.get("target_tag") != restored["tag"]:
+        return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_TARGET_MISMATCH: Target tag '{std_binding.get('target_tag')}' != '{restored['tag']}'"}
+    if std_binding.get("tag_object_sha") != restored["tag_object_sha"]:
+        return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_TARGET_MISMATCH: Target tag object SHA '{std_binding.get('tag_object_sha')}' != '{restored['tag_object_sha']}'"}
+    if std_binding.get("peeled_commit") != restored["peeled_commit"]:
+        return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_TARGET_MISMATCH: Target commit '{std_binding.get('peeled_commit')}' != '{restored['peeled_commit']}'"}
+
+    consumer_binding = commit_bindings.get("consumer") or {}
+    if not consumer_binding:
+        return {"status": "FAIL", "reason": "MISSING_CONSUMER_COMMIT_BINDING: commit_bindings.consumer is required"}
+
+    cons_commit = str(consumer_binding.get("candidate_commit") or "").strip()
+    cons_err = _verify_consumer_commit_and_content_bindings(
+        project_root=project_root,
+        record=auth_data,
+        consumer_binding=consumer_binding,
+        standards_peeled_commit=restored["peeled_commit"],
+        fail_status="FAIL",
+    )
+    if cons_err is not None:
+        return cons_err
+
+    prov_st, prov_errs = verify_approval_event_provenance(
+        record=auth_data,
+        standards_root=std_root,
+        simulate_data=simulate_provenance_data,
+        project_root=project_root,
+        content_binding_git_commit=cons_commit,
+        prefer_git_content=True,
+    )
+    if prov_st == "FAILED":
+        return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_PROVENANCE_FAILED: {prov_errs}"}
+    if prov_st == "NOT_VERIFIABLE":
+        return {"status": "NOT_VERIFIABLE", "reason": f"ROLLBACK_AUTHORIZATION_PROVENANCE_NOT_VERIFIABLE: {prov_errs}"}
+    if prov_st != "VERIFIED":
+        return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_PROVENANCE_NOT_VERIFIED: {prov_errs}"}
+
+    # Official historical tag verification
+    tag_st, tag_err = verify_official_historical_tag(
+        standards_root=std_root,
+        tag=restored["tag"],
+        tag_object_sha=restored["tag_object_sha"],
+        peeled_commit=restored["peeled_commit"],
+        expected_version=restored["version"],
+        simulate_offline=simulate_offline,
+        simulate_remote_refs=simulate_remote_refs,
+    )
+    if tag_st == "FAIL":
+        return {"status": "FAIL", "reason": f"HISTORICAL_TAG_VERIFICATION_FAILED: {tag_err}"}
+    if tag_st == "NOT_VERIFIABLE":
+        return {"status": "NOT_VERIFIABLE", "reason": f"HISTORICAL_TAG_NOT_VERIFIABLE: {tag_err}"}
 
     rolled_back_lock = {
         "schema_version": "1.0.0",
@@ -3619,9 +4037,12 @@ def rollback_lock(
         "locked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "lock_reason": f"Rolled back to {restored['tag']}",
         "approval_evidence_ref": hist_approval,
+        "rollback_authorization_ref": str(rollback_authorization_ref),
         "ci_verification_status": hist_ci,
         "previous_locks": prev_locks,
     }
+    if restored.get("ci_run_id") is not None:
+        rolled_back_lock["ci_run_id"] = restored["ci_run_id"]
 
     # Transactional update to standards.lock.json and engineering-manifest.yaml
     manifest_standards = {

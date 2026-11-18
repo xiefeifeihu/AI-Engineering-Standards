@@ -127,11 +127,14 @@ def main(argv: list[str] | None = None) -> int:
     p_prom.add_argument("--target-tag-object-sha", required=True, help="40-hex annotated tag object SHA")
     p_prom.add_argument("--target-peeled-commit", required=True, help="40-hex peeled commit SHA")
     p_prom.add_argument("--approval-file", required=True, help="Path to approval evidence JSON file")
+    p_prom.add_argument("--consumer-candidate-commit", default=None, help="Optional explicit 40-hex consumer PR HEAD commit SHA")
     # CI status is queried from GitHub Actions; no caller-supplied PASS override is accepted.
 
     # 8. rollback
     p_rb = sub.add_parser("rollback", help="Rollback standards.lock.json to previous verified lock")
     p_rb.add_argument("--project-root", default=".", help="Target consumer project root directory")
+    p_rb.add_argument("--rollback-authorization-ref", required=True, help="Path to rollback authorization evidence")
+    p_rb.add_argument("--standards-root", default=None, help="Standards repository root")
 
     # 9. recover-tx
     p_rc = sub.add_parser("recover-tx", help="Detect and recover from an interrupted transaction")
@@ -227,12 +230,18 @@ def main(argv: list[str] | None = None) -> int:
             approval_file=Path(args.approval_file),
             ci_status=None,
             standards_root=std_root,
+            consumer_candidate_commit=args.consumer_candidate_commit,
         )
         print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "PROMOTED" else 1
 
     if args.subcommand == "rollback":
-        res = rollback_lock(project_root=Path(args.project_root))
+        res = rollback_lock(
+            project_root=Path(args.project_root),
+            rollback_authorization_ref=args.rollback_authorization_ref,
+            require_authorization=True,
+            standards_root=std_root,
+        )
         print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "ROLLED_BACK" else 1
 

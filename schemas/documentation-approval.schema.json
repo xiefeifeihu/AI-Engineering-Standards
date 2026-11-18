@@ -57,6 +57,8 @@
         "OWNER_MANDATORY",
         "OWNER_APPROVAL_REQUIRED",
         "GATE_MAPPING",
+        "STANDARDS_LOCK_PROMOTION",
+        "LOCK_ROLLBACK",
         "UNCERTAIN"
       ],
       "description": "UNCERTAIN defaults to requiring OWNER_APPROVED"
@@ -68,6 +70,8 @@
         "OWNER_MANDATORY",
         "OWNER_APPROVAL_REQUIRED",
         "GATE_MAPPING",
+        "STANDARDS_LOCK_PROMOTION",
+        "LOCK_ROLLBACK",
         "UNCERTAIN"
       ]
     },
@@ -270,6 +274,72 @@
       ],
       "description": "Indicates whether approval identity and provenance were cryptographically or API verified"
     },
+    "commit_bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consumer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repository",
+            "candidate_commit"
+          ],
+          "properties": {
+            "repository": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+            },
+            "candidate_commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          }
+        },
+        "standards": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repository",
+            "target_tag",
+            "tag_object_sha",
+            "peeled_commit"
+          ],
+          "properties": {
+            "repository": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]+/AI-Engineering-Standards$"
+            },
+            "target_tag": {
+              "type": "string",
+              "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+            },
+            "tag_object_sha": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "peeled_commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          }
+        }
+      }
+    },
+    "content_bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ci_job_mapping_sha256": {
+          "type": "string",
+          "pattern": "^(sha256:)?[0-9a-f]{64}$"
+        },
+        "lock_manifest_sha256": {
+          "type": "string",
+          "pattern": "^(sha256:)?[0-9a-f]{64}$"
+        }
+      }
+    },
     "approval_event": {
       "type": "object",
       "additionalProperties": false,
@@ -303,7 +373,6 @@
             "GITHUB_PR_REVIEW",
             "GITHUB_PR_MERGE",
             "TRUSTED_CHATGPT_EVENT",
-            "SIGNED_OWNER_EVENT",
             "LOCAL_UNVERIFIED"
           ]
         },
@@ -350,8 +419,76 @@
             "OWNER_MANDATORY",
             "OWNER_APPROVAL_REQUIRED",
             "GATE_MAPPING",
+            "STANDARDS_LOCK_PROMOTION",
+            "LOCK_ROLLBACK",
             "UNCERTAIN"
           ]
+        },
+        "commit_bindings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "consumer": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "repository",
+                "candidate_commit"
+              ],
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+                },
+                "candidate_commit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                }
+              }
+            },
+            "standards": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "repository",
+                "target_tag",
+                "tag_object_sha",
+                "peeled_commit"
+              ],
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]+/AI-Engineering-Standards$"
+                },
+                "target_tag": {
+                  "type": "string",
+                  "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+                },
+                "tag_object_sha": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "peeled_commit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                }
+              }
+            }
+          }
+        },
+        "content_bindings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ci_job_mapping_sha256": {
+              "type": "string",
+              "pattern": "^(sha256:)?[0-9a-f]{64}$"
+            },
+            "lock_manifest_sha256": {
+              "type": "string",
+              "pattern": "^(sha256:)?[0-9a-f]{64}$"
+            }
+          }
         },
         "event_timestamp": {
           "type": "string",
@@ -442,6 +579,116 @@
           },
           "review_result": {
             "const": "AI_APPROVED"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision_scope": {
+            "enum": [
+              "STANDARDS_LOCK_PROMOTION",
+              "LOCK_ROLLBACK"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "commit_bindings",
+          "content_bindings"
+        ],
+        "properties": {
+          "commit_bindings": {
+            "required": [
+              "consumer",
+              "standards"
+            ]
+          },
+          "content_bindings": {
+            "required": [
+              "ci_job_mapping_sha256",
+              "lock_manifest_sha256"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "approval_scope": {
+            "enum": [
+              "STANDARDS_LOCK_PROMOTION",
+              "LOCK_ROLLBACK"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "commit_bindings",
+          "content_bindings"
+        ],
+        "properties": {
+          "commit_bindings": {
+            "required": [
+              "consumer",
+              "standards"
+            ]
+          },
+          "content_bindings": {
+            "required": [
+              "ci_job_mapping_sha256",
+              "lock_manifest_sha256"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "approval_event": {
+            "properties": {
+              "approval_scope": {
+                "enum": [
+                  "STANDARDS_LOCK_PROMOTION",
+                  "LOCK_ROLLBACK"
+                ]
+              }
+            },
+            "required": [
+              "approval_scope"
+            ]
+          }
+        },
+        "required": [
+          "approval_event"
+        ]
+      },
+      "then": {
+        "properties": {
+          "approval_event": {
+            "required": [
+              "commit_bindings",
+              "content_bindings"
+            ],
+            "properties": {
+              "commit_bindings": {
+                "required": [
+                  "consumer",
+                  "standards"
+                ]
+              },
+              "content_bindings": {
+                "required": [
+                  "ci_job_mapping_sha256",
+                  "lock_manifest_sha256"
+                ]
+              }
+            }
           }
         }
       }

@@ -30,7 +30,15 @@ content_sha256: null
 | **`D4`** | 规范与共享工具独立自治维护 | `AI-Engineering-Standards` 独立设计、实现和维护全部官方规范与共享工具（`tools/standards_sync/`），不将 `AI-KB` 或 `AI-Engineering-Hub` 作为工具属主或运行依赖。 | `OWNER_APPROVED` | `v3.0.0` |
 | **`D5`** | 消费端显式接入与受控升级策略 | Standards 提供统一发现与受控升级能力，但不强制所有工程自动接入。首个消费端试点为 AI-Engineering-Hub；AI-KB、VTIP、SideCar 是否接入由各工程 Owner 后续独立决定。只有明确批准接入的工程才执行其 compatibility matrix/正式决策规定的巡检、兼容性门禁和升级状态机。 | `OWNER_APPROVED` | `v3.0.0` |
 
-## 2. 迁移与演进关联文档
+## 2. 消费端试点与工具链整改决策 (`D10`–`D12`, 候选评审)
+
+| 决策编号 | 决策主题 | 决策内容摘要 | 审批状态 | 生效版本 |
+| :--- | :--- | :--- | :--- | :--- |
+| **`D10`** | 基线生成器 Scope 彻底解耦 (F10) | 彻底解耦 Standards 发布证据核验与消费端工程基线核验。默认 `--scope consumer` 仅校验消费端自身事实，Standards CI 显式调用 `--scope standards-release`。 | `IN_REVIEW` | `v3.0.0` |
+| **`D11`** | 历史基线 Lock 回滚契约与原子性 (F11) | 历史 bootstrap lock 允许 `approval_evidence_ref: null`；CLI `rollback` 强制要求 `--rollback-authorization-ref`，核心 API `rollback_lock` 彻底移除 `require_authorization=False` 旁路并强绑定 `candidate_commit` 内容摘要；历史 Tag 远端与 `VERSION` 一致性核验；缺失 CI 严格默认标记 `NOT_VERIFIABLE`；两文件原子更新与失败回滚。 | `IN_REVIEW` | `v3.0.0` |
+| **`D12`** | 单 Owner 双 Commit PR Merge 审批契约 (F12) | 采用方案 C，通过 `commit_bindings` 显式解耦消费端候选 Commit 与 Standards Peeled Commit；晋升与回滚作用域严格基于 `consumer.candidate_commit` (`prefer_git=True`) 重算比对内容摘要并核验 `consumer.repository == project.repository`，严禁工作区静默旁路与单 Commit 旁路绕过；彻底废除未实现的 `SIGNED_OWNER_EVENT` 伪枚举。 | `IN_REVIEW` | `v3.0.0` |
+
+## 3. 迁移与演进关联文档
 
 - `v3.0.0` 跨工程迁移指南参见：[`docs/migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md`](./migration/MIGRATION-GUIDE-BASELINE-SYNC-GOVERNANCE-v3.0.0.md)
 - `v2.11.0` AI 自主测试治理迁移指南参见：[`docs/migration/MIGRATION-GUIDE-AI-DRIVEN-TEST-GOVERNANCE-v2.11.0.md`](./migration/MIGRATION-GUIDE-AI-DRIVEN-TEST-GOVERNANCE-v2.11.0.md)

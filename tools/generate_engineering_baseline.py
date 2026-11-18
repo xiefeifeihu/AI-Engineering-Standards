@@ -162,8 +162,10 @@ def run_git(project_root: Path, args: List[str], timeout: int = 5) -> Tuple[int,
             timeout=timeout,
         )
         return res.returncode, (res.stdout or "").strip()
+    except subprocess.TimeoutExpired as e:
+        return 124, f"TIMEOUT: {e}"
     except Exception as e:
-        return 1, str(e)
+        return 128, f"GIT_EXECUTION_NOT_VERIFIABLE: {e}"
 
 
 def query_remote_main_head(project_root: Path, timeout: int = 8) -> str:
@@ -270,8 +272,6 @@ def verify_git_snapshot_facts(
     """
     errors: List[str] = []
     if document_kind == "baseline":
-        # This historical timestamp scope belongs to Standards' own Std-019
-        # release-closeout baseline. Do not impose it on downstream consumers.
         manifest_path = project_root / "engineering-manifest.yaml"
         project_id = ""
         if manifest_path.is_file():
@@ -280,8 +280,6 @@ def verify_git_snapshot_facts(
                 project_id = str((manifest_data.get("project") or {}).get("id") or "")
             except Exception:
                 project_id = ""
-        if project_id != "ai-engineering-standards":
-            return []
 
         identity_match = re.search(
             r"## 8\. Git 分支及 Commit 身份.*?(?=\n## 9\.)",
@@ -291,16 +289,28 @@ def verify_git_snapshot_facts(
         if not identity_match:
             return ["BASELINE_GIT_SNAPSHOT_SECTION_MISSING: Git identity section not found"]
         identity_text = identity_match.group(0)
-        scope_text, scope_errors = extract_scope_content(
-            content, "Std-019 正式发布收口事实与治理追踪"
-        )
-        if scope_errors:
-            return [f"BASELINE_GIT_SNAPSHOT_CAPTURE_SCOPE_INVALID: {e}" for e in scope_errors]
-        captured_matches = re.findall(
-            r"Git 快照观测时间.*?\x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
-            scope_text,
-        )
-        remote_pattern = r"远端 main \(\x60remote_main_head\x60\)\*\*：\x60([0-9a-f]{40})\x60"
+
+        if project_id == "ai-engineering-standards":
+            scope_text, scope_errors = extract_scope_content(
+                content, "Std-019 正式发布收口事实与治理追踪"
+            )
+            if scope_errors:
+                return [f"BASELINE_GIT_SNAPSHOT_CAPTURE_SCOPE_INVALID: {e}" for e in scope_errors]
+            captured_matches = re.findall(
+                r"Git 快照观测时间.*?\x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
+                scope_text,
+            )
+            remote_pattern = r"远端 main \(\x60remote_main_head\x60\)\*\*：\x60([0-9a-f]{40})\x60"
+        else:
+            scope_text = ""
+            captured_matches = re.findall(
+                r"Git 快照观测时间.*?\x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
+                content,
+            ) or re.findall(
+                r"## 17\. 核验时间 \(\x60verified_at\x60\)\n- \x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
+                content,
+            )
+            remote_pattern = r"远端 main \(\x60remote_main_head\x60\)\*\*：\x60([0-9a-f]{40}|NOT_VERIFIABLE)\x60"
         prefix = "BASELINE"
     elif document_kind == "handoff":
         identity_text = content.split("## 2. 当前 Standards 锁定", 1)[0]
@@ -345,17 +355,13 @@ def verify_git_snapshot_facts(
     else:
         captured_at = captured_matches[0]
 
-    expected_branch = resolve_snapshot_branch_name(project_root)
-    # A feature-branch snapshot remains valid after its PR is merged to main.
-    # The captured local_head is independently checked against branch history below.
-    if (
-        recorded_branch is not None
-        and expected_branch not in ("HEAD", "main")
-        and recorded_branch != expected_branch
-    ):
-        errors.append(
-            f"{prefix}_GIT_SNAPSHOT_BRANCH_MISMATCH: recorded '{recorded_branch}', live branch '{expected_branch}'"
-        )
+    is_historical = False
+    if document_kind == "baseline":
+        if "RELEASE_STATUS=RELEASED" in scope_text or "PR10=MERGED" in scope_text:
+            is_historical = True
+    elif document_kind == "handoff":
+        if re.search(r"^STATUS=COMPLETED$", identity_text, re.M):
+            is_historical = True
 
     if recorded_worktree_clean not in ("true", "false"):
         errors.append(f"{prefix}_GIT_SNAPSHOT_WORKTREE_STATE_INVALID: expected true/false")
@@ -368,13 +374,73 @@ def verify_git_snapshot_facts(
     if not branch_tip:
         errors.append(f"{prefix}_GIT_SNAPSHOT_BRANCH_TIP_NOT_VERIFIABLE: current branch tip unavailable")
 
+    expected_branch = resolve_snapshot_branch_name(project_root)
+    # A historical marker alone cannot exempt an old snapshot from freshness checks.
+    # The recorded local_head must be present in the current branch or official main history.
+    is_ancestor = bool(recorded_local_head and branch_tip and recorded_local_head == branch_tip)
+    ancestry_unverifiable = False
+    ancestry_details: List[str] = []
+
+    if recorded_local_head and branch_tip and not is_ancestor:
+        rc_anc, anc_err = run_git(
+            project_root,
+            ["merge-base", "--is-ancestor", recorded_local_head, branch_tip],
+            timeout=8,
+        )
+        if rc_anc == 0:
+            is_ancestor = True
+        elif rc_anc not in (1,):
+            ancestry_unverifiable = True
+            ancestry_details.append(f"current branch ancestry exit_code={rc_anc}: {anc_err}")
+
+    if not is_ancestor and recorded_local_head and remote_main_head != "NOT_VERIFIABLE":
+        if recorded_local_head == remote_main_head:
+            is_ancestor = True
+        else:
+            rc_anc_remote, remote_anc_err = run_git(
+                project_root,
+                ["merge-base", "--is-ancestor", recorded_local_head, remote_main_head],
+                timeout=8,
+            )
+            if rc_anc_remote == 0:
+                is_ancestor = True
+            elif rc_anc_remote not in (1,):
+                ancestry_unverifiable = True
+                ancestry_details.append(f"official main ancestry exit_code={rc_anc_remote}: {remote_anc_err}")
+
+    historical_snapshot_verified = is_historical and is_ancestor
+    if is_historical and not is_ancestor:
+        if ancestry_unverifiable or not recorded_local_head or not branch_tip or remote_main_head == "NOT_VERIFIABLE":
+            detail = "; ".join(ancestry_details) or "required Git history/object data is unavailable"
+            errors.append(
+                f"{prefix}_GIT_SNAPSHOT_HISTORICAL_ANCESTRY_NOT_VERIFIABLE: cannot prove historical local_head ancestry ({detail})"
+            )
+        else:
+            errors.append(
+                f"{prefix}_GIT_SNAPSHOT_HISTORICAL_ANCESTRY_MISMATCH: recorded local_head '{recorded_local_head}' is not an ancestor of the current branch or official main"
+            )
+
+    if (
+        recorded_branch is not None
+        and expected_branch not in ("HEAD", "main")
+        and recorded_branch != expected_branch
+        and not historical_snapshot_verified
+    ):
+        errors.append(
+            f"{prefix}_GIT_SNAPSHOT_BRANCH_MISMATCH: recorded '{recorded_branch}', live branch '{expected_branch}'"
+        )
+
     if captured_at:
         try:
             captured_dt = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
             if captured_dt.tzinfo is None:
                 raise ValueError("timezone missing")
             age_seconds = (datetime.now(timezone.utc) - captured_dt).total_seconds()
-            if age_seconds < -300 or age_seconds > 24 * 60 * 60:
+            if age_seconds < -300:
+                errors.append(
+                    f"{prefix}_GIT_SNAPSHOT_STALE: captured_at '{captured_at}' is in the future"
+                )
+            elif not historical_snapshot_verified and age_seconds > 24 * 60 * 60:
                 errors.append(
                     f"{prefix}_GIT_SNAPSHOT_STALE: captured_at '{captured_at}' is outside the 24-hour validity window"
                 )
@@ -1584,6 +1650,12 @@ def main() -> None:
     parser.add_argument("--release-evidence", default=None, help="Path to PR9 release evidence JSON file")
     parser.add_argument("--snapshot-evidence", default=None, help="Path to snapshot evidence JSON file")
     parser.add_argument("--final-evidence", default=None, help="Path to final release evidence JSON file (Std-019)")
+    parser.add_argument(
+        "--scope",
+        choices=["consumer", "standards-release"],
+        default=None,
+        help="Validation scope: 'consumer' verifies project baseline facts without Standards PR release evidence; 'standards-release' verifies Standards release evidence.",
+    )
     parser.add_argument("--verify-only", action="store_true", help="Verify generation succeeds against committed baseline")
     args = parser.parse_args()
 
@@ -1649,108 +1721,122 @@ def main() -> None:
                 f"field 'content_sha256': committed='{actual_fm.get('content_sha256')}' does not match actual document digest '{actual_digest}'"
             )
 
+        # Determine effective scope: if not explicitly specified, default to standards-release
+        # only when verifying AI-Engineering-Standards repo where reissue evidence exists; otherwise consumer.
+        effective_scope = args.scope
+        if not effective_scope:
+            proj_id = payload.get("project_identity", {}).get("project_id", "")
+            if proj_id == "ai-engineering-standards" and (project_root / "docs" / "release-evidence" / "v3.0.0-reissue.json").exists():
+                effective_scope = "standards-release"
+            else:
+                effective_scope = "consumer"
+
         # Semantic fact verification from independent release evidence (STD-034 / STD-035)
-        pr9_ev_path = (
-            Path(args.release_evidence).resolve()
-            if args.release_evidence
-            else project_root / "docs" / "release-evidence" / "v3.0.0-reissue.json"
-        )
-        ok_ev, ev_errors, release_evidence = load_release_evidence(project_root, pr9_ev_path)
-        if not ok_ev or release_evidence is None:
-            print(f"[FAIL] Baseline verification blocked: PR9 release evidence error ({len(ev_errors)} issues):")
-            for e in ev_errors:
-                print(f"  - {e}")
-            sys.exit(1)
+        # In standards-release scope (or when explicit release evidence is passed), verify PR9, STD018, and STD019 facts.
+        # In consumer scope, skip Standards release evidence verification.
+        if effective_scope == "standards-release" or args.release_evidence or args.snapshot_evidence or args.final_evidence:
+            pr9_ev_path = (
+                Path(args.release_evidence).resolve()
+                if args.release_evidence
+                else project_root / "docs" / "release-evidence" / "v3.0.0-reissue.json"
+            )
+            ok_ev, ev_errors, release_evidence = load_release_evidence(project_root, pr9_ev_path)
+            if not ok_ev or release_evidence is None:
+                print(f"[FAIL] Baseline verification blocked: PR9 release evidence error ({len(ev_errors)} issues):")
+                for e in ev_errors:
+                    print(f"  - {e}")
+                sys.exit(1)
 
-        snapshot_ev_path = (
-            Path(args.snapshot_evidence).resolve()
-            if args.snapshot_evidence
-            else project_root / "docs" / "release-evidence" / "std018-current-snapshot.json"
-        )
-        ok_snap, snap_errors, snapshot_evidence = load_release_evidence(project_root, snapshot_ev_path)
-        if not ok_snap or snapshot_evidence is None:
-            print(f"[FAIL] Baseline verification blocked: snapshot evidence error ({len(snap_errors)} issues):")
-            for e in snap_errors:
-                print(f"  - {e}")
-            sys.exit(1)
+            snapshot_ev_path = (
+                Path(args.snapshot_evidence).resolve()
+                if args.snapshot_evidence
+                else project_root / "docs" / "release-evidence" / "std018-current-snapshot.json"
+            )
+            ok_snap, snap_errors, snapshot_evidence = load_release_evidence(project_root, snapshot_ev_path)
+            if not ok_snap or snapshot_evidence is None:
+                print(f"[FAIL] Baseline verification blocked: snapshot evidence error ({len(snap_errors)} issues):")
+                for e in snap_errors:
+                    print(f"  - {e}")
+                sys.exit(1)
 
-        final_ev_path = (
-            Path(args.final_evidence).resolve()
-            if args.final_evidence
-            else project_root / "docs" / "release-evidence" / "std019-final-release.json"
-        )
-        ok_final, final_errors, final_evidence = load_release_evidence(project_root, final_ev_path)
-        if not ok_final or final_evidence is None:
-            print(f"[FAIL] Baseline verification blocked: final release evidence error ({len(final_errors)} issues):")
-            for e in final_errors:
-                print(f"  - {e}")
-            sys.exit(1)
+            final_ev_path = (
+                Path(args.final_evidence).resolve()
+                if args.final_evidence
+                else project_root / "docs" / "release-evidence" / "std019-final-release.json"
+            )
+            ok_final, final_errors, final_evidence = load_release_evidence(project_root, final_ev_path)
+            if not ok_final or final_evidence is None:
+                print(f"[FAIL] Baseline verification blocked: final release evidence error ({len(final_errors)} issues):")
+                for e in final_errors:
+                    print(f"  - {e}")
+                sys.exit(1)
 
-        expected_pr9_facts = {
-            "candidate_commit": args.candidate_commit or release_evidence["candidate_commit"],
-            "snapshot_commit": args.snapshot_commit or release_evidence["snapshot_commit"],
-            "last_verified_ci_commit": args.last_verified_ci_commit or args.ci_commit or release_evidence["last_verified_ci_commit"],
-            "ci_run_id": args.ci_run_id or release_evidence["push_run_id"],
-            "push_run_id": args.push_run_id or release_evidence["push_run_id"],
-            "pr_run_id": args.pr_run_id or release_evidence["pr_run_id"],
-            "ci_commit": args.ci_commit or release_evidence["last_verified_ci_commit"],
-            "ci_status": args.ci_status or release_evidence["ci_status"],
-            "test_count": args.test_count if args.test_count is not None else release_evidence["test_count"],
-            "pr_status": args.pr_status if (args.pr_status != "DRAFT" or "pr_status" not in release_evidence) else release_evidence["pr_status"],
-            "main_head": release_evidence.get("main_head"),
-            "release_flow_status": release_evidence["release_flow_status"],
-            "old_tag_deleted": release_evidence["old_tag_deleted"],
-        }
-        pr9_mismatches = verify_baseline_semantic_facts(
-            actual_content, expected_pr9_facts, scope="PR9_HISTORICAL_RELEASE_EVIDENCE"
-        )
-        mismatches.extend([f"[PR9_SCOPE] {m}" for m in pr9_mismatches])
+            expected_pr9_facts = {
+                "candidate_commit": args.candidate_commit or release_evidence["candidate_commit"],
+                "snapshot_commit": args.snapshot_commit or release_evidence["snapshot_commit"],
+                "last_verified_ci_commit": args.last_verified_ci_commit or args.ci_commit or release_evidence["last_verified_ci_commit"],
+                "ci_run_id": args.ci_run_id or release_evidence["push_run_id"],
+                "push_run_id": args.push_run_id or release_evidence["push_run_id"],
+                "pr_run_id": args.pr_run_id or release_evidence["pr_run_id"],
+                "ci_commit": args.ci_commit or release_evidence["last_verified_ci_commit"],
+                "ci_status": args.ci_status or release_evidence["ci_status"],
+                "test_count": args.test_count if args.test_count is not None else release_evidence["test_count"],
+                "pr_status": args.pr_status if (args.pr_status != "DRAFT" or "pr_status" not in release_evidence) else release_evidence["pr_status"],
+                "main_head": release_evidence.get("main_head"),
+                "release_flow_status": release_evidence["release_flow_status"],
+                "old_tag_deleted": release_evidence["old_tag_deleted"],
+            }
+            pr9_mismatches = verify_baseline_semantic_facts(
+                actual_content, expected_pr9_facts, scope="PR9_HISTORICAL_RELEASE_EVIDENCE"
+            )
+            mismatches.extend([f"[PR9_SCOPE] {m}" for m in pr9_mismatches])
 
-        expected_snapshot_facts = {
-            "task_id": snapshot_evidence.get("task_id", "Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT"),
-            "candidate_commit": snapshot_evidence["candidate_commit"],
-            "snapshot_commit": snapshot_evidence["snapshot_commit"],
-            "last_verified_ci_commit": snapshot_evidence["last_verified_ci_commit"],
-            "ci_run_id": snapshot_evidence["push_run_id"],
-            "push_run_id": snapshot_evidence["push_run_id"],
-            "pr_run_id": snapshot_evidence["pr_run_id"],
-            "ci_commit": snapshot_evidence["last_verified_ci_commit"],
-            "ci_status": snapshot_evidence["ci_status"],
-            "test_count": snapshot_evidence["test_count"],
-            "pr_status": snapshot_evidence["pr_status"],
-            "main_head": snapshot_evidence.get("main_head"),
-            "release_flow_status": snapshot_evidence["release_flow_status"],
-            "old_tag_deleted": snapshot_evidence["old_tag_deleted"],
-        }
-        snap_mismatches = verify_baseline_semantic_facts(
-            actual_content, expected_snapshot_facts, scope="STD018_CURRENT_SNAPSHOT"
-        )
-        mismatches.extend([f"[STD018_SCOPE] {m}" for m in snap_mismatches])
+            expected_snapshot_facts = {
+                "task_id": snapshot_evidence.get("task_id", "Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT"),
+                "candidate_commit": snapshot_evidence["candidate_commit"],
+                "snapshot_commit": snapshot_evidence["snapshot_commit"],
+                "last_verified_ci_commit": snapshot_evidence["last_verified_ci_commit"],
+                "ci_run_id": snapshot_evidence["push_run_id"],
+                "push_run_id": snapshot_evidence["push_run_id"],
+                "pr_run_id": snapshot_evidence["pr_run_id"],
+                "ci_commit": snapshot_evidence["last_verified_ci_commit"],
+                "ci_status": snapshot_evidence["ci_status"],
+                "test_count": snapshot_evidence["test_count"],
+                "pr_status": snapshot_evidence["pr_status"],
+                "main_head": snapshot_evidence.get("main_head"),
+                "release_flow_status": snapshot_evidence["release_flow_status"],
+                "old_tag_deleted": snapshot_evidence["old_tag_deleted"],
+            }
+            snap_mismatches = verify_baseline_semantic_facts(
+                actual_content, expected_snapshot_facts, scope="STD018_CURRENT_SNAPSHOT"
+            )
+            mismatches.extend([f"[STD018_SCOPE] {m}" for m in snap_mismatches])
 
-        expected_final_facts = {
-            "task_id": final_evidence.get("task_id", "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT"),
-            "candidate_commit": final_evidence["candidate_commit"],
-            "snapshot_commit": final_evidence["snapshot_commit"],
-            "last_verified_ci_commit": final_evidence["last_verified_ci_commit"],
-            "push_run_id": final_evidence.get("main_ci_run_id") or final_evidence["push_run_id"],
-            "pr_run_id": final_evidence["pr_run_id"],
-            "ci_status": final_evidence["ci_status"],
-            "test_count": final_evidence["test_count"],
-            "pr_number": final_evidence["pr_number"],
-            "pr_status": final_evidence["pr_status"],
-            "main_head": final_evidence["main_head"],
-            "release_flow_status": final_evidence["release_flow_status"],
-            "old_tag_deleted": final_evidence["old_tag_deleted"],
-            "release_tag": final_evidence["release_tag"],
-            "tag_object_sha": final_evidence["tag_object_sha"],
-            "peeled_commit": final_evidence["peeled_commit"],
-            "tag_publish_status": final_evidence["tag_publish_status"],
-            "pr_merged_by": final_evidence["pr_merged_by"],
-        }
-        final_mismatches = verify_baseline_semantic_facts(
-            actual_content, expected_final_facts, scope="STD019_FINAL_RELEASE"
-        )
-        mismatches.extend([f"[STD019_SCOPE] {m}" for m in final_mismatches])
+            expected_final_facts = {
+                "task_id": final_evidence.get("task_id", "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT"),
+                "candidate_commit": final_evidence["candidate_commit"],
+                "snapshot_commit": final_evidence["snapshot_commit"],
+                "last_verified_ci_commit": final_evidence["last_verified_ci_commit"],
+                "push_run_id": final_evidence.get("main_ci_run_id") or final_evidence["push_run_id"],
+                "pr_run_id": final_evidence["pr_run_id"],
+                "ci_status": final_evidence["ci_status"],
+                "test_count": final_evidence["test_count"],
+                "pr_number": final_evidence["pr_number"],
+                "pr_status": final_evidence["pr_status"],
+                "main_head": final_evidence["main_head"],
+                "release_flow_status": final_evidence["release_flow_status"],
+                "old_tag_deleted": final_evidence["old_tag_deleted"],
+                "release_tag": final_evidence["release_tag"],
+                "tag_object_sha": final_evidence["tag_object_sha"],
+                "peeled_commit": final_evidence["peeled_commit"],
+                "tag_publish_status": final_evidence["tag_publish_status"],
+                "pr_merged_by": final_evidence["pr_merged_by"],
+            }
+            final_mismatches = verify_baseline_semantic_facts(
+                actual_content, expected_final_facts, scope="STD019_FINAL_RELEASE"
+            )
+            mismatches.extend([f"[STD019_SCOPE] {m}" for m in final_mismatches])
+
         mismatches.extend(
             [f"[GIT_SNAPSHOT] {m}" for m in verify_git_snapshot_facts(project_root, actual_content, "baseline")]
         )

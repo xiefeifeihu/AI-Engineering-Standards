@@ -53,8 +53,13 @@
       "type": [
         "string",
         "null"
-      ],
-      "minLength": 3
+      ]
+    },
+    "rollback_authorization_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "ci_run_id": {
       "type": [
@@ -126,6 +131,12 @@
           "ci_run_id": {
             "type": [
               "integer",
+              "string",
+              "null"
+            ]
+          },
+          "rollback_authorization_ref": {
+            "type": [
               "string",
               "null"
             ]

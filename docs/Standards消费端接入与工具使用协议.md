@@ -9,9 +9,9 @@ approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
-last_updated: "2026-11-05"
+last_updated: "2026-11-16"
 supersedes: null
-change_summary: "Consumer integration, shared tool invocation, templates, exact Standards locking, CI, upgrade and rollback protocol."
+change_summary: "补充历史 Lock 首次建锁、工具发现来源、消费端身份和历史快照验证协议。"
 history_reference: "docs/API-CONTRACT.md"
 primary_entrypoint: false
 content_sha256: null
@@ -111,6 +111,44 @@ python -m pip install -r .standards/requirements-standards.txt
 模板使用 `0.0.0`、`v0.0.0` 和全零 SHA 作为 Schema 合法的哨兵值（TEMPLATE_ONLY），不是正式版本锁。未用 `discover` 输出替换全部哨兵值前，Lock **MUST NOT** 通过 `verify-lock`，也不得提交为正式锁定。
 
 更完整的模板清单见 `templates/consumer-project/README.md`。
+
+### 4.1 历史版本首次建锁（受控初始化，不是普通升级）
+
+本节仍属 IN_REVIEW / OWNER_MANDATORY 候选协议，不能作为自动批准。v3.0.0 CLI 没有 init-lock；verify-lock 和 prepare-upgrade 在缺少锁时 BLOCK 属于预期行为。禁止浮动 main 或模板哨兵值绕过。
+
+1. 先确认消费端当前实际使用的旧版正式 Standards，检查 Manifest、历史兼容矩阵、本工程 HEAD、历史测试。版本不确定时 NOT_VERIFIABLE，严禁猜测。
+2. 核验旧版官方 Annotated Tag、Tag Object SHA、Peeled Commit、VERSION、main 祖先关系及真实 CI。签名未核验不得宣称已签名。
+3. 使用 templates/standards.lock.template.json 在独立候选分支建立历史 Lock，填入经核实的 repository/version/tag/tag_object_sha/peeled_commit、真实 locked_at 和 lock_reason；首次 previous_locks 为空，不伪造历史锁。
+4. Owner 必须对历史基线和首次锁定明确批准，记录真实候选 Commit、内容摘要和审批引用。缺少可信审批验证适配器时保留 NOT_VERIFIABLE，严禁凭本地 JSON 自行晋升。
+5. 使工程 Manifest 与历史 Lock 对齐；兼容矩阵仅描述兼容范围，不成为第二份锁，也不得要求其他工程跟随。
+6. 完成 schema 与 verify-lock 后，才允许从该历史 Lock 开始 compare/impact/prepare-upgrade；H4 必需测试和 CI 全绿、独立审核和 Owner 批准后，才执行 promote；旧锁必须写入 previous_locks 并校验 rollback。
+
+AI-HUB H1 的只读实例（仅供核验，不是其他工程默认值）：v2.11.0 历史 Tag Object = 2f4b4b54348a5ac8891e5a0b33c04635a27213a0；Peeled Commit = 5e17c0ef560ab8abafe880b988d70f85f380a104。目标 v3.0.0 Tag Object = 8256bb384e62894219db0992a2cb57e16d4fa8cd；Peeled Commit = 8b223019c254e0edeb94576b94af46c1e48b0316。可核实对象事实不等于审批通过。
+
+### 4.2 只读工具的来源和身份语义
+
+- REMOTE_OFFICIAL_DISCOVERY 只用于已查询官方远端 refs 的模式；LOCAL_CLONE_DISCOVERY 只能证明本地 Clone 中的 refs，不得将本地 main 冒充远端实时 main，远端未核实时返回 NOT_VERIFIABLE。
+- 祖先检查退出码 1 表示确证非祖先；退出码非 0/1 表示对象缺失或命令异常，返回 NOT_VERIFIABLE，不可作为 NOT_ON_MAIN_BRANCH 事实失败。
+- INPUT_STANDARDS_COMMIT/TARGET_STANDARDS_COMMIT 是规范仓库的 Commit；CONSUMER_COMMIT 是消费端 Git HEAD，CONSUMER_WORKTREE_STATUS 表示其工作区。消费端身份不可验证时兼容评估不能完整 PASS。
+- impact 的 AGENTS/CLAUDE 文本扫描是辅助静态检查；Tests、Security、Release、Business API、Runtime 未执行时不得标记 COMPATIBLE。
+- 消费端工作区必须为 CLEAN 才能将 `CONSUMER_VERIFICATION_STATUS` 标记为 PASS；DIRTY 或 HEAD 不可读时返回 NOT_VERIFIABLE，并使影响分析保持 PARTIAL。静态扫描必须正确跳过多行 HTML 注释，只忽略以明确历史标签开头的历史说明，并报告 Windows 盘符路径与 UNC 绝对路径的文件/行号。
+- verify-lock 负责 Lock、Manifest 和官方 Tag 的精确绑定，不将 compatibility_matrix.yaml 变成第二个锁；矩阵中消费工程自己的兼容范围由工程级适配检查核对。
+
+### 4.3 历史锁定安全回滚契约（F11）
+
+- 历史 Lock（如初始引导态）`approval_evidence_ref: null` 属于合规历史事实，Schema 与工具均允许直接回滚，不得因此报错阻断。
+- 执行回滚必须提供当前 Owner 回滚授权：`python tools/standards_sync/cli.py rollback --project-root . --rollback-authorization-ref <PATH>`。该参数在官方 CLI 中为强制必选（默认 `require_authorization=True`），杜绝智能体无授权直接修改锁文件。
+- 回滚前必须调用 `verify_official_historical_tag` 核验目标 Tag 在官方规范仓远端存在、Tag 对象与剥离提交匹配、且位于官方 main 祖先链上；远端不可达或网络超时返回 `NOT_VERIFIABLE`，不匹配返回 `FAIL`。
+- 历史 Lock 若缺少 CI 状态记录，回滚后严格标记为 `NOT_VERIFIABLE`，严禁假定或自动回退为 PASS；`promote_upgrade` 保存历史 Lock 至 `previous_locks` 时同样严格继承或默认 `NOT_VERIFIABLE`。
+- 回滚过程原子更新 `standards.lock.json` 与 `engineering-manifest.yaml`；任一失败完全还原，保留 `previous_locks` 完整历史审计栈。
+
+### 4.4 方案 C 单 Owner 双 Commit PR Merge 审批集成（F12）
+
+- 在消费端 PR 审批与晋升中，通过 `commit_bindings` 显式解耦消费端候选 HEAD 与 Standards Peeled Commit（包含 repository、target_tag、tag_object_sha、peeled_commit 4 项完整字段），并通过 `content_bindings` 绑定门禁映射与清单摘要，杜绝概念混淆。
+- 审批记录与 `approval_event` 内的 `commit_bindings` 和 `content_bindings` 必须逐字段严格相等；`event_timestamp` 必须精确等于 GitHub PR API 返回的 `merged_at`。
+- 审批凭证通过 GitHub API 读取 PR Merge 事件，强制核验 `merged=true`、`merged_by=Owner`、`base.ref=main`、`head.sha=consumer.candidate_commit`。
+- 编程智能体严禁参与或自批审批（`CODING_AGENT` 角色强阻断）；严禁智能体执行 PR 合并；废除未实现的 `SIGNED_OWNER_EVENT` 伪枚举。
+- 针对 `STANDARDS_LOCK_PROMOTION` 和 `LOCK_ROLLBACK`，强制要求双向绑定，严禁使用单 Commit 遗留旁路绕过。
 
 ## 5. 每次任务启动与工具调用顺序
 

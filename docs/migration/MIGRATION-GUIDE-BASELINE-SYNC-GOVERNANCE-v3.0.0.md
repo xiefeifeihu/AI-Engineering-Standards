@@ -9,9 +9,9 @@ approval_scope: "OWNER_MANDATORY"
 approval_evidence_ref: null
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
-last_updated: "2026-11-12"
+last_updated: "2026-11-16"
 supersedes: null
-change_summary: "AI-Engineering-Hub first consumer pilot plan for Standards v3.0.0 official release; other consumers excluded."
+change_summary: "汇总 AI-HUB H1 F01-F07 反馈与 H2-H5 受控迁移计划。"
 history_reference: null
 primary_entrypoint: false
 content_sha256: null
@@ -153,3 +153,30 @@ GitHub main 的历史快照不得替代执行时的本机事实。结果缺失�
 ## 6. 后续决策
 
 AI-Hub 试点完成后，由 Owner 根据独立验收报告评估该接入模式是否可复用；任何其他工程仍须由其 Owner 独立决定是否接入，不存在默认推广或自动加入。AI-KB、VTIP、SideCar 的接入时间、版本和迁移范围均保持未决；Standards 不得预先替这些工程作出批准。
+
+## 7. 首个消费端 H1 反馈与受控迁移补充（Std-020 候选）
+
+本节根据 HUB-001 只读发现提出修复和绕行方案，仍处于 PROPOSED / NOT_APPROVED；本文件 Frontmatter 保持 IN_REVIEW。Standards 的 v3.0.0 Annotated Tag 不移动，AI-HUB 的迁移也不自动获批。
+
+| 反馈 | 正式规范约束 | AI-HUB 过渡控制 | Standards 侧整改 |
+| :--- | :--- | :--- | :--- |
+| F01 | 远端 main 祖先核验不得混淆缺少对象与非祖先 | 通过官方 GitHub Compare 核验，缺少本地对象时 NOT_VERIFIABLE | 区分 Git exit 1 与命令错误，必要时更新本地对象库再复核 |
+| F02 | 最新正式来源是官方远端 | 不以本地 Clone 的 main 冒充官方实时 main | 返回发现模式和实际观测来源 |
+| F03 | compatibility matrix 不能成为第二个 Lock | Lock 与 Manifest 精确一致，矩阵只表达本工程组件兼容关系 | 修正 verify-lock 的描述和边界 |
+| F04 | Agent 入口禁止固定版本和 Commit | 在现有工作树上人工复核固定版本、SHA、机器绝对路径，保留行号证据 | 修复 impact 正则及定位输出 |
+| F05 | 首次接入必须历史锁定可追溯 | 从 v2.11.0 正式 Tag 受控建立历史 Lock，再准备 v3.0.0 候选 | 补齐首次建锁说明，不假装已有 init-lock 命令 |
+| F06 | 跨仓 Commit 必须区分 | 分别记录 Hub HEAD 和输入/目标 Standards Commit | impact 增加独立消费端身份字段 |
+| F07 | 文档状态不得自批或假 ACTIVE | 仅以 ACTIVE 正式 STD 为约束，不把本指南当已批准标准 | 索引按 Frontmatter 同步，并另列审批/生效待办 |
+| F10 | 基线生成器 Scope 彻底解耦 | 消费端运行默认 consumer scope，无需 Standards 发布证据 | 增加 `--scope {consumer,standards-release}`，CI 显式指定 standards-release |
+| F11 | 历史基线 Lock 回滚契约完善 | 允许历史初始 Lock 无审批证据；CLI rollback 强制要求当前 Owner 授权与官方 Tag 远端一致性核验 | Schema 允许 null；加 `--rollback-authorization-ref`（默认强制）；官方 Tag 远端与祖先核验；CI 缺省 NOT_VERIFIABLE；事务原子回滚 |
+| F12 | 单 Owner 双 Commit PR Merge 审批契约 | 解耦消费端候选 Commit 与 Standards Peeled Commit，强绑定内容摘要与时间戳 | 采用方案 C 增加 `commit_bindings` 与 `content_bindings`；强时间戳匹配；智能体合并权限阻断；禁止单 Commit 旁路绕过；废除 `SIGNED_OWNER_EVENT` |
+
+### 7.1 单轮实施的依赖关系
+
+建议合并 H2 + H3（共享工具接入、历史 Lock/Manifest、Preflight、Agent 入口、文档生命周期），随后 H4 在**同一消费工程候选 Commit**上执行全部真实门禁，再在独立审核、Owner 批准和有效审批证据之后 H5 晋升并验证回滚。H2/H3/H4 中出现未知项不得提前报告兼容通过。
+
+Standards 对 F01/F02/F04/F06 的修复已经纳入当前 Std-020 PR #12，但当前仍然属于未合并候选（CANDIDATE / NOT_APPROVED），`v3.0.0` 正式 Tag 不包含这些候选修复。消费端不得因为 PR #12 已有 PASS CI 就直接认定正式版本已具备这些能力；修复分支上的共享工具不得冒充已正式发布的 v3.0.0。AI-HUB 正式锁仍只能采用 v3.0.0 Tag 的发布字节；必须以 PR 合并后的正式版本及其发布证据为准。若官方 v3.0.0 工具不能满足强制门禁，应停止 promote 并记录 BLOCK，而不能让未发布工具代替正式版本过门禁。
+
+### 7.2 H1 证据边界
+
+H1 原始 ZIP 的逐文件 SHA256 复核应由具备原始字节访问权限的独立审核环境执行。只读报告/聊天摘要不能代替证据本体；历史 H1 的 PASS 只代表发现阶段完成，不代表 v3.0.0 升级已完成。

@@ -45,8 +45,10 @@ def run_git(project_root: Path, args: List[str], timeout: int = 5) -> Tuple[int,
             timeout=timeout,
         )
         return res.returncode, (res.stdout or "").strip()
+    except subprocess.TimeoutExpired as e:
+        return 124, f"TIMEOUT: {e}"
     except Exception as e:
-        return 1, str(e)
+        return 128, f"GIT_EXECUTION_NOT_VERIFIABLE: {e}"
 
 
 def query_remote_main_head(project_root: Path, timeout: int = 8) -> str:
@@ -259,17 +261,13 @@ def verify_git_snapshot_facts(
     else:
         captured_at = captured_matches[0]
 
-    expected_branch = resolve_snapshot_branch_name(project_root)
-    # A feature-branch snapshot remains valid after its PR is merged to main.
-    # The captured local_head is independently checked against branch history below.
-    if (
-        recorded_branch is not None
-        and expected_branch not in ("HEAD", "main")
-        and recorded_branch != expected_branch
-    ):
-        errors.append(
-            f"{prefix}_GIT_SNAPSHOT_BRANCH_MISMATCH: recorded '{recorded_branch}', live branch '{expected_branch}'"
-        )
+    is_historical = False
+    if document_kind == "baseline":
+        if "RELEASE_STATUS=RELEASED" in scope_text or "PR10=MERGED" in scope_text:
+            is_historical = True
+    elif document_kind == "handoff":
+        if re.search(r"^STATUS=COMPLETED$", identity_text, re.M):
+            is_historical = True
 
     if recorded_worktree_clean not in ("true", "false"):
         errors.append(f"{prefix}_GIT_SNAPSHOT_WORKTREE_STATE_INVALID: expected true/false")
@@ -282,13 +280,73 @@ def verify_git_snapshot_facts(
     if not branch_tip:
         errors.append(f"{prefix}_GIT_SNAPSHOT_BRANCH_TIP_NOT_VERIFIABLE: current branch tip unavailable")
 
+    expected_branch = resolve_snapshot_branch_name(project_root)
+    # A historical marker alone cannot exempt an old snapshot from freshness checks.
+    # The recorded local_head must be present in the current branch or official main history.
+    is_ancestor = bool(recorded_local_head and branch_tip and recorded_local_head == branch_tip)
+    ancestry_unverifiable = False
+    ancestry_details: List[str] = []
+
+    if recorded_local_head and branch_tip and not is_ancestor:
+        rc_anc, anc_err = run_git(
+            project_root,
+            ["merge-base", "--is-ancestor", recorded_local_head, branch_tip],
+            timeout=8,
+        )
+        if rc_anc == 0:
+            is_ancestor = True
+        elif rc_anc not in (1,):
+            ancestry_unverifiable = True
+            ancestry_details.append(f"current branch ancestry exit_code={rc_anc}: {anc_err}")
+
+    if not is_ancestor and recorded_local_head and remote_main_head != "NOT_VERIFIABLE":
+        if recorded_local_head == remote_main_head:
+            is_ancestor = True
+        else:
+            rc_anc_remote, remote_anc_err = run_git(
+                project_root,
+                ["merge-base", "--is-ancestor", recorded_local_head, remote_main_head],
+                timeout=8,
+            )
+            if rc_anc_remote == 0:
+                is_ancestor = True
+            elif rc_anc_remote not in (1,):
+                ancestry_unverifiable = True
+                ancestry_details.append(f"official main ancestry exit_code={rc_anc_remote}: {remote_anc_err}")
+
+    historical_snapshot_verified = is_historical and is_ancestor
+    if is_historical and not is_ancestor:
+        if ancestry_unverifiable or not recorded_local_head or not branch_tip or remote_main_head == "NOT_VERIFIABLE":
+            detail = "; ".join(ancestry_details) or "required Git history/object data is unavailable"
+            errors.append(
+                f"{prefix}_GIT_SNAPSHOT_HISTORICAL_ANCESTRY_NOT_VERIFIABLE: cannot prove historical local_head ancestry ({detail})"
+            )
+        else:
+            errors.append(
+                f"{prefix}_GIT_SNAPSHOT_HISTORICAL_ANCESTRY_MISMATCH: recorded local_head '{recorded_local_head}' is not an ancestor of the current branch or official main"
+            )
+
+    if (
+        recorded_branch is not None
+        and expected_branch not in ("HEAD", "main")
+        and recorded_branch != expected_branch
+        and not historical_snapshot_verified
+    ):
+        errors.append(
+            f"{prefix}_GIT_SNAPSHOT_BRANCH_MISMATCH: recorded '{recorded_branch}', live branch '{expected_branch}'"
+        )
+
     if captured_at:
         try:
             captured_dt = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
             if captured_dt.tzinfo is None:
                 raise ValueError("timezone missing")
             age_seconds = (datetime.now(timezone.utc) - captured_dt).total_seconds()
-            if age_seconds < -300 or age_seconds > 24 * 60 * 60:
+            if age_seconds < -300:
+                errors.append(
+                    f"{prefix}_GIT_SNAPSHOT_STALE: captured_at '{captured_at}' is in the future"
+                )
+            elif not historical_snapshot_verified and age_seconds > 24 * 60 * 60:
                 errors.append(
                     f"{prefix}_GIT_SNAPSHOT_STALE: captured_at '{captured_at}' is outside the 24-hour validity window"
                 )
