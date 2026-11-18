@@ -8,19 +8,18 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 - **基线生成器 Scope 彻底解耦 (F10 / STD-035)**:
   - 增加 `--scope {consumer,standards-release}` 参数（默认 `consumer`）。消费端工程仅校验自身 source_commit、文档完整性、SHA256、Git 快照及消费端真实 CI 证据，无需 Standards 发布证据；Standards 自身 CI 显式调用 `--scope standards-release` 执行全量语义事实校验。
   - 针对真实消费端工程夹具增加正向与反向作用域测试覆盖。
-- **历史基线 Lock 回滚契约与原子事务完善 (F11 / STD-034)**:
-  - `schemas/standards-lock.schema.json` 允许历史 bootstrap lock 的 `approval_evidence_ref: null`；CLI `rollback` 强制要求 `--rollback-authorization-ref`（默认 `require_authorization=True`），杜绝智能体无授权直接修改锁文件。
-  - 新增 `verify_official_historical_tag` 验证官方远端 Tag 存在性、Tag 对象/剥离提交一致性及 main 祖先链关系；远端不可达返回 `NOT_VERIFIABLE`，不匹配返回 `FAIL`。
-  - 历史 Lock 缺失 CI 记录时默认标记为 `NOT_VERIFIABLE`，严禁假定或自动回退为 PASS；`promote_upgrade` 保存历史 Lock 至 `previous_locks` 时同样严格继承或默认 `NOT_VERIFIABLE`；两文件事务原子更新并在故障时完整回滚，保留 `previous_locks` 审计链。
+- **历史基线 Lock 回滚契约与官方 Tag 校验加固 (F11 / STD-034)**:
+  - `schemas/standards-lock.schema.json` 允许历史 bootstrap lock 的 `approval_evidence_ref: null`；CLI `rollback` 强制要求 `--rollback-authorization-ref`，核心 API `rollback_lock` 彻底移除 `require_authorization=False` 安全旁路（传入 `False` 与无授权均直接拒绝），授权检查与摘要核验在任何远端查询或文件写入前完成。
+  - 加固 `verify_official_historical_tag`：强制校验官方 Tag Object、Peeled Commit、`main` 祖先关系与 `VERSION` 文件真实可读；`standards_root` 缺失、Git 对象缺失或远端不可达返回 `NOT_VERIFIABLE`，`VERSION` 或 Tag 不匹配返回 `FAIL`（不得跳过必要验证）。
+  - 历史 Lock 缺失 CI 记录时默认标记为 `NOT_VERIFIABLE`，严禁假定或自动回退为 PASS；`promote_upgrade` 保存历史 Lock 至 `previous_locks` 时同样严格继承或默认 `NOT_VERIFIABLE`。
 - **单 Owner 双 Commit PR Merge Event 审批契约方案 C (F12 / STD-034)**:
-  - 采用方案 C，通过 `commit_bindings` 显式解耦消费端候选 HEAD 与 Standards Peeled Commit，消除概念混淆。
-  - 强制要求审批记录与 `approval_event` 内部的 `commit_bindings`（consumer 2项、standards 4项）与 `content_bindings`（2项有效摘要）完全逐字段匹配；`event_timestamp` 必须精确等于 GitHub PR `merged_at`。
-  - 智能体权限边界强化：严禁智能体执行 PR 合并或扮演 Owner。
-  - 禁止单 Commit 旁路绕过：针对 `STANDARDS_LOCK_PROMOTION` 和 `LOCK_ROLLBACK` 作用域，强制要求双向绑定，禁止退化为单 Commit 遗留旁路。
-  - 审批范围细分新增 `STANDARDS_LOCK_PROMOTION` 与 `LOCK_ROLLBACK`；彻底废除未实现的 `SIGNED_OWNER_EVENT` 伪枚举。
-- **验收打包器语义与原子更新加固**:
+  - 修复 `promote_upgrade` 双 Commit 语义混淆：强制消费端 `consumer.candidate_commit` 与规范端 `standards.peeled_commit` 严格独立（禁止 `consumer.candidate_commit == standards.peeled_commit`，分别校验 Consumer PR HEAD 与 Standards Tag/Peeled Commit）。
+  - 实现 `content_bindings`（`ci_job_mapping_sha256`、`lock_manifest_sha256`）从实际工作区文件或受控 Git Commit 的规范化重算与双边比对；任一内容修改导致审批失效，文件或提交不可读返回 `NOT_VERIFIABLE` 或阻断。
+  - 强制要求审批记录与 `approval_event` 内部的 `commit_bindings` 与 `content_bindings` 逐字段匹配、`event_timestamp == merged_at`，严禁智能体自批/合并与单 Commit 遗留旁路绕过。
+  - 彻底废除未实现的 `SIGNED_OWNER_EVENT` 伪枚举。
+- **验收打包器可恢复多文件事务与事务日志加固**:
   - `scripts/package_acceptance.py` 彻底移除对 `task_id` 和 `version` 的静默回填逻辑，缺失必需字段时立即显式报错；强制要求 `run_id`、`task_id`、`version` 参数一致性并持久化写入 `manifest.json`。
-  - 打包全流程采用临时文件（`.tmp_*.zip`, `.tmp_*.sha256`），先执行解包抽检与 SHA-256 自校验，通过后再原子替换正式制品；任何故障注入下回滚 `manifest.json`、还原既有制品并清理临时文件。
+  - 从 Manifest 临时写入开始，将 Manifest、ZIP、Sidecar (`.sha256`) 临时写入及解压 SHA-256 验证全部纳入同一可恢复多文件事务（显式采用前置备份、`.tx_journal_*.json` 事务日志与临时还原文件+原子替换回滚）；覆盖 Manifest 替换失败、ZIP 写入失败、ZIP 成功/Sidecar 失败恢复、原文件恢复失败与清理失败场景，杜绝新 ZIP + 旧 Sidecar 混合状态。
 - Standards consumer impact now reports separate Standards input/target commits and consumer HEAD/worktree identity, with line-addressable guidance findings.
 - Added regression coverage for local-clone discovery provenance, missing Git ancestry objects, dirty consumer worktrees, multiline HTML comments, absolute paths, and historical snapshot ancestry.
 

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date, datetime
 import hashlib
 import json
 import os
@@ -110,10 +111,186 @@ def git_commit_exists(repo_root: Path, commit_sha: str) -> bool:
         return False
 
 
+def _json_safe(obj: Any) -> Any:
+    """Convert YAML/Python objects deterministically into JSON-serializable primitives."""
+    if isinstance(obj, dict):
+        return {str(k): _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    return obj
+
+
+def compute_content_bindings(
+    project_root: Optional[Path] = None,
+    git_commit: Optional[str] = None,
+    prefer_git: bool = False,
+) -> Tuple[str, Optional[Dict[str, str]], List[str]]:
+    """Recompute canonical SHA-256 content bindings from project files or a controlled Git commit.
+
+    Canonicalization algorithm:
+    1. ci_job_mapping_sha256:
+       Parse `engineering-manifest.yaml`, extract `standards_validation.required_ci_jobs`
+       (default `{}` if key omitted), serialize deterministically with sorted keys and
+       compact JSON (`separators=(',', ':'), ensure_ascii=False`), UTF-8 encode, SHA-256.
+    2. lock_manifest_sha256:
+       Parse `standards.lock.json` and `engineering-manifest.yaml`, construct
+       `{"standards_lock": lock_data, "engineering_manifest": manifest_data}`,
+       serialize deterministically with sorted keys and compact JSON, UTF-8 encode, SHA-256.
+
+    Returns (status, digests_dict_or_None, errors) where status is PASS, FAIL, or NOT_VERIFIABLE.
+    """
+    if project_root is None:
+        return "NOT_VERIFIABLE", None, ["UNVERIFIABLE_CONTENT_BINDINGS: project_root is missing"]
+    root_path = Path(project_root).resolve()
+    if not root_path.exists() or not root_path.is_dir():
+        return "NOT_VERIFIABLE", None, [f"UNVERIFIABLE_CONTENT_BINDINGS: project_root '{root_path}' does not exist"]
+
+    manifest_raw: Optional[str] = None
+    lock_raw: Optional[str] = None
+
+    if prefer_git:
+        if not git_commit or not re.match(r"^[0-9a-f]{40}$", str(git_commit)):
+            return "NOT_VERIFIABLE", None, [f"UNVERIFIABLE_CONTENT_BINDINGS: Invalid or missing git_commit '{git_commit}'"]
+        try:
+            rc_chk = subprocess.run(
+                ["git", "-C", str(root_path), "cat-file", "-e", f"{git_commit}^{{commit}}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if rc_chk.returncode != 0:
+                return "NOT_VERIFIABLE", None, [f"UNVERIFIABLE_CONTENT_BINDINGS: Git commit '{git_commit}' is unreadable in {root_path}"]
+            res_m = subprocess.run(
+                ["git", "-C", str(root_path), "show", f"{git_commit}:engineering-manifest.yaml"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=5,
+            )
+            if res_m.returncode != 0:
+                return "NOT_VERIFIABLE", None, [f"UNVERIFIABLE_CONTENT_BINDINGS: Cannot read engineering-manifest.yaml at {git_commit}"]
+            manifest_raw = res_m.stdout
+            res_l = subprocess.run(
+                ["git", "-C", str(root_path), "show", f"{git_commit}:standards.lock.json"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=5,
+            )
+            if res_l.returncode != 0:
+                return "NOT_VERIFIABLE", None, [f"UNVERIFIABLE_CONTENT_BINDINGS: Cannot read standards.lock.json at {git_commit}"]
+            lock_raw = res_l.stdout
+        except Exception as exc:
+            return "NOT_VERIFIABLE", None, [f"UNVERIFIABLE_CONTENT_BINDINGS: Git read error: {exc}"]
+    else:
+        manifest_path = root_path / "engineering-manifest.yaml"
+        lock_path = root_path / "standards.lock.json"
+        if not manifest_path.exists():
+            return "NOT_VERIFIABLE", None, [f"UNVERIFIABLE_CONTENT_BINDINGS: Missing {manifest_path}"]
+        if not lock_path.exists():
+            return "NOT_VERIFIABLE", None, [f"UNVERIFIABLE_CONTENT_BINDINGS: Missing {lock_path}"]
+        try:
+            manifest_raw = manifest_path.read_text(encoding="utf-8")
+            lock_raw = lock_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            return "NOT_VERIFIABLE", None, [f"UNVERIFIABLE_CONTENT_BINDINGS: Failed reading files: {exc}"]
+
+    try:
+        manifest_data = yaml.safe_load(manifest_raw)
+        if not isinstance(manifest_data, dict):
+            return "FAIL", None, ["CONTENT_BINDING_PARSE_ERROR: engineering-manifest.yaml must be a YAML mapping"]
+    except Exception as exc:
+        return "FAIL", None, [f"CONTENT_BINDING_PARSE_ERROR: Invalid engineering-manifest.yaml: {exc}"]
+
+    try:
+        lock_data = json.loads(lock_raw)
+        if not isinstance(lock_data, dict):
+            return "FAIL", None, ["CONTENT_BINDING_PARSE_ERROR: standards.lock.json must be a JSON object"]
+    except Exception as exc:
+        return "FAIL", None, [f"CONTENT_BINDING_PARSE_ERROR: Invalid standards.lock.json: {exc}"]
+
+    try:
+        required_ci_jobs = (manifest_data.get("standards_validation") or {}).get("required_ci_jobs")
+        if required_ci_jobs is None:
+            required_ci_jobs = {}
+        mapping_canonical = json.dumps(
+            _json_safe(required_ci_jobs),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        ci_job_mapping_sha256 = "sha256:" + hashlib.sha256(mapping_canonical).hexdigest()
+
+        lock_manifest_payload = _json_safe({
+            "standards_lock": lock_data,
+            "engineering_manifest": manifest_data,
+        })
+        lock_manifest_canonical = json.dumps(
+            lock_manifest_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        lock_manifest_sha256 = "sha256:" + hashlib.sha256(lock_manifest_canonical).hexdigest()
+    except Exception as exc:
+        return "FAIL", None, [f"CONTENT_BINDING_COMPUTE_ERROR: {exc}"]
+
+    return "PASS", {
+        "ci_job_mapping_sha256": ci_job_mapping_sha256,
+        "lock_manifest_sha256": lock_manifest_sha256,
+    }, []
+
+
+def verify_content_bindings_digests(
+    record: Dict[str, Any],
+    event: Optional[Dict[str, Any]] = None,
+    project_root: Optional[Path] = None,
+    git_commit: Optional[str] = None,
+    prefer_git: bool = False,
+) -> Tuple[str, List[str]]:
+    """Verify actual recomputed content_bindings digests against BOTH approval record and event."""
+    rec_cb = record.get("content_bindings")
+    ev_cb = event.get("content_bindings") if isinstance(event, dict) else None
+    if not isinstance(rec_cb, dict):
+        return "FAIL", ["MISSING_CONTENT_BINDINGS: Approval record missing content_bindings"]
+    if isinstance(event, dict) and not isinstance(ev_cb, dict):
+        return "FAIL", ["MISSING_CONTENT_BINDINGS: Approval event missing content_bindings"]
+    if isinstance(event, dict) and rec_cb != ev_cb:
+        return "FAIL", ["CONTENT_BINDINGS_MISMATCH: record content_bindings != event content_bindings"]
+
+    status, computed, errs = compute_content_bindings(
+        project_root=project_root,
+        git_commit=git_commit,
+        prefer_git=prefer_git,
+    )
+    if status != "PASS" or computed is None:
+        return status, errs
+
+    mismatches: List[str] = []
+    for key in ("ci_job_mapping_sha256", "lock_manifest_sha256"):
+        expected = computed[key]
+        rec_val = normalize_sha256(rec_cb.get(key))
+        if rec_val != expected:
+            mismatches.append(f"CONTENT_BINDING_DIGEST_MISMATCH: record.{key} ({rec_val}) != computed ({expected})")
+        if isinstance(ev_cb, dict):
+            ev_val = normalize_sha256(ev_cb.get(key))
+            if ev_val != expected:
+                mismatches.append(f"CONTENT_BINDING_DIGEST_MISMATCH: event.{key} ({ev_val}) != computed ({expected})")
+
+    if mismatches:
+        return "FAIL", mismatches
+    return "PASS", []
+
+
 def verify_approval_event_provenance(
     record: Dict[str, Any],
     standards_root: Optional[Path] = None,
     simulate_data: Optional[Dict[str, Any]] = None,
+    project_root: Optional[Path] = None,
+    content_binding_git_commit: Optional[str] = None,
+    prefer_git_content: bool = False,
 ) -> Tuple[str, List[str]]:
     """Verify Owner approval through GitHub PR merge or review API; never trust JSON status labels."""
     event = record.get("approval_event")
@@ -214,12 +391,16 @@ def verify_approval_event_provenance(
         commit_bindings = rec_cb or ev_cb
         if commit_bindings:
             consumer_binding = commit_bindings.get("consumer") or {}
-            expected_head = consumer_binding.get("candidate_commit") or record.get("candidate_commit") or ""
+            if not consumer_binding:
+                return "FAILED", ["MISSING_CONSUMER_COMMIT_BINDING: commit_bindings.consumer is required"]
+            expected_head = str(consumer_binding.get("candidate_commit") or "").strip()
             expected_repo = consumer_binding.get("repository") or repository
             if expected_repo and repository.lower() != expected_repo.lower():
                 return "FAILED", [f"APPROVAL_PR_REPO_MISMATCH: PR repo '{repository}' != expected consumer repo '{expected_repo}'"]
-            if not expected_head or not re.match(r"^[0-9a-f]{40}$", str(expected_head)):
+            if not expected_head or not re.match(r"^[0-9a-f]{40}$", expected_head):
                 return "FAILED", [f"INVALID_CONSUMER_CANDIDATE_COMMIT: '{expected_head}'"]
+            if record.get("candidate_commit") and record.get("candidate_commit") != expected_head:
+                return "FAILED", [f"CONSUMER_COMMIT_MISMATCH: record.candidate_commit '{record.get('candidate_commit')}' != commit_bindings.consumer.candidate_commit '{expected_head}'"]
             if head_sha != expected_head:
                 return "FAILED", [f"APPROVAL_PR_HEAD_COMMIT_MISMATCH: PR head.sha '{head_sha}' != consumer candidate_commit '{expected_head}'"]
             if event.get("candidate_commit") and event.get("candidate_commit") != expected_head:
@@ -241,6 +422,8 @@ def verify_approval_event_provenance(
                     return "FAILED", [f"INVALID_STANDARDS_TAG_OBJECT_SHA: '{std_tag_obj}'"]
                 if not std_peeled or not re.match(r"^[0-9a-f]{40}$", str(std_peeled)):
                     return "FAILED", [f"INVALID_STANDARDS_PEELED_COMMIT: '{std_peeled}'"]
+                if expected_head == std_peeled:
+                    return "FAILED", ["DUAL_COMMIT_CONFUSION_FORBIDDEN: consumer.candidate_commit cannot equal standards.peeled_commit"]
         else:
             if record_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK"):
                 return "FAILED", ["LEGACY_SINGLE_COMMIT_BYPASS_FORBIDDEN: Scope requires dual commit_bindings"]
@@ -284,6 +467,19 @@ def verify_approval_event_provenance(
             norm_appr = record_approved_at.replace("Z", "+00:00")
             if norm_merged != norm_appr:
                 return "FAILED", [f"APPROVAL_TIME_MISMATCH: approved_at '{record_approved_at}' does not match GitHub PR merged_at '{merged_at}'"]
+
+        if record_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK") or event_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK") or content_bindings:
+            cb_st, cb_errs = verify_content_bindings_digests(
+                record=record,
+                event=event,
+                project_root=project_root,
+                git_commit=content_binding_git_commit,
+                prefer_git=prefer_git_content,
+            )
+            if cb_st == "FAIL":
+                return "FAILED", cb_errs
+            if cb_st != "PASS":
+                return cb_st, cb_errs
 
         return "VERIFIED", []
 
@@ -379,6 +575,9 @@ def validate_approval_record(
     verify_provenance: bool = True,
     standards_root: Optional[Path] = None,
     simulate_provenance_data: Optional[Dict[str, Any]] = None,
+    project_root: Optional[Path] = None,
+    content_binding_git_commit: Optional[str] = None,
+    prefer_git_content: bool = False,
 ) -> Tuple[bool, List[str]]:
     errors: List[str] = []
 
@@ -480,12 +679,38 @@ def validate_approval_record(
         if not git_commit_exists(repo_root, cand_commit):
             errors.append(f"UNVERIFIABLE_CANDIDATE_COMMIT: Commit '{cand_commit}' does not exist in {repo_root}")
 
+    effective_project_root = project_root or repo_root
+    cb_obj = record.get("commit_bindings")
+    if isinstance(cb_obj, dict):
+        cons_b = cb_obj.get("consumer") or {}
+        std_b = cb_obj.get("standards") or {}
+        if cons_b.get("candidate_commit") and cand_commit != cons_b.get("candidate_commit"):
+            errors.append(
+                f"CONSUMER_COMMIT_MISMATCH: candidate_commit '{cand_commit}' != commit_bindings.consumer.candidate_commit '{cons_b.get('candidate_commit')}'"
+            )
+        if cons_b.get("candidate_commit") and std_b.get("peeled_commit") and cons_b.get("candidate_commit") == std_b.get("peeled_commit"):
+            errors.append("DUAL_COMMIT_CONFUSION_FORBIDDEN: consumer.candidate_commit cannot equal standards.peeled_commit")
+
+    if not verify_provenance and effective_project_root is not None and isinstance(record.get("content_bindings"), dict):
+        cb_st, cb_errs = verify_content_bindings_digests(
+            record=record,
+            event=record.get("approval_event"),
+            project_root=effective_project_root,
+            git_commit=content_binding_git_commit,
+            prefer_git=prefer_git_content,
+        )
+        if cb_st != "PASS":
+            errors.extend(cb_errs)
+
     # 7. Authenticity & Provenance Check
     if verify_provenance and approval_status in ("AI_APPROVED", "OWNER_APPROVED"):
         prov_status, prov_errors = verify_approval_event_provenance(
             record,
             standards_root=standards_root,
             simulate_data=simulate_provenance_data,
+            project_root=effective_project_root,
+            content_binding_git_commit=content_binding_git_commit,
+            prefer_git_content=prefer_git_content,
         )
         if prov_status != "VERIFIED":
             errors.extend(prov_errors)

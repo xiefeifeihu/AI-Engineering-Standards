@@ -6,12 +6,13 @@
 - Manifest-driven packaging: every file listed in `manifest.json` must exist,
   have size > 0 matching `size`, and match `sha256`.
 - Enforces required manifest metadata: `task_id`, `version`, `run_id`, `created_at` (ISO 8601 with timezone), and `files`.
-- Ensures parameter consistency between CLI arguments and manifest data.
-- Persists `run_id` into `manifest.json` so the archive contains the authoritative run_id.
-- `manifest.json` must NOT contain the final ZIP's own SHA256 or self-reference.
+- Uses an explicit recoverable multi-file transaction with a persistent transaction journal
+  (`.tx_journal_*.json`) across `manifest.json`, `<zip_name>`, and `<zip_name>.sha256`
+  (cross-file updates on OS filesystems are not natively atomic as a group; therefore pre-commit
+  backups, staged temp files, per-file `os.replace`, and temp+replace rollback are enforced).
 - Formal `output_directory` is strictly pinned to `.artifacts/packages/`.
 - Computes external `<zip_name>.sha256` after ZIP creation and performs real
-  extraction + SHA256 verification.
+  extraction + SHA256 verification before committing targets.
 """
 from __future__ import annotations
 
@@ -22,10 +23,9 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import sys
 import time
-from typing import Any
+from typing import Any, Callable
 import zipfile
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -62,6 +62,7 @@ def validate_acceptance_manifest(
     expected_version: str | None = None,
     expected_run_id: str | None = None,
     repo_root: Path = REPO_ROOT,
+    manifest_override: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if not source_acceptance.exists() or not source_acceptance.is_dir():
         raise FileNotFoundError(f"Acceptance directory not found: {source_acceptance}")
@@ -72,11 +73,14 @@ def validate_acceptance_manifest(
     if illegal_zips:
         raise ValueError(f"Forbidden ZIP archive inside acceptance directory: {illegal_zips[0]}")
 
-    manifest_path = source_acceptance / "manifest.json"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"manifest.json not found in {source_acceptance}")
+    if manifest_override is not None:
+        manifest_data = manifest_override
+    else:
+        manifest_path = source_acceptance / "manifest.json"
+        if not manifest_path.exists():
+            raise FileNotFoundError(f"manifest.json not found in {source_acceptance}")
+        manifest_data = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
 
-    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     if not isinstance(manifest_data, dict):
         raise ValueError("manifest.json root must be a JSON object")
 
@@ -161,12 +165,64 @@ def validate_acceptance_manifest(
     return manifest_data, validated_entries
 
 
+def _default_unlink(path: Path) -> None:
+    path.unlink()
+
+
+def _cleanup_single_file(path: Path, do_unlink: Callable[[Path], None], errors: list[str]) -> None:
+    if path.exists():
+        try:
+            do_unlink(path)
+        except Exception as exc:
+            errors.append(f"Failed to unlink {path}: {exc}")
+
+
+def _cleanup_dir(dir_path: Path, do_unlink: Callable[[Path], None], errors: list[str]) -> None:
+    if not dir_path.exists():
+        return
+    try:
+        for root_dir, dirs, files in os.walk(dir_path, topdown=False):
+            r_path = Path(root_dir)
+            for fname in files:
+                fpath = r_path / fname
+                try:
+                    do_unlink(fpath)
+                except Exception as exc:
+                    errors.append(f"Failed to unlink {fpath}: {exc}")
+            for dname in dirs:
+                dpath = r_path / dname
+                try:
+                    dpath.rmdir()
+                except Exception as exc:
+                    errors.append(f"Failed to rmdir {dpath}: {exc}")
+        dir_path.rmdir()
+    except Exception as exc:
+        errors.append(f"Failed to remove dir {dir_path}: {exc}")
+
+
+def _atomic_restore_file(
+    backup_path: Path,
+    target_path: Path,
+    tmp_restore_path: Path,
+    do_replace: Callable[[Path, Path], None],
+) -> None:
+    """Restore target_path from backup_path using a temp file and atomic replacement."""
+    tmp_restore_path.write_bytes(backup_path.read_bytes())
+    do_replace(tmp_restore_path, target_path)
+
+
 def package_acceptance(
     task_id: str,
     version: str | None = None,
     run_id: str | None = None,
     repo_root: Path = REPO_ROOT,
+    replace_fn: Callable[[Path, Path], None] | None = None,
+    unlink_fn: Callable[[Path], None] | None = None,
 ) -> dict[str, Any]:
+    """Execute recoverable multi-file transaction across manifest.json, ZIP, and .sha256 sidecar."""
+    do_replace = replace_fn or os.replace
+    do_unlink = unlink_fn or _default_unlink
+
     raw_ver, v_ver = normalize_version(version, repo_root)
     source_acceptance = repo_root / ".artifacts" / "acceptance" / task_id / v_ver
     if not source_acceptance.exists() or not source_acceptance.is_dir():
@@ -180,13 +236,12 @@ def package_acceptance(
     if not isinstance(manifest_data, dict):
         raise ValueError("manifest.json root must be a JSON object")
 
-    # Enforce non-silent validation of task_id and version in manifest
+    # Enforce non-silent validation of task_id and version in manifest before transaction starts
     if not manifest_data.get("task_id"):
         raise ValueError("Manifest missing required field: 'task_id'")
     if not manifest_data.get("version"):
         raise ValueError("Manifest missing required field: 'version'")
 
-    # run_id resolution and persistence
     if run_id and str(run_id).strip():
         effective_run_id = str(run_id).strip()
     else:
@@ -196,94 +251,185 @@ def package_acceptance(
         else:
             effective_run_id = f"run-{int(time.time())}"
 
-    manifest_changed = False
-    original_manifest_bytes = manifest_path.read_bytes()
-    if manifest_data.get("run_id") != effective_run_id:
-        manifest_data["run_id"] = effective_run_id
-        manifest_changed = True
-        tmp_manifest = manifest_path.with_suffix(f".tmp_{os.getpid()}_{int(time.time() * 1000)}")
-        tmp_manifest.write_text(json.dumps(manifest_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        os.replace(tmp_manifest, manifest_path)
-
     pkg_dir = repo_root / ".artifacts" / "packages"
     pkg_dir.mkdir(parents=True, exist_ok=True)
     zip_name = f"Acceptance-{task_id}-{v_ver}.zip"
     zip_path = pkg_dir / zip_name
     sha_path = pkg_dir / f"{zip_name}.sha256"
 
-    # Pre-existing backups in case we need to restore on failure
-    pre_existing_zip = zip_path.read_bytes() if zip_path.exists() else None
-    pre_existing_sha = sha_path.read_bytes() if sha_path.exists() else None
+    tx_id = f"{os.getpid()}_{int(time.time() * 1000)}"
+    tmp_manifest = manifest_path.with_name(f".tmp_manifest_{tx_id}.json")
+    tmp_zip = pkg_dir / f".tmp_{zip_name}_{tx_id}.zip"
+    tmp_sha = pkg_dir / f".tmp_{zip_name}_{tx_id}.sha256"
+    extract_dir = pkg_dir / f".verify_extract_{tx_id}"
 
-    tmp_zip = pkg_dir / f".tmp_{zip_name}_{os.getpid()}_{int(time.time() * 1000)}.zip"
-    tmp_sha = pkg_dir / f".tmp_{zip_name}_{os.getpid()}_{int(time.time() * 1000)}.sha256"
+    bak_manifest = manifest_path.with_name(f".bak_manifest_{tx_id}.json")
+    bak_zip = pkg_dir / f".bak_{zip_name}_{tx_id}.zip"
+    bak_sha = pkg_dir / f".bak_{zip_name}_{tx_id}.sha256"
+
+    rst_manifest = manifest_path.with_name(f".tmp_restore_manifest_{tx_id}.json")
+    rst_zip = pkg_dir / f".tmp_restore_{zip_name}_{tx_id}.zip"
+    rst_sha = pkg_dir / f".tmp_restore_{zip_name}_{tx_id}.sha256"
+
+    journal_path = pkg_dir / f".tx_journal_{task_id}_{v_ver}_{tx_id}.json"
+
+    orig_manifest_existed = manifest_path.exists()
+    orig_zip_existed = zip_path.exists()
+    orig_sha_existed = sha_path.exists()
+
+    journal_data: dict[str, Any] = {
+        "tx_id": tx_id,
+        "task_id": task_id,
+        "version": v_ver,
+        "run_id": effective_run_id,
+        "state": "INITIALIZING",
+        "orig_existed": {
+            "manifest": orig_manifest_existed,
+            "zip": orig_zip_existed,
+            "sha": orig_sha_existed,
+        },
+        "targets": {
+            "manifest": str(manifest_path),
+            "zip": str(zip_path),
+            "sha": str(sha_path),
+        },
+        "backups": {
+            "manifest": str(bak_manifest),
+            "zip": str(bak_zip),
+            "sha": str(bak_sha),
+        },
+    }
+
+    def _write_journal(state: str, **extra: Any) -> None:
+        journal_data["state"] = state
+        journal_data.update(extra)
+        journal_path.write_text(json.dumps(journal_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
     try:
-        # Validate manifest and files
-        validated_manifest, validated_entries = validate_acceptance_manifest(
+        # 1. Back up pre-existing targets before staging/replacing any files
+        if orig_manifest_existed:
+            bak_manifest.write_bytes(manifest_path.read_bytes())
+        if orig_zip_existed:
+            bak_zip.write_bytes(zip_path.read_bytes())
+        if orig_sha_existed:
+            bak_sha.write_bytes(sha_path.read_bytes())
+        _write_journal("BACKED_UP")
+
+        # 2. Stage temporary manifest and validate all referenced files before touching targets
+        staged_manifest = dict(manifest_data)
+        staged_manifest["run_id"] = effective_run_id
+        _, validated_entries = validate_acceptance_manifest(
             source_acceptance,
             expected_task_id=task_id,
             expected_version=v_ver,
             expected_run_id=effective_run_id,
             repo_root=repo_root,
+            manifest_override=staged_manifest,
         )
+        tmp_manifest.write_text(json.dumps(staged_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
+        # 3. Stage temporary ZIP
         with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.write(manifest_path, arcname="manifest.json")
+            zf.write(tmp_manifest, arcname="manifest.json")
             for item in validated_entries:
                 zf.write(item["abs_path"], arcname=item["path"])
 
+        # 4. Stage temporary Sidecar (.sha256)
         zip_sha = sha256_file(tmp_zip)
         tmp_sha.write_text(f"{zip_sha}  {zip_name}\n", encoding="utf-8")
 
-        # Real extraction verification from temporary zip
-        extract_dir = pkg_dir / f".verify_extract_{int(time.time() * 1000)}_{os.getpid()}"
+        # 5. Real extraction + SHA256 verification from temporary ZIP before commit
         extract_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            with zipfile.ZipFile(tmp_zip, "r") as zf:
-                zf.extractall(extract_dir)
-            for item in validated_entries:
-                ext_f = extract_dir / item["path"]
-                if not ext_f.exists() or ext_f.stat().st_size != item["size"] or sha256_file(ext_f).lower() != item["sha256"]:
-                    raise ValueError(f"Extraction verification failed for {item['path']}")
-            ext_m = extract_dir / "manifest.json"
-            if not ext_m.exists() or sha256_file(ext_m).lower() != sha256_file(manifest_path).lower():
-                raise ValueError("Extraction verification failed for manifest.json")
-        finally:
-            shutil.rmtree(extract_dir, ignore_errors=True)
+        with zipfile.ZipFile(tmp_zip, "r") as zf:
+            zf.extractall(extract_dir)
+        for item in validated_entries:
+            ext_f = extract_dir / item["path"]
+            if not ext_f.exists() or ext_f.stat().st_size != item["size"] or sha256_file(ext_f).lower() != item["sha256"]:
+                raise ValueError(f"Extraction verification failed for {item['path']}")
+        ext_m = extract_dir / "manifest.json"
+        if not ext_m.exists() or sha256_file(ext_m).lower() != sha256_file(tmp_manifest).lower():
+            raise ValueError("Extraction verification failed for manifest.json")
+        verify_cleanup_errs: list[str] = []
+        _cleanup_dir(extract_dir, do_unlink, verify_cleanup_errs)
+        if verify_cleanup_errs:
+            raise RuntimeError(f"TEMP_CLEANUP_FAILED during verification: {verify_cleanup_errs}")
 
-        # Atomic replacement: publish finalized package and sidecar
-        os.replace(tmp_zip, zip_path)
-        os.replace(tmp_sha, sha_path)
-    except Exception:
-        # Transaction rollback on any failure
-        if tmp_zip.exists():
+        # 6. Commit all 3 targets via per-file atomic replace within recoverable transaction
+        _write_journal("COMMITTING")
+        do_replace(tmp_manifest, manifest_path)
+        do_replace(tmp_zip, zip_path)
+        do_replace(tmp_sha, sha_path)
+        _write_journal("COMMITTED")
+
+    except Exception as tx_exc:
+        recovery_errors: list[str] = []
+        cleanup_errors: list[str] = []
+
+        try:
+            _write_journal("ROLLING_BACK", error=str(tx_exc))
+        except Exception:
+            pass
+
+        # Restore all 3 targets using temporary files and atomic replacement (never raw direct write)
+        restore_specs = [
+            ("manifest", orig_manifest_existed, bak_manifest, manifest_path, rst_manifest),
+            ("zip", orig_zip_existed, bak_zip, zip_path, rst_zip),
+            ("sha", orig_sha_existed, bak_sha, sha_path, rst_sha),
+        ]
+        for label, existed, bak_p, target_p, rst_p in restore_specs:
             try:
-                tmp_zip.unlink()
+                if existed:
+                    if not bak_p.exists():
+                        raise FileNotFoundError(f"Missing backup file for {label}: {bak_p}")
+                    _atomic_restore_file(bak_p, target_p, rst_p, do_replace)
+                else:
+                    if target_p.exists():
+                        do_unlink(target_p)
+            except Exception as rec_err:
+                recovery_errors.append(f"{label}: {rec_err}")
+
+        # Clean temporary staging / extraction files
+        _cleanup_dir(extract_dir, do_unlink, cleanup_errors)
+        for t_path in (tmp_manifest, tmp_zip, tmp_sha, rst_manifest, rst_zip, rst_sha):
+            _cleanup_single_file(t_path, do_unlink, cleanup_errors)
+
+        if recovery_errors:
+            # Preserve backups and journal when recovery failed so manual recovery remains possible
+            try:
+                _write_journal("RECOVERY_FAILED", recovery_errors=recovery_errors, cleanup_errors=cleanup_errors)
             except Exception:
                 pass
-        if tmp_sha.exists():
+            raise RuntimeError(
+                f"TRANSACTION_RECOVERY_FAILED: original={tx_exc}; recovery_errors={recovery_errors}; cleanup_errors={cleanup_errors}"
+            ) from tx_exc
+
+        # Recovery succeeded: remove backups and journal
+        for b_path in (bak_manifest, bak_zip, bak_sha, journal_path):
+            _cleanup_single_file(b_path, do_unlink, cleanup_errors)
+
+        if cleanup_errors:
             try:
-                tmp_sha.unlink()
+                _write_journal("ROLLED_BACK_CLEANUP_PENDING", cleanup_errors=cleanup_errors)
             except Exception:
                 pass
-        if manifest_changed:
-            manifest_path.write_bytes(original_manifest_bytes)
-        if pre_existing_zip is not None:
-            zip_path.write_bytes(pre_existing_zip)
-        elif zip_path.exists():
-            try:
-                zip_path.unlink()
-            except Exception:
-                pass
-        if pre_existing_sha is not None:
-            sha_path.write_bytes(pre_existing_sha)
-        elif sha_path.exists():
-            try:
-                sha_path.unlink()
-            except Exception:
-                pass
+            raise RuntimeError(
+                f"TRANSACTION_ROLLED_BACK_CLEANUP_FAILED: original={tx_exc}; cleanup_errors={cleanup_errors}"
+            ) from tx_exc
+
         raise
+
+    # Post-commit cleanup of backups, any leftover temp files, and journal
+    post_cleanup_errors: list[str] = []
+    _cleanup_dir(extract_dir, do_unlink, post_cleanup_errors)
+    for leftover in (tmp_manifest, tmp_zip, tmp_sha, rst_manifest, rst_zip, rst_sha, bak_manifest, bak_zip, bak_sha, journal_path):
+        _cleanup_single_file(leftover, do_unlink, post_cleanup_errors)
+
+    if post_cleanup_errors:
+        try:
+            _write_journal("COMMITTED_CLEANUP_PENDING", cleanup_errors=post_cleanup_errors)
+        except Exception:
+            pass
+        raise RuntimeError(f"TEMP_CLEANUP_FAILED: {post_cleanup_errors}")
 
     return {
         "task_id": task_id,

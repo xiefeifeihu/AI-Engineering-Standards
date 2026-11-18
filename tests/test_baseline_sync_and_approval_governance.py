@@ -3006,6 +3006,83 @@ COMMIT_HASH=4538b8ba29cb9413782c4197e73bddab64849d82
             ]
             lock_path.write_text(json.dumps(lock_data, indent=2), encoding="utf-8")
 
+            from tools.validate_approval_contract import compute_content_bindings
+            cb_st, computed_cb, cb_errs = compute_content_bindings(dst)
+            self.assertEqual(cb_st, "PASS", cb_errs)
+
+            cons_sha = "c483a9366df653e0ec0e722a57aa8c41ecb2b719"
+            cb_block = {
+                "consumer": {"repository": "xiefeifeihu/AI-Engineering-Standards", "candidate_commit": cons_sha},
+                "standards": {
+                    "repository": "xiefeifeihu/AI-Engineering-Standards",
+                    "target_tag": "v2.10.0",
+                    "tag_object_sha": "370ba069d22f544fec66bd1d4c21c1c69261b547",
+                    "peeled_commit": "ba25353ec0f2ba28f187a356ebaeda0cb13e2edd",
+                },
+            }
+            auth_file = dst / "docs" / "rollback-auth.json"
+            auth_file.parent.mkdir(parents=True, exist_ok=True)
+            auth_file.write_text(json.dumps({
+                "schema_version": "1.0.0",
+                "task_id": "ROLLBACK-G2",
+                "repository": "xiefeifeihu/AI-Engineering-Standards",
+                "candidate_commit": cons_sha,
+                "content_sha256": "sha256:" + "a" * 64,
+                "decision_scope": "LOCK_ROLLBACK",
+                "approval_scope": "LOCK_ROLLBACK",
+                "reviewer_type": "OWNER",
+                "actor_role": "REPOSITORY_OWNER",
+                "review_result": "OWNER_APPROVED",
+                "approval_status": "OWNER_APPROVED",
+                "approved_at": "2026-11-17T00:00:00Z",
+                "approval_reference": "https://github.com/xiefeifeihu/AI-Engineering-Standards/pull/99",
+                "commit_bindings": cb_block,
+                "content_bindings": computed_cb,
+                "chatgpt_review": {
+                    "reviewer": "ChatGPT",
+                    "reviewed_at": "2026-11-17T00:00:00Z",
+                    "candidate_commit": cons_sha,
+                    "content_sha256": "sha256:" + "a" * 64,
+                    "review_result": "READY_FOR_OWNER_MERGE",
+                    "review_reference": "REF-001",
+                    "summary": "Reviewed rollback",
+                },
+                "owner_approval": {
+                    "approver": "xiefeifeihu",
+                    "approval_channel": "GITHUB_PR_MERGE",
+                    "approved_at": "2026-11-17T00:00:00Z",
+                    "candidate_commit": cons_sha,
+                    "content_sha256": "sha256:" + "a" * 64,
+                    "approved_decision_ids": ["D-RB-001"],
+                    "approval_reference": "REF-002",
+                    "decision": "OWNER_APPROVED",
+                },
+                "approval_event": {
+                    "event_id": "99",
+                    "event_type": "GITHUB_PR_MERGE_EVENT",
+                    "provenance_type": "GITHUB_PR_MERGE",
+                    "actor_identity": {
+                        "identity_id": "xiefeifeihu",
+                        "identity_type": "GITHUB_USER",
+                        "service_provenance_ref": "https://api.github.com/repos/xiefeifeihu/AI-Engineering-Standards/pulls/99",
+                    },
+                    "candidate_commit": cons_sha,
+                    "content_sha256": "sha256:" + "a" * 64,
+                    "approval_scope": "LOCK_ROLLBACK",
+                    "event_timestamp": "2026-11-17T00:00:00Z",
+                    "commit_bindings": cb_block,
+                    "content_bindings": computed_cb,
+                },
+            }, indent=2), encoding="utf-8")
+
+            sim_pr = {
+                "merged": True,
+                "merged_by": {"login": "xiefeifeihu"},
+                "base": {"ref": "main"},
+                "head": {"sha": cons_sha},
+                "merged_at": "2026-11-17T00:00:00Z",
+            }
+
             pre_lock = lock_path.read_text(encoding="utf-8")
             pre_manifest = manifest_path.read_text(encoding="utf-8")
 
@@ -3019,9 +3096,10 @@ COMMIT_HASH=4538b8ba29cb9413782c4197e73bddab64849d82
 
             res = rollback_lock(
                 project_root=dst,
+                rollback_authorization_ref="docs/rollback-auth.json",
                 replace_fn=fault_replace,
-                require_authorization=False,
                 standards_root=ROOT,
+                simulate_provenance_data=sim_pr,
             )
             self.assertEqual(res["status"], "FAIL")
             self.assertIn("TRANSACTION_FAILED", res.get("reason", ""))

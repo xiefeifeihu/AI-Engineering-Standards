@@ -127,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     p_prom.add_argument("--target-tag-object-sha", required=True, help="40-hex annotated tag object SHA")
     p_prom.add_argument("--target-peeled-commit", required=True, help="40-hex peeled commit SHA")
     p_prom.add_argument("--approval-file", required=True, help="Path to approval evidence JSON file")
+    p_prom.add_argument("--consumer-candidate-commit", default=None, help="Optional explicit 40-hex consumer PR HEAD commit SHA")
     # CI status is queried from GitHub Actions; no caller-supplied PASS override is accepted.
 
     # 8. rollback
@@ -229,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
             approval_file=Path(args.approval_file),
             ci_status=None,
             standards_root=std_root,
+            consumer_candidate_commit=args.consumer_candidate_commit,
         )
         print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "PROMOTED" else 1

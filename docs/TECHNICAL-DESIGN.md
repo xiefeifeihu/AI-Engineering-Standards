@@ -52,26 +52,27 @@ content_sha256: null
 - **祖先判定**：`git merge-base --is-ancestor` 退出码 0 表示祖先、1 表示确证非祖先；其他退出码表示对象或命令不可核验，不得映射为非祖先。
 - **历史快照**：历史发布/完成标记本身不构成免检凭据。只有记录的 `local_head` 与当前分支 HEAD 相同，或经 Git 对象图证明其为当前分支/官方 main 的祖先时，才可按历史快照豁免 24 小时新鲜度窗口；祖先关系无法核验或不成立时必须阻断历史豁免。生成器仍须核对 `captured_at` 时刻的提交和远端 main 快照。
 
-### 3.2 历史 Lock 回滚与原子事务设计 (F11)
+### 3.2 历史 Lock 回滚与可恢复两文件事务 (F11)
 
-- **回滚强制 Owner 授权与官方 Tag 核验**：CLI `rollback` 子命令强制要求 `--rollback-authorization-ref`，默认 `require_authorization=True`，严禁智能体无授权直接修改锁文件；回滚前必须调用 `verify_official_historical_tag` 核验目标 Tag 在官方规范仓远端存在、Tag 对象与剥离提交匹配、以及位于官方 main 祖先链上；远端不可达返回 `NOT_VERIFIABLE`，不匹配返回 `FAIL`。
+- **回滚强制 Owner 授权（零旁路）与官方 Tag 核验**：CLI `rollback` 子命令强制要求 `--rollback-authorization-ref`，核心 API `rollback_lock` 彻底移除 `require_authorization=False` 安全旁路（传入 `False` 直接拒绝）；授权验证与摘要重算必须在任何远端查询或文件写入之前完成；回滚前必须调用 `verify_official_historical_tag` 核验目标 Tag 在官方规范仓远端存在、Tag 对象与剥离提交匹配、位于官方 `main` 祖先链上且 `VERSION` 文件真实可读；`standards_root` 缺失、Git 对象缺失或网络不可达返回 `NOT_VERIFIABLE`，`VERSION` 或 Tag 不匹配返回 `FAIL`。
 - **历史审批与回滚授权分离**：历史初始 bootstrap lock 的 `approval_evidence_ref` 为 `null` 属于历史客观事实，在 `schemas/standards-lock.schema.json` 中定义为合法；当前执行回滚时，通过 `rollback_authorization_ref` 单独绑定当前 Owner 授权。
 - **历史 CI 真实性与晋升继承**：若历史 Lock 缺少 `ci_verification_status`，严格标记为 `NOT_VERIFIABLE`，严禁假定或自动回退为 `PASS`（杜绝违反 Rule G）；`promote_upgrade` 保存历史 Lock 至 `previous_locks` 时同样严格继承或默认 `NOT_VERIFIABLE`，杜绝虚标 `PASS`。
-- **两文件原子事务**：`rollback_lock` 与 `promote_lock` 均采用 `execute_transactional_two_file_update`，先写入临时文件，再原子替换并同步刷新 `.bak` 备份；任一阶段失败自动回滚内存与磁盘状态，杜绝文件状态撕裂。
+- **两文件可恢复事务**：`rollback_lock` 与 `promote_upgrade` 均采用 `execute_transactional_two_file_update`，先写入临时文件与事务日志，再逐一原子替换并同步刷新 `.bak` 备份；任一阶段失败自动回滚磁盘状态。
 
 ### 3.3 单 Owner 双 Commit PR Merge Event 审批契约 (F12 / 方案 C)
 
-- **概念解耦与双向绑定完整性**：彻底消除消费端候选 Commit 与 Standards Peeled Commit 的概念混淆，审批记录显式包含 `commit_bindings`，明确 `consumer.candidate_commit` 与 `standards.peeled_commit`（包含 repository、target_tag、tag_object_sha、peeled_commit 4 项完整字段），以及包含 `ci_job_mapping_sha256` 与 `lock_manifest_sha256` 的 `content_bindings`。
+- **概念解耦与双向绑定完整性**：彻底消除消费端候选 Commit 与 Standards Peeled Commit 的概念混淆（允许且明确要求两者独立，`consumer.candidate_commit != standards.peeled_commit`），审批记录显式包含 `commit_bindings`，明确 `consumer.candidate_commit` 与 `standards.peeled_commit`（包含 repository、target_tag、tag_object_sha、peeled_commit 4 项完整字段），以及真实重算比对的 `content_bindings`（`ci_job_mapping_sha256` 与 `lock_manifest_sha256`）。
+- **内容摘要真实重算**：依据规范化 JSON 排序紧凑编码，从工作区文件或受控 Git Commit 重算 `ci_job_mapping_sha256` 与 `lock_manifest_sha256` 并同时与 Record 与 Event 比对；内容篡改即时阻断，文件缺失或 Git Commit 不可读返回 `NOT_VERIFIABLE`。
 - **记录与事件字段对齐与强时间校验**：审批记录与 `approval_event` 内的 `commit_bindings` 和 `content_bindings` 必须逐字段严格相等；`event_timestamp` 必须精确等于 GitHub PR API 返回的 `merged_at`。
 - **GitHub PR Merge Provenance 与智能体边界**：通过 GitHub API 读取 PR Merge 事件，核验 `merged=true`、`merged_by` 为仓库属主、`base.ref=main`、`head.sha=consumer.candidate_commit`，严禁智能体自批或合并（`CODING_AGENT` 强阻断）。
 - **禁止单 Commit 旁路绕过**：针对 `STANDARDS_LOCK_PROMOTION` 和 `LOCK_ROLLBACK` 作用域，强制要求双向绑定，禁止退化为单 Commit 遗留旁路。
 - **枚举清理**：彻底废除未实现的 `SIGNED_OWNER_EVENT` 伪枚举。
 
-### 3.4 官方验收打包器原子事务与静默回填根治
+### 3.4 官方验收打包器可恢复多文件事务与事务日志
 
 - **移除静默回填**：彻底移除 `package_acceptance.py` 对 `task_id` 和 `version` 的静默回填逻辑，缺失必需字段时立即抛出 `ValueError`，强制 `validate_acceptance_manifest` 发挥完整门禁作用。
-- **临时写入与自校验后原子替换**：打包过程先写入 `.tmp_*.zip` 与 `.tmp_*.sha256`，在临时状态完成解包抽检与摘要校验；校验全绿后通过 `os.replace` 原子替换正式制品。
-- **全失败场景原子回退**：发生任何异常时，恢复修改前的 `manifest.json`、还原既有正式制品（若存在备份），并清理所有临时文件，杜绝半成品残留。
+- **可恢复多文件事务模型**：鉴于操作系统不天然支持跨多个文件的原生原子重命名，打包器将 Manifest 临时写入、ZIP 临时写入、Sidecar (`.sha256`) 临时写入以及解压与 SHA-256 校验全部纳入同一可恢复事务，并在发布前对既有 Manifest、ZIP 与 Sidecar 执行完整备份，通过 `.tx_journal_*.json` 持久化事务状态。
+- **临时文件+原子替换式回滚与显式异常报告**：发布阶段若 Manifest 替换、ZIP 写入或 Sidecar 替换发生任何异常，立即利用临时还原文件配合 `os.replace` 恢复全部三个原始文件，严禁产生新 ZIP 搭配旧 Sidecar 的撕裂状态；若原始文件恢复失败，则保留备份与 `RECOVERY_FAILED` 事务日志并显式抛出异常；若全部恢复成功则清理全部临时与备份文件（清理失败时亦显式报错）。
 
 ## 4. 消费端接入模式与首个试点
 

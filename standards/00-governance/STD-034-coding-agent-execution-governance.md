@@ -85,8 +85,8 @@ SCHEMA_REF=schemas/standards-lock.schema.json, schemas/documentation-approval.sc
 4. `impact`：针对下游消费端工程执行兼容性影响分析（覆盖 Schema、`AGENTS.md`、`CLAUDE.md`、Engineering Manifest、文档元数据、文档集合校验、测试门禁、发布门禁、安全门禁、业务接口与运行时契约）。
 5. `prepare-upgrade`：自动生成升级候选包与迁移计划（`.artifacts/standards_upgrade/`）。
 6. `validate-upgrade`：在候选环境执行工程兼容性回归测试并汇总结果。
-7. `promote`：核验审批契约（`AI_APPROVED` 或 `OWNER_APPROVED`，涉及 `STANDARDS_LOCK_PROMOTION` 范围必须具备消费端与 Standards 双向 Commit 绑定及 Content Bindings）与测试通过证据后，保留历史锁定（历史 CI 缺失默认标记 `NOT_VERIFIABLE`，严禁虚标 `PASS`）并原子更新 `standards.lock.json` 与 `engineering-manifest.yaml`。
-8. `rollback`：从 `previous_locks` 历史锁定记录安全回滚至上一已验证版本。**强制要求显式 Owner 授权**（CLI `--rollback-authorization-ref` 必选），核验历史 Tag 远端一致性与祖先关系，缺失 CI 状态默认标记为 `NOT_VERIFIABLE`，严禁智能体无授权直接修改锁文件。
+7. `promote`：核验审批契约（`STANDARDS_LOCK_PROMOTION` 范围必须具备消费端 `consumer.candidate_commit` 与规范端 `standards.peeled_commit` 严格分离且不相互混淆的双向绑定，及真实重算匹配的 `content_bindings`）与测试通过证据后，保留历史锁定（历史 CI 缺失默认标记 `NOT_VERIFIABLE`，严禁虚标 `PASS`）并经可恢复事务更新 `standards.lock.json` 与 `engineering-manifest.yaml`。
+8. `rollback`：从 `previous_locks` 历史锁定记录安全回滚至上一已验证版本。**核心 API 与 CLI 均彻底禁止无授权旁路**（CLI `--rollback-authorization-ref` 必选，API 传入 `require_authorization=False` 一律拒绝），授权与内容绑定摘要核验必须在任何远端查询或文件写入之前完成；`verify_official_historical_tag` 强制核验远端 Tag 对象、`peeled_commit`、`main` 祖先关系及 `VERSION` 文件真实可读（`standards_root` 缺失返回 `NOT_VERIFIABLE`，`VERSION` 缺失或不可读返回 `FAIL`），缺失 CI 状态默认标记为 `NOT_VERIFIABLE`。
 
 ### 4.3 消费端接入与受控升级（Consumer Adoption & Controlled Upgrade）
 
@@ -103,12 +103,12 @@ DISCOVER ──► VERIFY ──► COMPARE ──► IMPACT_ANALYSIS ──► 
   - 全部兼容性门禁通过且仅属兼容刷新无需人工批准：经 ChatGPT 独立审核后记录 `AI_APPROVED`。
 - 在新版本升级与审批晋升完成前，**MUST NOT** 把旧锁定版本伪称为最新版本。
 4. **双向 Commit 绑定与回滚授权契约 (Dual-Commit Binding & Rollback Authorization Contract)**：
-   - **双向 Commit 绑定**：在 `STANDARDS_LOCK_PROMOTION` 或 `LOCK_ROLLBACK` 范围内，审批记录与事件必须双向绑定消费端与规范端事实：
-     - `consumer`: 消费端仓库全称（`repository`）与候选提交（`candidate_commit`）；
+   - **双向 Commit 绑定**：在 `STANDARDS_LOCK_PROMOTION` 或 `LOCK_ROLLBACK` 范围内，审批记录与事件必须双向绑定消费端与规范端事实，且严格禁止混淆消费端提交与规范端提交（`consumer.candidate_commit != standards.peeled_commit`）：
+     - `consumer`: 消费端仓库全称（`repository`）与消费端候选提交（`candidate_commit`，与消费者 PR HEAD 一致）；
      - `standards`: 权威规范仓库全称（`repository`，固定为 `xiefeifeihu/AI-Engineering-Standards`）、目标 Tag（`target_tag`）、40 位附注 Tag 对象 SHA（`tag_object_sha`）及 40 位剥离提交 SHA（`peeled_commit`）；
-     - `content_bindings`: CI 门禁映射摘要（`ci_job_mapping_sha256`）与锁定清单摘要（`lock_manifest_sha256`）。
+     - `content_bindings`: 真实重算验证的 CI 门禁映射摘要（`ci_job_mapping_sha256`）与锁定清单摘要（`lock_manifest_sha256`）。任一内容变更立即令原审批失效，文件缺失或提交不可读返回 `NOT_VERIFIABLE` 或 `BLOCK`。
      - 严禁对上述范围采用单 Commit legacy 旁路绕过。
-   - **回滚必须显式授权**：锁文件回滚影响消费端基线安全，**MUST** 具备有效的 Owner 审批证据（`OWNER_APPROVED`），严禁智能体自行决策或无授权触发回滚。
+   - **回滚必须显式授权**：锁文件回滚影响消费端基线安全，**MUST** 具备有效的 Owner 审批证据（`OWNER_APPROVED`），严禁智能体自行决策或无授权触发回滚，API 亦严禁提供 `require_authorization=False` 安全旁路。
 
 ---
 

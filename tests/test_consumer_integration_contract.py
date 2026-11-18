@@ -2574,10 +2574,10 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
             auth_data["commit_bindings"] = cb
             auth_data["approval_event"]["commit_bindings"] = cb
         if not omit_content_bindings:
-            cnt = {
-                "ci_job_mapping_sha256": "sha256:" + "a" * 64,
-                "lock_manifest_sha256": "sha256:" + "b" * 64,
-            }
+            from tools.validate_approval_contract import compute_content_bindings
+            cb_st, cnt, cb_errs = compute_content_bindings(self.root)
+            if cb_st != "PASS" or cnt is None:
+                raise AssertionError(f"Failed computing test content_bindings: {cb_st} {cb_errs}")
             auth_data["content_bindings"] = cnt
             auth_data["approval_event"]["content_bindings"] = cnt
 
@@ -2694,7 +2694,8 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
             "lock_reason": "Malicious lock",
             "approval_evidence_ref": None,
         })
-        res = rollback_lock(self.root, require_authorization=False, standards_root=ROOT)
+        self._create_valid_auth_file()
+        res = rollback_lock(self.root, rollback_authorization_ref="docs/rollback-auth.json", standards_root=ROOT, simulate_provenance_data=self.sim_pr)
         self.assertEqual(res["status"], "FAIL")
         self.assertIn("INVALID_STANDARDS_REPOSITORY", res["reason"])
 
@@ -2710,7 +2711,8 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
             "lock_reason": "Bad sha lock",
             "approval_evidence_ref": None,
         })
-        res = rollback_lock(self.root, require_authorization=False, standards_root=ROOT)
+        self._create_valid_auth_file()
+        res = rollback_lock(self.root, rollback_authorization_ref="docs/rollback-auth.json", standards_root=ROOT, simulate_provenance_data=self.sim_pr)
         self.assertEqual(res["status"], "FAIL")
         self.assertIn("CORRUPT_HISTORICAL_LOCK", res["reason"])
 
@@ -2891,7 +2893,7 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
             "lock_reason": "Lock",
             "approval_evidence_ref": None,
         })
-        self._create_valid_auth_file()
+        self._create_valid_auth_file(tag_object_sha="f" * 40)
         res = rollback_lock(
             self.root,
             rollback_authorization_ref="docs/rollback-auth.json",
@@ -2913,6 +2915,10 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
         cur_lock["previous_locks"] = []
         self.lock_path.write_text(json.dumps(cur_lock, indent=2), encoding="utf-8")
 
+        from tools.validate_approval_contract import compute_content_bindings
+        cb_st, real_cnt, cb_errs = compute_content_bindings(self.root)
+        self.assertEqual(cb_st, "PASS", cb_errs)
+
         target_peeled = "8b223019c254e0edeb94576b94af46c1e48b0316"
         target_tag_obj = "8256bb384e62894219db0992a2cb57e16d4fa8cd"
         app_file = self.root / "docs" / "promote-app.json"
@@ -2921,7 +2927,7 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
             "schema_version": "1.0.0",
             "task_id": "PROMOTE-TASK",
             "repository": "xiefeifeihu/AI-Engineering-Standards",
-            "candidate_commit": target_peeled,
+            "candidate_commit": self.consumer_sha,
             "content_sha256": "sha256:" + "a" * 64,
             "decision_scope": "STANDARDS_LOCK_PROMOTION",
             "approval_scope": "STANDARDS_LOCK_PROMOTION",
@@ -2934,7 +2940,7 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
             "commit_bindings": {
                 "consumer": {
                     "repository": "xiefeifeihu/AI-Engineering-Standards",
-                    "candidate_commit": target_peeled,
+                    "candidate_commit": self.consumer_sha,
                 },
                 "standards": {
                     "repository": "xiefeifeihu/AI-Engineering-Standards",
@@ -2943,14 +2949,11 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
                     "peeled_commit": target_peeled,
                 },
             },
-            "content_bindings": {
-                "ci_job_mapping_sha256": "sha256:" + "a" * 64,
-                "lock_manifest_sha256": "sha256:" + "b" * 64,
-            },
+            "content_bindings": real_cnt,
             "chatgpt_review": {
                 "reviewer": "ChatGPT",
                 "reviewed_at": "2026-11-17T00:00:00Z",
-                "candidate_commit": target_peeled,
+                "candidate_commit": self.consumer_sha,
                 "content_sha256": "sha256:" + "a" * 64,
                 "review_result": "READY_FOR_OWNER_MERGE",
                 "review_reference": "REF-001",
@@ -2960,7 +2963,7 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
                 "approver": "xiefeifeihu",
                 "approval_channel": "GITHUB_PR_MERGE",
                 "approved_at": "2026-11-17T00:00:00Z",
-                "candidate_commit": target_peeled,
+                "candidate_commit": self.consumer_sha,
                 "content_sha256": "sha256:" + "a" * 64,
                 "approved_decision_ids": ["D-001"],
                 "approval_reference": "REF-002",
@@ -2975,14 +2978,14 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
                     "identity_type": "GITHUB_USER",
                     "service_provenance_ref": "https://api.github.com/repos/xiefeifeihu/AI-Engineering-Standards/pulls/12",
                 },
-                "candidate_commit": target_peeled,
+                "candidate_commit": self.consumer_sha,
                 "content_sha256": "sha256:" + "a" * 64,
                 "approval_scope": "STANDARDS_LOCK_PROMOTION",
                 "event_timestamp": "2026-11-17T00:00:00Z",
                 "commit_bindings": {
                     "consumer": {
                         "repository": "xiefeifeihu/AI-Engineering-Standards",
-                        "candidate_commit": target_peeled,
+                        "candidate_commit": self.consumer_sha,
                     },
                     "standards": {
                         "repository": "xiefeifeihu/AI-Engineering-Standards",
@@ -2991,10 +2994,7 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
                         "peeled_commit": target_peeled,
                     },
                 },
-                "content_bindings": {
-                    "ci_job_mapping_sha256": "sha256:" + "a" * 64,
-                    "lock_manifest_sha256": "sha256:" + "b" * 64,
-                },
+                "content_bindings": real_cnt,
             },
         }), encoding="utf-8")
 
@@ -3003,7 +3003,7 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
             "merged": True,
             "merged_by": {"login": "xiefeifeihu"},
             "base": {"ref": "main"},
-            "head": {"sha": target_peeled},
+            "head": {"sha": self.consumer_sha},
             "merged_at": "2026-11-17T00:00:00Z",
         }
         with patch.dict(os.environ, {"GITHUB_TOKEN": "dummy-token"}):
@@ -3039,69 +3039,72 @@ class DualCommitApprovalContractTests(unittest.TestCase):
 
     def test_f12_dual_commit_pr_merge_event_success(self) -> None:
         from unittest.mock import patch, MagicMock
-        from tools.validate_approval_contract import verify_approval_event_provenance
+        from tools.validate_approval_contract import verify_approval_event_provenance, compute_content_bindings
 
-        consumer_sha = "c" * 40
-        standards_sha = "8b223019c254e0edeb94576b94af46c1e48b0316"
-        event = {
-            "event_id": "42",
-            "event_type": "GITHUB_PR_MERGE_EVENT",
-            "provenance_type": "GITHUB_PR_MERGE",
-            "actor_identity": {
-                "identity_id": "example-owner",
-                "identity_type": "GITHUB_USER",
-                "service_provenance_ref": "https://api.github.com/repos/example-owner/consumer-app/pulls/42",
-            },
-            "candidate_commit": consumer_sha,
-            "content_sha256": "sha256:" + "e" * 64,
-            "approval_scope": "STANDARDS_LOCK_PROMOTION",
-            "event_timestamp": "2026-11-17T00:00:00Z",
-            "commit_bindings": {
-                "consumer": {
-                    "repository": "example-owner/consumer-app",
-                    "candidate_commit": consumer_sha,
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            _copy_minimal_valid_project(dst)
+            cb_st, real_cnt, cb_errs = compute_content_bindings(dst)
+            self.assertEqual(cb_st, "PASS", cb_errs)
+
+            consumer_sha = "c" * 40
+            standards_sha = "8b223019c254e0edeb94576b94af46c1e48b0316"
+            event = {
+                "event_id": "42",
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "actor_identity": {
+                    "identity_id": "example-owner",
+                    "identity_type": "GITHUB_USER",
+                    "service_provenance_ref": "https://api.github.com/repos/example-owner/consumer-app/pulls/42",
                 },
-                "standards": {
-                    "repository": "xiefeifeihu/AI-Engineering-Standards",
-                    "target_tag": "v3.0.0",
-                    "tag_object_sha": "8256bb384e62894219db0992a2cb57e16d4fa8cd",
-                    "peeled_commit": standards_sha,
+                "candidate_commit": consumer_sha,
+                "content_sha256": "sha256:" + "e" * 64,
+                "approval_scope": "STANDARDS_LOCK_PROMOTION",
+                "event_timestamp": "2026-11-17T00:00:00Z",
+                "commit_bindings": {
+                    "consumer": {
+                        "repository": "example-owner/consumer-app",
+                        "candidate_commit": consumer_sha,
+                    },
+                    "standards": {
+                        "repository": "xiefeifeihu/AI-Engineering-Standards",
+                        "target_tag": "v3.0.0",
+                        "tag_object_sha": "8256bb384e62894219db0992a2cb57e16d4fa8cd",
+                        "peeled_commit": standards_sha,
+                    },
                 },
-            },
-            "content_bindings": {
-                "ci_job_mapping_sha256": "sha256:" + "e" * 64,
-                "lock_manifest_sha256": "sha256:" + "f" * 64,
-            },
-        }
-        record = {
-            "repository": "example-owner/consumer-app",
-            "approval_status": "OWNER_APPROVED",
-            "candidate_commit": consumer_sha,
-            "content_sha256": "sha256:" + "e" * 64,
-            "approval_scope": "STANDARDS_LOCK_PROMOTION",
-            "approved_at": "2026-11-17T00:00:00Z",
-            "commit_bindings": event["commit_bindings"],
-            "content_bindings": event["content_bindings"],
-            "approval_event": event,
-        }
+                "content_bindings": real_cnt,
+            }
+            record = {
+                "repository": "example-owner/consumer-app",
+                "approval_status": "OWNER_APPROVED",
+                "candidate_commit": consumer_sha,
+                "content_sha256": "sha256:" + "e" * 64,
+                "approval_scope": "STANDARDS_LOCK_PROMOTION",
+                "approved_at": "2026-11-17T00:00:00Z",
+                "commit_bindings": event["commit_bindings"],
+                "content_bindings": real_cnt,
+                "approval_event": event,
+            }
 
-        mock_pr_response = {
-            "merged": True,
-            "merged_by": {"login": "example-owner"},
-            "base": {"ref": "main"},
-            "head": {"sha": consumer_sha},
-            "merged_at": "2026-11-17T00:00:00Z",
-        }
+            mock_pr_response = {
+                "merged": True,
+                "merged_by": {"login": "example-owner"},
+                "base": {"ref": "main"},
+                "head": {"sha": consumer_sha},
+                "merged_at": "2026-11-17T00:00:00Z",
+            }
 
-        with patch.dict(os.environ, {"GITHUB_TOKEN": "dummy-token"}):
-            with patch("urllib.request.urlopen") as mock_urlopen:
-                mock_resp = MagicMock()
-                mock_resp.read.return_value = json.dumps(mock_pr_response).encode("utf-8")
-                mock_resp.__enter__.return_value = mock_resp
-                mock_urlopen.return_value = mock_resp
+            with patch.dict(os.environ, {"GITHUB_TOKEN": "dummy-token"}):
+                with patch("urllib.request.urlopen") as mock_urlopen:
+                    mock_resp = MagicMock()
+                    mock_resp.read.return_value = json.dumps(mock_pr_response).encode("utf-8")
+                    mock_resp.__enter__.return_value = mock_resp
+                    mock_urlopen.return_value = mock_resp
 
-                status, errors = verify_approval_event_provenance(record)
-                self.assertEqual(status, "VERIFIED", f"Errors: {errors}")
+                    status, errors = verify_approval_event_provenance(record, project_root=dst)
+                    self.assertEqual(status, "VERIFIED", f"Errors: {errors}")
 
     def test_f12_dual_commit_pr_merge_event_head_mismatch_fails(self) -> None:
         from unittest.mock import patch, MagicMock
@@ -3576,6 +3579,686 @@ class DualCommitApprovalContractTests(unittest.TestCase):
                 status, errors = verify_approval_event_provenance(record)
                 self.assertEqual(status, "FAILED")
                 self.assertTrue(any("LEGACY_SINGLE_COMMIT_BYPASS_FORBIDDEN" in e for e in errors))
+
+
+class FinalBlockerClosureRound2Tests(unittest.TestCase):
+    """Comprehensive Round 2 tests covering F11, F12 dual-commit, content bindings recomputation, and Acceptance multi-file transaction."""
+
+    def _build_consumer_fixture(self, repo_name: str = "xiefeifeihu/AI-Engineering-Hub") -> tuple[Path, str]:
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        _copy_minimal_valid_project(root)
+        # Update repository name in engineering-manifest.yaml to simulate downstream consumer
+        mf_path = root / "engineering-manifest.yaml"
+        mf_data = yaml.safe_load(mf_path.read_text(encoding="utf-8"))
+        mf_data["project"]["repository"] = repo_name
+        mf_data.setdefault("standards_validation", {}).setdefault("required_ci_jobs", {
+            "unit_tests": {"workflow_path": ".github/workflows/ci.yml", "job_name": "unit", "command": "pytest"}
+        })
+        mf_path.write_text(yaml.safe_dump(mf_data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+        # Set existing lock to v2.11.0
+        lk_path = root / "standards.lock.json"
+        lk = json.loads(lk_path.read_text(encoding="utf-8"))
+        lk["version"] = "2.11.0"
+        lk["tag"] = "v2.11.0"
+        lk["tag_object_sha"] = "2f4b4b54348a5ac8891e5a0b33c04635a27213a0"
+        lk["peeled_commit"] = "5e17c0ef560ab8abafe880b988d70f85f380a104"
+        lk["previous_locks"] = []
+        lk_path.write_text(json.dumps(lk, indent=2), encoding="utf-8")
+        return root, "d" * 40
+
+    def _make_promo_approval(
+        self,
+        root: Path,
+        consumer_repo: str,
+        consumer_commit: str,
+        std_tag: str = "v3.0.0",
+        std_tag_obj: str = "8256bb384e62894219db0992a2cb57e16d4fa8cd",
+        std_peeled: str = "8b223019c254e0edeb94576b94af46c1e48b0316",
+        content_bindings_override: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        from tools.validate_approval_contract import compute_content_bindings
+        if content_bindings_override is None:
+            st, cnt, errs = compute_content_bindings(root)
+            self.assertEqual(st, "PASS", errs)
+            assert cnt is not None
+        else:
+            cnt = content_bindings_override
+        cb = {
+            "consumer": {
+                "repository": consumer_repo,
+                "candidate_commit": consumer_commit,
+            },
+            "standards": {
+                "repository": "xiefeifeihu/AI-Engineering-Standards",
+                "target_tag": std_tag,
+                "tag_object_sha": std_tag_obj,
+                "peeled_commit": std_peeled,
+            },
+        }
+        owner_login = consumer_repo.split("/", 1)[0]
+        return {
+            "schema_version": "1.0.0",
+            "task_id": "HUB-002-PROMO",
+            "repository": consumer_repo,
+            "candidate_commit": consumer_commit,
+            "content_sha256": "sha256:" + "a" * 64,
+            "decision_scope": "STANDARDS_LOCK_PROMOTION",
+            "approval_scope": "STANDARDS_LOCK_PROMOTION",
+            "reviewer_type": "OWNER",
+            "actor_role": "REPOSITORY_OWNER",
+            "review_result": "OWNER_APPROVED",
+            "approval_status": "OWNER_APPROVED",
+            "approved_at": "2026-11-18T00:00:00Z",
+            "approval_reference": f"https://github.com/{consumer_repo}/pull/88",
+            "commit_bindings": cb,
+            "content_bindings": cnt,
+            "chatgpt_review": {
+                "reviewer": "ChatGPT",
+                "reviewed_at": "2026-11-18T00:00:00Z",
+                "candidate_commit": consumer_commit,
+                "content_sha256": "sha256:" + "a" * 64,
+                "review_result": "READY_FOR_OWNER_MERGE",
+                "review_reference": "REF-R2-1",
+                "summary": "Independent review",
+            },
+            "owner_approval": {
+                "approver": owner_login,
+                "approval_channel": "GITHUB_PR_MERGE",
+                "approved_at": "2026-11-18T00:00:00Z",
+                "candidate_commit": consumer_commit,
+                "content_sha256": "sha256:" + "a" * 64,
+                "approved_decision_ids": ["D-HUB-001"],
+                "approval_reference": f"https://github.com/{consumer_repo}/pull/88",
+                "decision": "OWNER_APPROVED",
+            },
+            "approval_event": {
+                "event_id": "88",
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "actor_identity": {
+                    "identity_id": owner_login,
+                    "identity_type": "GITHUB_USER",
+                    "service_provenance_ref": f"https://api.github.com/repos/{consumer_repo}/pulls/88",
+                },
+                "candidate_commit": consumer_commit,
+                "content_sha256": "sha256:" + "a" * 64,
+                "approval_scope": "STANDARDS_LOCK_PROMOTION",
+                "event_timestamp": "2026-11-18T00:00:00Z",
+                "commit_bindings": cb,
+                "content_bindings": cnt,
+            },
+        }
+
+    # --- A. Dual-Commit Tests ---
+    def test_a1_dual_commit_distinct_promotion_passes(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import promote_upgrade
+
+        root, consumer_commit = self._build_consumer_fixture("xiefeifeihu/AI-Engineering-Hub")
+        std_peeled = "8b223019c254e0edeb94576b94af46c1e48b0316"
+        std_tag_obj = "8256bb384e62894219db0992a2cb57e16d4fa8cd"
+        self.assertNotEqual(consumer_commit, std_peeled)
+
+        app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", consumer_commit)
+        sim_pr = {
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": consumer_commit},
+            "merged_at": "2026-11-18T00:00:00Z",
+        }
+        with patch("tools.standards_sync.core.check_remote_main_ci", return_value=("PASS", 99999, "Mock CI")):
+            with patch("tools.standards_sync.core.validate_upgrade_candidate", return_value={"status": "PASS", "errors": []}):
+                res = promote_upgrade(
+                    project_root=root,
+                    target_tag="v3.0.0",
+                    target_version="3.0.0",
+                    target_tag_object_sha=std_tag_obj,
+                    target_peeled_commit=std_peeled,
+                    approval_record=app,
+                    standards_root=ROOT,
+                    consumer_candidate_commit=consumer_commit,
+                    simulate_provenance_data=sim_pr,
+                )
+        self.assertEqual(res["status"], "PROMOTED", res)
+        self.assertEqual(res["lock"]["peeled_commit"], std_peeled)
+
+    def test_a2_dual_commit_same_commit_confusion_blocks(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import promote_upgrade
+
+        root, _ = self._build_consumer_fixture("xiefeifeihu/AI-Engineering-Hub")
+        std_peeled = "8b223019c254e0edeb94576b94af46c1e48b0316"
+        std_tag_obj = "8256bb384e62894219db0992a2cb57e16d4fa8cd"
+        # Confuse consumer commit with standards peeled commit
+        app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", std_peeled)
+        sim_pr = {
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": std_peeled},
+            "merged_at": "2026-11-18T00:00:00Z",
+        }
+        with patch("tools.standards_sync.core.check_remote_main_ci", return_value=("PASS", 99999, "Mock CI")):
+            res = promote_upgrade(
+                project_root=root,
+                target_tag="v3.0.0",
+                target_version="3.0.0",
+                target_tag_object_sha=std_tag_obj,
+                target_peeled_commit=std_peeled,
+                approval_record=app,
+                standards_root=ROOT,
+                simulate_provenance_data=sim_pr,
+            )
+        self.assertEqual(res["status"], "UPGRADE_BLOCKED")
+        self.assertIn("PROMOTION_COMMIT_CONFUSION_FORBIDDEN", res["reason"])
+
+    def test_a3_dual_commit_wrong_consumer_commit_blocks(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import promote_upgrade
+
+        root, consumer_commit = self._build_consumer_fixture("xiefeifeihu/AI-Engineering-Hub")
+        std_peeled = "8b223019c254e0edeb94576b94af46c1e48b0316"
+        std_tag_obj = "8256bb384e62894219db0992a2cb57e16d4fa8cd"
+        app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", consumer_commit)
+        # Actual PR HEAD differs from approved consumer candidate_commit
+        sim_pr = {
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": "e" * 40},
+            "merged_at": "2026-11-18T00:00:00Z",
+        }
+        with patch("tools.standards_sync.core.check_remote_main_ci", return_value=("PASS", 99999, "Mock CI")):
+            res = promote_upgrade(
+                project_root=root,
+                target_tag="v3.0.0",
+                target_version="3.0.0",
+                target_tag_object_sha=std_tag_obj,
+                target_peeled_commit=std_peeled,
+                approval_record=app,
+                standards_root=ROOT,
+                simulate_provenance_data=sim_pr,
+            )
+        self.assertEqual(res["status"], "UPGRADE_BLOCKED")
+        self.assertTrue(any("APPROVAL_PR_HEAD_COMMIT_MISMATCH" in e for e in res.get("errors", [])))
+
+    def test_a4_dual_commit_wrong_standards_commit_blocks(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import promote_upgrade
+
+        root, consumer_commit = self._build_consumer_fixture("xiefeifeihu/AI-Engineering-Hub")
+        std_peeled = "8b223019c254e0edeb94576b94af46c1e48b0316"
+        std_tag_obj = "8256bb384e62894219db0992a2cb57e16d4fa8cd"
+        app = self._make_promo_approval(
+            root,
+            "xiefeifeihu/AI-Engineering-Hub",
+            consumer_commit,
+            std_peeled="f" * 40,
+        )
+        with patch("tools.standards_sync.core.check_remote_main_ci", return_value=("PASS", 99999, "Mock CI")):
+            res = promote_upgrade(
+                project_root=root,
+                target_tag="v3.0.0",
+                target_version="3.0.0",
+                target_tag_object_sha=std_tag_obj,
+                target_peeled_commit=std_peeled,
+                approval_record=app,
+                standards_root=ROOT,
+            )
+        self.assertEqual(res["status"], "UPGRADE_BLOCKED")
+        self.assertIn("PROMOTION_BINDING_MISMATCH", res["reason"])
+
+    def test_a5_dual_commit_wrong_tag_object_blocks(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import promote_upgrade
+
+        root, consumer_commit = self._build_consumer_fixture("xiefeifeihu/AI-Engineering-Hub")
+        std_peeled = "8b223019c254e0edeb94576b94af46c1e48b0316"
+        std_tag_obj = "8256bb384e62894219db0992a2cb57e16d4fa8cd"
+        app = self._make_promo_approval(
+            root,
+            "xiefeifeihu/AI-Engineering-Hub",
+            consumer_commit,
+            std_tag_obj="9" * 40,
+        )
+        with patch("tools.standards_sync.core.check_remote_main_ci", return_value=("PASS", 99999, "Mock CI")):
+            res = promote_upgrade(
+                project_root=root,
+                target_tag="v3.0.0",
+                target_version="3.0.0",
+                target_tag_object_sha=std_tag_obj,
+                target_peeled_commit=std_peeled,
+                approval_record=app,
+                standards_root=ROOT,
+            )
+        self.assertEqual(res["status"], "UPGRADE_BLOCKED")
+        self.assertIn("PROMOTION_BINDING_MISMATCH", res["reason"])
+
+    # --- B. Content Bindings Recomputation Tests ---
+    def test_b1_content_bindings_exact_recomputation_passes(self) -> None:
+        from tools.validate_approval_contract import verify_approval_event_provenance
+
+        root, consumer_commit = self._build_consumer_fixture()
+        app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", consumer_commit)
+        sim_pr = {
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": consumer_commit},
+            "merged_at": "2026-11-18T00:00:00Z",
+        }
+        status, errors = verify_approval_event_provenance(app, simulate_data=sim_pr, project_root=root)
+        self.assertEqual(status, "VERIFIED", errors)
+
+    def test_b2_content_bindings_wrong_digest_blocks(self) -> None:
+        from tools.validate_approval_contract import verify_approval_event_provenance
+
+        root, consumer_commit = self._build_consumer_fixture()
+        fake_cnt = {
+            "ci_job_mapping_sha256": "sha256:" + "1" * 64,
+            "lock_manifest_sha256": "sha256:" + "2" * 64,
+        }
+        app = self._make_promo_approval(
+            root,
+            "xiefeifeihu/AI-Engineering-Hub",
+            consumer_commit,
+            content_bindings_override=fake_cnt,
+        )
+        sim_pr = {
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": consumer_commit},
+            "merged_at": "2026-11-18T00:00:00Z",
+        }
+        status, errors = verify_approval_event_provenance(app, simulate_data=sim_pr, project_root=root)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONTENT_BINDING_DIGEST_MISMATCH" in e for e in errors))
+
+    def test_b3_content_bindings_invalidated_when_manifest_modified(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import promote_upgrade
+
+        root, consumer_commit = self._build_consumer_fixture()
+        app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", consumer_commit)
+
+        # Modify engineering-manifest.yaml required_ci_jobs AFTER approval was issued
+        mf_path = root / "engineering-manifest.yaml"
+        mf_data = yaml.safe_load(mf_path.read_text(encoding="utf-8"))
+        mf_data["standards_validation"]["required_ci_jobs"]["unit_tests"]["command"] = "pytest --skip-all"
+        mf_path.write_text(yaml.safe_dump(mf_data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+        sim_pr = {
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": consumer_commit},
+            "merged_at": "2026-11-18T00:00:00Z",
+        }
+        with patch("tools.standards_sync.core.check_remote_main_ci", return_value=("PASS", 99999, "Mock CI")):
+            res = promote_upgrade(
+                project_root=root,
+                target_tag="v3.0.0",
+                target_version="3.0.0",
+                target_tag_object_sha="8256bb384e62894219db0992a2cb57e16d4fa8cd",
+                target_peeled_commit="8b223019c254e0edeb94576b94af46c1e48b0316",
+                approval_record=app,
+                standards_root=ROOT,
+                simulate_provenance_data=sim_pr,
+            )
+        self.assertEqual(res["status"], "UPGRADE_BLOCKED")
+        self.assertIn("CONTENT_BINDINGS_MISMATCH", res["reason"])
+
+    def test_b4_content_bindings_invalidated_when_lock_modified(self) -> None:
+        from tools.validate_approval_contract import verify_approval_event_provenance
+
+        root, consumer_commit = self._build_consumer_fixture()
+        app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", consumer_commit)
+
+        # Modify standards.lock.json AFTER approval was issued
+        lk_path = root / "standards.lock.json"
+        lk = json.loads(lk_path.read_text(encoding="utf-8"))
+        lk["lock_reason"] = "Tampered reason"
+        lk_path.write_text(json.dumps(lk, indent=2), encoding="utf-8")
+
+        sim_pr = {
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": consumer_commit},
+            "merged_at": "2026-11-18T00:00:00Z",
+        }
+        status, errors = verify_approval_event_provenance(app, simulate_data=sim_pr, project_root=root)
+        self.assertEqual(status, "FAILED")
+        self.assertTrue(any("CONTENT_BINDING_DIGEST_MISMATCH" in e and "lock_manifest_sha256" in e for e in errors))
+
+    def test_b5_content_bindings_missing_file_returns_not_verifiable(self) -> None:
+        from tools.validate_approval_contract import verify_approval_event_provenance
+
+        root, consumer_commit = self._build_consumer_fixture()
+        app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", consumer_commit)
+        (root / "standards.lock.json").unlink()
+
+        sim_pr = {
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": consumer_commit},
+            "merged_at": "2026-11-18T00:00:00Z",
+        }
+        status, errors = verify_approval_event_provenance(app, simulate_data=sim_pr, project_root=root)
+        self.assertEqual(status, "NOT_VERIFIABLE")
+        self.assertTrue(any("UNVERIFIABLE_CONTENT_BINDINGS" in e for e in errors))
+
+        # Without project_root also returns NOT_VERIFIABLE
+        status2, _ = verify_approval_event_provenance(app, simulate_data=sim_pr, project_root=None)
+        self.assertEqual(status2, "NOT_VERIFIABLE")
+
+    def test_b6_content_bindings_git_commit_mode_and_unreadable_commit(self) -> None:
+        from tools.validate_approval_contract import compute_content_bindings, verify_content_bindings_digests
+
+        root, _ = self._build_consumer_fixture()
+        subprocess.run(["git", "-C", str(root), "add", "."], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-m", "bind state"], capture_output=True, check=True)
+        head_sha = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+
+        st, digests, errs = compute_content_bindings(root, git_commit=head_sha, prefer_git=True)
+        self.assertEqual(st, "PASS", errs)
+        assert digests is not None
+
+        # Unreadable commit returns NOT_VERIFIABLE
+        st_bad, _, errs_bad = compute_content_bindings(root, git_commit="0" * 40, prefer_git=True)
+        self.assertEqual(st_bad, "NOT_VERIFIABLE")
+        self.assertTrue(any("unreadable" in e.lower() for e in errs_bad))
+
+        # Verify against valid commit passes
+        app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", "c" * 40, content_bindings_override=digests)
+        vst, verrs = verify_content_bindings_digests(app, app["approval_event"], project_root=root, git_commit=head_sha, prefer_git=True)
+        self.assertEqual(vst, "PASS", verrs)
+
+    # --- C. Rollback & Tag Verification Tests ---
+    def test_c1_rollback_require_authorization_false_blocked(self) -> None:
+        from tools.standards_sync.core import rollback_lock
+        root, _ = self._build_consumer_fixture()
+        # Even if an auth file is supplied, require_authorization=False MUST be blocked
+        res = rollback_lock(
+            root,
+            rollback_authorization_ref="docs/any.json",
+            require_authorization=False,
+            standards_root=ROOT,
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertIn("ROLLBACK_AUTHORIZATION_BYPASS_FORBIDDEN", res["reason"])
+
+    def test_c2_rollback_no_auth_blocked(self) -> None:
+        from tools.standards_sync.core import rollback_lock
+        root, _ = self._build_consumer_fixture()
+        res = rollback_lock(root, rollback_authorization_ref=None, standards_root=ROOT)
+        self.assertEqual(res["status"], "FAIL")
+        self.assertIn("MISSING_ROLLBACK_AUTHORIZATION", res["reason"])
+
+    def test_c3_verify_tag_missing_version_blocks(self) -> None:
+        from tools.standards_sync.core import verify_official_historical_tag
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "std"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-b", "main", str(repo)], capture_output=True, check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@s.local"], capture_output=True, check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.name", "T"], capture_output=True, check=True)
+            # Commit WITHOUT VERSION file
+            (repo / "README.md").write_text("no version file\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "."], capture_output=True, check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-m", "no version"], capture_output=True, check=True)
+            subprocess.run(["git", "-C", str(repo), "tag", "-a", "v1.0.0", "-m", "v1.0.0"], capture_output=True, check=True)
+            peeled = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+            tag_obj = subprocess.run(["git", "-C", str(repo), "rev-parse", "refs/tags/v1.0.0"], capture_output=True, text=True, check=True).stdout.strip()
+
+            st, err = verify_official_historical_tag(
+                standards_root=repo,
+                tag="v1.0.0",
+                tag_object_sha=tag_obj,
+                peeled_commit=peeled,
+                expected_version="1.0.0",
+                simulate_remote_refs={
+                    "refs/tags/v1.0.0": tag_obj,
+                    "refs/tags/v1.0.0^{}": peeled,
+                    "refs/heads/main": peeled,
+                },
+            )
+            self.assertEqual(st, "FAIL")
+            self.assertIn("VERSION_MISSING_OR_UNREADABLE", str(err))
+
+    def test_c4_verify_tag_missing_standards_root_not_verifiable(self) -> None:
+        from tools.standards_sync.core import verify_official_historical_tag
+        sim_refs = {
+            "refs/tags/v2.11.0": "2f4b4b54348a5ac8891e5a0b33c04635a27213a0",
+            "refs/tags/v2.11.0^{}": "5e17c0ef560ab8abafe880b988d70f85f380a104",
+            "refs/heads/main": "8b223019c254e0edeb94576b94af46c1e48b0316",
+        }
+        st1, err1 = verify_official_historical_tag(
+            standards_root=None,
+            tag="v2.11.0",
+            tag_object_sha="2f4b4b54348a5ac8891e5a0b33c04635a27213a0",
+            peeled_commit="5e17c0ef560ab8abafe880b988d70f85f380a104",
+            simulate_remote_refs=sim_refs,
+        )
+        self.assertEqual(st1, "NOT_VERIFIABLE")
+        self.assertIn("STANDARDS_ROOT_MISSING", str(err1))
+
+        st2, err2 = verify_official_historical_tag(
+            standards_root=Path("/nonexistent/standards_root_dir"),
+            tag="v2.11.0",
+            tag_object_sha="2f4b4b54348a5ac8891e5a0b33c04635a27213a0",
+            peeled_commit="5e17c0ef560ab8abafe880b988d70f85f380a104",
+            simulate_remote_refs=sim_refs,
+        )
+        self.assertEqual(st2, "NOT_VERIFIABLE")
+        self.assertIn("STANDARDS_ROOT_MISSING", str(err2))
+
+    def test_c5_verify_tag_missing_git_object_not_verifiable(self) -> None:
+        from tools.standards_sync.core import verify_official_historical_tag
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "std"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-b", "main", str(repo)], capture_output=True, check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@s.local"], capture_output=True, check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.name", "T"], capture_output=True, check=True)
+            (repo / "VERSION").write_text("1.0.0\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "."], capture_output=True, check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], capture_output=True, check=True)
+            head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+
+            missing_peeled = "9" * 40
+            st, err = verify_official_historical_tag(
+                standards_root=repo,
+                tag="v2.11.0",
+                tag_object_sha="8" * 40,
+                peeled_commit=missing_peeled,
+                simulate_remote_refs={
+                    "refs/tags/v2.11.0": "8" * 40,
+                    "refs/tags/v2.11.0^{}": missing_peeled,
+                    "refs/heads/main": head,
+                },
+            )
+            self.assertEqual(st, "NOT_VERIFIABLE")
+            self.assertIn("GIT_OBJECT_MISSING", str(err))
+
+    def test_c6_verify_tag_remote_unreachable_not_verifiable(self) -> None:
+        from tools.standards_sync.core import verify_official_historical_tag
+        st, err = verify_official_historical_tag(
+            standards_root=ROOT,
+            tag="v2.11.0",
+            tag_object_sha="2f4b4b54348a5ac8891e5a0b33c04635a27213a0",
+            peeled_commit="5e17c0ef560ab8abafe880b988d70f85f380a104",
+            simulate_offline=True,
+        )
+        self.assertEqual(st, "NOT_VERIFIABLE")
+        self.assertIn("unreachable", str(err).lower())
+
+    # --- D. Packager Multi-File Transaction Fault Injection Tests ---
+    def _setup_pkg_fixture(self, with_existing_pkg: bool = True):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        acc_dir = root / ".artifacts" / "acceptance" / "TX-TASK" / "v3.0.0"
+        acc_dir.mkdir(parents=True, exist_ok=True)
+        doc = acc_dir / "report.md"
+        doc.write_text("# Report\nAll pass.\n", encoding="utf-8")
+        doc_sha = hashlib.sha256(doc.read_bytes()).hexdigest()
+        manifest = {
+            "task_id": "TX-TASK",
+            "version": "v3.0.0",
+            "run_id": "orig-run",
+            "created_at": "2026-11-18T00:00:00Z",
+            "files": [{"path": "report.md", "size": doc.stat().st_size, "sha256": doc_sha}],
+        }
+        manifest_path = acc_dir / "manifest.json"
+        orig_manifest_bytes = json.dumps(manifest, indent=2).encode("utf-8")
+        manifest_path.write_bytes(orig_manifest_bytes)
+
+        pkg_dir = root / ".artifacts" / "packages"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = pkg_dir / "Acceptance-TX-TASK-v3.0.0.zip"
+        sha_path = pkg_dir / "Acceptance-TX-TASK-v3.0.0.zip.sha256"
+        if with_existing_pkg:
+            zip_path.write_bytes(b"ORIGINAL_VALID_ZIP_BYTES")
+            sha_path.write_bytes(b"ORIGINAL_VALID_SHA_BYTES")
+        return root, manifest_path, zip_path, sha_path, pkg_dir, acc_dir
+
+    def test_d1_packager_manifest_replace_failure_restores_all_three(self) -> None:
+        from scripts.package_acceptance import package_acceptance
+        root, manifest_path, zip_path, sha_path, pkg_dir, acc_dir = self._setup_pkg_fixture(True)
+        orig_m = manifest_path.read_bytes()
+        orig_z = zip_path.read_bytes()
+        orig_s = sha_path.read_bytes()
+
+        def fail_on_manifest(src: Path, dst: Path) -> None:
+            if dst == manifest_path and ".tmp_manifest_" in src.name:
+                raise OSError("Injected manifest replace failure")
+            os.replace(src, dst)
+
+        with self.assertRaises(OSError):
+            package_acceptance("TX-TASK", version="3.0.0", run_id="new-run", repo_root=root, replace_fn=fail_on_manifest)
+
+        self.assertEqual(manifest_path.read_bytes(), orig_m)
+        self.assertEqual(zip_path.read_bytes(), orig_z)
+        self.assertEqual(sha_path.read_bytes(), orig_s)
+        self.assertEqual(list(pkg_dir.glob(".*")), [])
+        self.assertEqual(list(acc_dir.glob(".*")), [])
+
+    def test_d2_packager_zip_write_failure_restores_all_three(self) -> None:
+        from unittest.mock import patch
+        from scripts.package_acceptance import package_acceptance
+        root, manifest_path, zip_path, sha_path, pkg_dir, acc_dir = self._setup_pkg_fixture(True)
+        orig_m = manifest_path.read_bytes()
+        orig_z = zip_path.read_bytes()
+        orig_s = sha_path.read_bytes()
+
+        with patch("scripts.package_acceptance.zipfile.ZipFile", side_effect=OSError("Injected ZIP write error")):
+            with self.assertRaises(OSError):
+                package_acceptance("TX-TASK", version="3.0.0", run_id="new-run", repo_root=root)
+
+        self.assertEqual(manifest_path.read_bytes(), orig_m)
+        self.assertEqual(zip_path.read_bytes(), orig_z)
+        self.assertEqual(sha_path.read_bytes(), orig_s)
+        self.assertEqual(list(pkg_dir.glob(".*")), [])
+        self.assertEqual(list(acc_dir.glob(".*")), [])
+
+    def test_d3_packager_zip_succeeds_sidecar_fails_restores_all_three_via_temp_replace(self) -> None:
+        from scripts.package_acceptance import package_acceptance
+        root, manifest_path, zip_path, sha_path, pkg_dir, acc_dir = self._setup_pkg_fixture(True)
+        orig_m = manifest_path.read_bytes()
+        orig_z = zip_path.read_bytes()
+        orig_s = sha_path.read_bytes()
+
+        replace_ops: List[tuple[str, Path]] = []
+        def fail_on_sidecar(src: Path, dst: Path) -> None:
+            replace_ops.append((src.name, dst))
+            if dst == sha_path and ".tmp_Acceptance-" in src.name:
+                raise PermissionError("Injected sidecar replace failure")
+            os.replace(src, dst)
+
+        with self.assertRaises(PermissionError):
+            package_acceptance("TX-TASK", version="3.0.0", run_id="new-run", repo_root=root, replace_fn=fail_on_sidecar)
+
+        # Verify restoration itself used temp files + atomic replace
+        restore_calls = [src_name for src_name, _ in replace_ops if ".tmp_restore" in src_name]
+        self.assertEqual(len(restore_calls), 3)
+        self.assertEqual(manifest_path.read_bytes(), orig_m)
+        self.assertEqual(zip_path.read_bytes(), orig_z)
+        self.assertEqual(sha_path.read_bytes(), orig_s)
+        self.assertEqual(list(pkg_dir.glob(".*")), [])
+        self.assertEqual(list(acc_dir.glob(".*")), [])
+
+        # Also test no pre-existing ZIP/Sidecar: new ZIP committed then Sidecar fails -> new ZIP must be removed
+        root2, m2, z2, s2, p2, a2 = self._setup_pkg_fixture(False)
+        orig_m2 = m2.read_bytes()
+        def fail_on_s2(src: Path, dst: Path) -> None:
+            if dst == s2 and ".tmp_Acceptance-" in src.name:
+                raise PermissionError("Injected sidecar replace failure")
+            os.replace(src, dst)
+        with self.assertRaises(PermissionError):
+            package_acceptance("TX-TASK", version="3.0.0", run_id="new-run-2", repo_root=root2, replace_fn=fail_on_s2)
+        self.assertEqual(m2.read_bytes(), orig_m2)
+        self.assertFalse(z2.exists())
+        self.assertFalse(s2.exists())
+        self.assertEqual(list(p2.glob(".*")), [])
+
+    def test_d4_packager_original_recovery_failure_preserves_backups_and_journal(self) -> None:
+        from scripts.package_acceptance import package_acceptance
+        root, manifest_path, zip_path, sha_path, pkg_dir, _ = self._setup_pkg_fixture(True)
+
+        def fail_sidecar_and_restore(src: Path, dst: Path) -> None:
+            if dst == sha_path and ".tmp_Acceptance-" in src.name:
+                raise OSError("Injected sidecar failure")
+            if dst == zip_path and ".tmp_restore" in src.name:
+                raise OSError("Injected zip recovery failure")
+            os.replace(src, dst)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            package_acceptance("TX-TASK", version="3.0.0", run_id="new-run", repo_root=root, replace_fn=fail_sidecar_and_restore)
+        self.assertIn("TRANSACTION_RECOVERY_FAILED", str(ctx.exception))
+        # Journal and backup must be preserved on recovery failure
+        journals = list(pkg_dir.glob(".tx_journal_*"))
+        self.assertEqual(len(journals), 1)
+        jdata = json.loads(journals[0].read_text(encoding="utf-8"))
+        self.assertEqual(jdata["state"], "RECOVERY_FAILED")
+        self.assertTrue(list(pkg_dir.glob(".bak_*")))
+
+    def test_d5_packager_temp_cleanup_failure_raises_without_corrupting_files(self) -> None:
+        from scripts.package_acceptance import package_acceptance
+        root, manifest_path, zip_path, sha_path, pkg_dir, _ = self._setup_pkg_fixture(True)
+        orig_m = manifest_path.read_bytes()
+        orig_z = zip_path.read_bytes()
+        orig_s = sha_path.read_bytes()
+
+        # Case 1: Rollback restores all 3 files, then cleanup of .bak fails
+        def fail_sidecar_replace(src: Path, dst: Path) -> None:
+            if dst == sha_path and ".tmp_Acceptance-" in src.name:
+                raise OSError("Injected sidecar fail")
+            os.replace(src, dst)
+
+        def fail_bak_unlink(p: Path) -> None:
+            if ".bak_" in p.name:
+                raise PermissionError("Injected temp cleanup failure")
+            p.unlink()
+
+        with self.assertRaises(RuntimeError) as ctx1:
+            package_acceptance(
+                "TX-TASK",
+                version="3.0.0",
+                run_id="new-run",
+                repo_root=root,
+                replace_fn=fail_sidecar_replace,
+                unlink_fn=fail_bak_unlink,
+            )
+        self.assertIn("TRANSACTION_ROLLED_BACK_CLEANUP_FAILED", str(ctx1.exception))
+        # All 3 originals must still be intact
+        self.assertEqual(manifest_path.read_bytes(), orig_m)
+        self.assertEqual(zip_path.read_bytes(), orig_z)
+        self.assertEqual(sha_path.read_bytes(), orig_s)
 
 
 if __name__ == "__main__":
