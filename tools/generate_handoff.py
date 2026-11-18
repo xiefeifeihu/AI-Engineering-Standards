@@ -207,15 +207,27 @@ def verify_git_snapshot_facts(
         if not identity_match:
             return ["BASELINE_GIT_SNAPSHOT_SECTION_MISSING: Git identity section not found"]
         identity_text = identity_match.group(0)
-        scope_text, scope_errors = extract_scope_content(
-            content, "Std-019 正式发布收口事实与治理追踪"
+        sec9_match = re.search(
+            r"## 9\. 最近 CI 事实.*?(?=\n### |\n## 10\.|\Z)",
+            content,
+            re.S,
         )
-        if scope_errors:
-            return [f"BASELINE_GIT_SNAPSHOT_CAPTURE_SCOPE_INVALID: {e}" for e in scope_errors]
+        sec9_head = sec9_match.group(0) if sec9_match else ""
+        scope_text = sec9_head
         captured_matches = re.findall(
             r"Git 快照观测时间.*?\x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
-            scope_text,
+            sec9_head,
         )
+        if not captured_matches:
+            scope_text, scope_errors = extract_scope_content(
+                content, "Std-019 正式发布收口事实与治理追踪"
+            )
+            if scope_errors:
+                return [f"BASELINE_GIT_SNAPSHOT_CAPTURE_SCOPE_INVALID: {e}" for e in scope_errors]
+            captured_matches = re.findall(
+                r"Git 快照观测时间.*?\x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
+                scope_text,
+            )
         remote_pattern = r"远端 main \(\x60remote_main_head\x60\)\*\*：\x60([0-9a-f]{40})\x60"
         prefix = "BASELINE"
     elif document_kind == "handoff":
@@ -1114,6 +1126,7 @@ def build_handoff_payload(
         "",
         "## 1. 当前 Git 状态与分支身份 (`git_state`)",
         f"- **当前分支 (`branch`)**：`{branch_name}`",
+        f"- **当前快照 Commit (`snapshot_commit`)**：`{local_head}`",
         f"- **本地 HEAD (`local_head`)**：`{local_head}`",
         f"- **远端 main (`remote_head`)**：`{remote_head}`",
         f"- **工作区干净状态 (`worktree_clean`)**：`{str(worktree_clean).lower()}`",
@@ -1150,17 +1163,146 @@ def build_handoff_payload(
         f"- **5. 当前待验证事项**：{pending_text}",
         f"- **6. 历史 CI 记录**：{hist_ci_text}（避免每次记录 CI 无限触发基线变更）",
         "",
-        "### 4.2 v3.0.0 一次性重发发布与 Tag 状态追踪",
-        f"- **PR 编号 (`pr_number`)**：`{pr_number}`",
-        f"- **PR 状态 (`pr_status`)**：`{effective_pr_status}`",
-        f"- **PR HEAD (`pr_head`)**：`{pr_head}`",
-        f"- **主干 HEAD (`main_head`)**：`{remote_head}`",
-        f"- **旧 Tag 状态 (`old_tag`)**：`v{resolved_version}`",
-        f"- **旧 Tag 删除状态 (`old_tag_deleted`)**：`{str(old_tag_deleted).lower()}`（已于远端删除，新 Tag 尚未创建）",
-        "- **原 Tag Object SHA (`old_tag_object`)**：`325008af90a1e6dcc88ff714c9ec4e7ecee86ec6`",
-        "- **原 Peeled Commit (`old_tag_peeled_commit`)**：`1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b`",
-        "- **旧 Tag 本地 Bundle 备份 SHA256 (`old_tag_bundle_sha256`)**：`45bc3e455fc06b96a669ba9d7c44195f5dfb4e42e55397d795200942e434ebfc`",
-        f"- **发布流程状态 (`release_flow_status`)**：`{release_flow_status}`（PR #{pr_number} 已合入 main；待修复 main CI 历史 PR Run 关联后由 main CI 自动重建同名 Tag）" if effective_pr_status == "MERGED" else f"- **发布流程状态 (`release_flow_status`)**：`{release_flow_status}`（待 Owner 最终合入 PR #{pr_number} 后由 main CI 自动重建同名 Tag）",
+    ]
+    _h_pr9_ev: Optional[Dict[str, Any]] = None
+    _h_snap_ev: Optional[Dict[str, Any]] = None
+    _h_019_ev: Optional[Dict[str, Any]] = None
+    _h_act_ev: Optional[Dict[str, Any]] = None
+    if project_id == "ai-engineering-standards" and (project_root / "docs" / "release-evidence").exists():
+        _hp_pr9 = project_root / "docs" / "release-evidence" / "v3.0.0-reissue.json"
+        if _hp_pr9.exists():
+            _hok, _, _hev = load_release_evidence(project_root, _hp_pr9)
+            if _hok:
+                _h_pr9_ev = _hev
+        _hp_snap = project_root / "docs" / "release-evidence" / "std018-current-snapshot.json"
+        if _hp_snap.exists():
+            _hok, _, _hev = load_release_evidence(project_root, _hp_snap)
+            if _hok:
+                _h_snap_ev = _hev
+        _hp_019 = project_root / "docs" / "release-evidence" / "std019-final-release.json"
+        if _hp_019.exists():
+            _hok, _, _hev = load_release_evidence(project_root, _hp_019)
+            if _hok:
+                _h_019_ev = _hev
+        _hok, _, _hev = load_release_evidence(project_root, resolve_release_evidence_path(project_root))
+        if _hok:
+            _h_act_ev = _hev
+
+    if project_id == "ai-engineering-standards" and _h_pr9_ev and _h_snap_ev and _h_019_ev:
+        md_lines.extend([
+            "### 4.2 PR9 历史发布凭证 (PR9_HISTORICAL_RELEASE_EVIDENCE)",
+            f"- **PR9 发布凭证快照**：COMMIT_HASH={_h_pr9_ev['candidate_commit']}",
+            f"- **当前候选 Commit**：`{_h_pr9_ev['candidate_commit']}`",
+            f"- **本地 HEAD (`local_head`)**：`{_h_pr9_ev['snapshot_commit']}`",
+            f"- **最近一次已验证 CI Commit**：`{_h_pr9_ev['last_verified_ci_commit']}`",
+            f"- **关联 Commit (`commit`)**：`{_h_pr9_ev['candidate_commit']}`",
+            f"- **Push Run ID**：`{_h_pr9_ev['push_run_id']}`",
+            f"- **PR Run ID**：`{_h_pr9_ev['pr_run_id']}`",
+            "- **核验状态 (`verification_status`)**：`PASS`",
+            f"- **通过 / 失败用例数**：`{_h_pr9_ev['test_count']} / 0`",
+            "- **工作流 (`workflow`)**：`.github/workflows/standards-ci.yml`",
+            f"- **PR 编号 (`pr_number`)**：`{_h_pr9_ev['pr_number']}`",
+            f"- **PR 状态 (`pr_status`)**：`{_h_pr9_ev['pr_status']}`",
+            f"- **PR HEAD (`pr_head`)**：`{_h_pr9_ev['candidate_commit']}`",
+            f"- **主干 HEAD (`main_head`)**：`{_h_pr9_ev['main_head']}`",
+            "- **旧 Tag 状态 (`old_tag`)**：`v3.0.0`",
+            f"- **旧 Tag 删除状态 (`old_tag_deleted`)**：`{str(_h_pr9_ev.get('old_tag_deleted', True)).lower()}`",
+            f"- **原 Tag Object SHA (`old_tag_object`)**：`{_h_pr9_ev['old_tag_object']}`",
+            f"- **原 Peeled Commit (`old_tag_peeled_commit`)**：`{_h_pr9_ev['old_tag_peeled_commit']}`",
+            f"- **旧 Tag 本地 Bundle 备份 SHA256 (`old_tag_bundle_sha256`)**：`{_h_pr9_ev['old_tag_bundle_sha256']}`",
+            f"- **发布流程状态 (`release_flow_status`)**：`{_h_pr9_ev['release_flow_status']}`",
+            "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
+            "",
+            "### 4.3 Std-018 历史工程快照与治理追踪 (STD018_CURRENT_SNAPSHOT)",
+            f"- **任务编号 (`task_id`)**：`{_h_snap_ev.get('task_id', 'Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT')}`",
+            f"- **当前候选 Commit**：`{_h_snap_ev['candidate_commit']}`",
+            f"- **本地 HEAD (`local_head`)**：`{_h_snap_ev['snapshot_commit']}`",
+            f"- **最近一次已验证 CI Commit**：`{_h_snap_ev['last_verified_ci_commit']}`",
+            f"- **关联 Commit (`commit`)**：`{_h_snap_ev['candidate_commit']}`",
+            f"- **Push Run ID**：`{_h_snap_ev['push_run_id']}`",
+            f"- **PR Run ID**：`{_h_snap_ev['pr_run_id']}`",
+            "- **核验状态 (`verification_status`)**：`PASS`",
+            f"- **通过 / 失败用例数**：`{_h_snap_ev['test_count']} / 0`",
+            "- **工作流 (`workflow`)**：`.github/workflows/standards-ci.yml`",
+            f"- **PR 编号 (`pr_number`)**：`{_h_snap_ev['pr_number']}`",
+            f"- **PR 状态 (`pr_status`)**：`{_h_snap_ev['pr_status']}`",
+            f"- **PR HEAD (`pr_head`)**：`{_h_snap_ev['candidate_commit']}`",
+            f"- **主干 HEAD (`main_head`)**：`{_h_snap_ev['main_head']}`",
+            "- **旧 Tag 状态 (`old_tag`)**：`v3.0.0`",
+            f"- **旧 Tag 删除状态 (`old_tag_deleted`)**：`{str(_h_snap_ev.get('old_tag_deleted', True)).lower()}`",
+            f"- **原 Tag Object SHA (`old_tag_object`)**：`{_h_snap_ev['old_tag_object']}`",
+            f"- **原 Peeled Commit (`old_tag_peeled_commit`)**：`{_h_snap_ev['old_tag_peeled_commit']}`",
+            f"- **旧 Tag 本地 Bundle 备份 SHA256 (`old_tag_bundle_sha256`)**：`{_h_snap_ev['old_tag_bundle_sha256']}`",
+            f"- **发布流程状态 (`release_flow_status`)**：`{_h_snap_ev['release_flow_status']}`",
+            "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
+            "",
+            "### 4.4 Std-019 最终发布证据与发布后收口 (STD019_FINAL_RELEASE)",
+            "- **核验状态 (`verification_status`)**：`PASS`",
+            f"- **任务编号 (`task_id`)**：`{_h_019_ev.get('task_id', 'Std-019-V3-0-0-POST-RELEASE-CLOSEOUT')}`",
+            f"- **正式发布 Tag (`release_tag`)**：`{_h_019_ev['release_tag']}`",
+            f"- **Tag Object SHA (`tag_object_sha`)**：`{_h_019_ev['tag_object_sha']}`",
+            f"- **Peeled Commit (`peeled_commit`)**：`{_h_019_ev['peeled_commit']}`",
+            f"- **代码候选 Commit (`candidate_commit`)**：`{_h_019_ev['candidate_commit']}`",
+            f"- **文档快照 Commit (`snapshot_commit`)**：`{_h_019_ev['snapshot_commit']}`",
+            f"- **最新已验证 CI Commit (`last_verified_ci_commit`)**：`{_h_019_ev['last_verified_ci_commit']}`",
+            f"- **Push Run ID**：`{_h_019_ev.get('main_ci_run_id') or _h_019_ev['push_run_id']}`",
+            f"- **PR Run ID**：`{_h_019_ev['pr_run_id']}`",
+            f"- **PR 编号与状态**：PR #{_h_019_ev['pr_number']}（状态：`{_h_019_ev['pr_status']}`）",
+            f"- **PR 合并者 (`pr_merged_by`)**：`{_h_019_ev['pr_merged_by']}`",
+            f"- **发布时 main HEAD (`main_head`)**：`{_h_019_ev['main_head']}`",
+            f"- **测试用例数**：`{_h_019_ev['test_count']} tests PASS`",
+            f"- **Tag 发布状态 (`tag_publish_status`)**：`{_h_019_ev['tag_publish_status']}`",
+            f"- **发布流程状态 (`release_flow_status`)**：`{_h_019_ev['release_flow_status']}`",
+            f"- **旧 Tag 删除状态**：`OLD_TAG_DELETED={str(_h_019_ev.get('old_tag_deleted', True)).lower()}`",
+            "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
+        ])
+        if _h_act_ev and str(_h_act_ev.get("version", "")).lstrip("v") != str(_h_019_ev.get("version", "")).lstrip("v"):
+            md_lines.extend([
+                "",
+                "### 4.5 Std-020 最终发布证据与发布后收口 (STD020_FINAL_RELEASE)",
+                "- **核验状态 (`verification_status`)**：`PASS`",
+                f"- **任务编号 (`task_id`)**：`{_h_act_ev.get('task_id', 'Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION')}`",
+                f"- **正式发布 Tag (`release_tag`)**：`{_h_act_ev.get('release_tag', 'v' + str(_h_act_ev.get('version', '')))}`",
+                f"- **Tag Object SHA (`tag_object_sha`)**：`{_h_act_ev.get('tag_object_sha')}`",
+                f"- **Peeled Commit (`peeled_commit`)**：`{_h_act_ev.get('peeled_commit')}`",
+                f"- **代码候选 Commit (`candidate_commit`)**：`{_h_act_ev['candidate_commit']}`",
+                f"- **文档快照 Commit (`snapshot_commit`)**：`{_h_act_ev['snapshot_commit']}`",
+                f"- **最新已验证 CI Commit (`last_verified_ci_commit`)**：`{_h_act_ev['last_verified_ci_commit']}`",
+                f"- **Push Run ID**：`{_h_act_ev.get('main_ci_run_id') or _h_act_ev['push_run_id']}`",
+                f"- **PR Run ID**：`{_h_act_ev['pr_run_id']}`",
+                f"- **PR 编号与状态**：PR #{_h_act_ev['pr_number']}（状态：`{_h_act_ev['pr_status']}`）",
+                f"- **PR 合并者 (`pr_merged_by`)**：`{_h_act_ev.get('pr_merged_by')}`",
+                f"- **发布时 main HEAD (`main_head`)**：`{_h_act_ev['main_head']}`",
+                f"- **测试用例数**：`{_h_act_ev['test_count']} tests PASS`",
+                f"- **Tag 发布状态 (`tag_publish_status`)**：`{_h_act_ev.get('tag_publish_status')}`",
+                f"- **发布流程状态 (`release_flow_status`)**：`{_h_act_ev.get('release_flow_status')}`",
+                "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
+            ])
+        else:
+            md_lines.extend([
+                "",
+                "### 4.5 当前发布候选状态 (v" + str(resolved_version) + " Candidate)",
+                f"- **任务编号 (`task_id`)**：`{task_id}`",
+                f"- **候选版本 (`candidate_version`)**：`{resolved_version}`",
+                f"- **当前最新已发布正式 Tag (`LATEST_RELEASED_TAG`)**：`{_h_019_ev['release_tag']}`",
+                "- **发布流程状态 (`candidate_release_flow_status`)**：`CANDIDATE`（待发布 PR 合入 main 并通过 main CI 自动签发新 Tag）",
+            ])
+    else:
+        md_lines.extend([
+            "### 4.2 v3.0.0 一次性重发发布与 Tag 状态追踪",
+            f"- **PR 编号 (`pr_number`)**：`{pr_number}`",
+            f"- **PR 状态 (`pr_status`)**：`{effective_pr_status}`",
+            f"- **PR HEAD (`pr_head`)**：`{pr_head}`",
+            f"- **主干 HEAD (`main_head`)**：`{remote_head}`",
+            f"- **旧 Tag 状态 (`old_tag`)**：`v{resolved_version}`",
+            f"- **旧 Tag 删除状态 (`old_tag_deleted`)**：`{str(old_tag_deleted).lower()}`（已于远端删除，新 Tag 尚未创建）",
+            "- **原 Tag Object SHA (`old_tag_object`)**：`325008af90a1e6dcc88ff714c9ec4e7ecee86ec6`",
+            "- **原 Peeled Commit (`old_tag_peeled_commit`)**：`1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b`",
+            "- **旧 Tag 本地 Bundle 备份 SHA256 (`old_tag_bundle_sha256`)**：`45bc3e455fc06b96a669ba9d7c44195f5dfb4e42e55397d795200942e434ebfc`",
+            f"- **发布流程状态 (`release_flow_status`)**：`{release_flow_status}`（PR #{pr_number} 已合入 main；待修复 main CI 历史 PR Run 关联后由 main CI 自动重建同名 Tag）" if effective_pr_status == "MERGED" else f"- **发布流程状态 (`release_flow_status`)**：`{release_flow_status}`（待 Owner 最终合入 PR #{pr_number} 后由 main CI 自动重建同名 Tag）",
+        ])
+
+    md_lines.extend([
         "",
         "## 5. 已完成事项 (`completed_items`)",
         comp_md,
@@ -1191,7 +1333,7 @@ def build_handoff_payload(
         "### 10.3 立即执行事项 (`immediate_next_steps`)",
         step_md,
         "",
-    ]
+    ])
     markdown_text = "\n".join(md_lines)
     canonical_doc_sha = compute_canonical_document_sha256(markdown_text)
     markdown_text = markdown_text.replace(f'content_sha256: "{content_sha}"', f'content_sha256: "{canonical_doc_sha}"')
@@ -1373,6 +1515,9 @@ def main() -> None:
     )
 
     task_id_val = args.task_id or "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT"
+    effective_captured_at = args.captured_at
+    if effective_captured_at is None and not args.verify_only:
+        effective_captured_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     ok, errors, payload, md_text = build_handoff_payload(
         project_root=project_root,
         task_id=task_id_val,
@@ -1396,7 +1541,7 @@ def main() -> None:
         pending_verifications=args.pending_verifications,
         test_results_override=test_override,
         ci_run_override=ci_override,
-        captured_at=args.captured_at,
+        captured_at=effective_captured_at,
         release_evidence_path=args.release_evidence,
         snapshot_evidence_path=args.snapshot_evidence,
         final_evidence_path=args.final_evidence,
@@ -1485,10 +1630,20 @@ def main() -> None:
         )
         mismatches.extend([f"[PR9_SCOPE] {m}" for m in pr9_mismatches])
 
-        if args.task_id and args.task_id not in ("STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001", "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT"):
+        if args.task_id and args.task_id not in (
+            "STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001",
+            "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT",
+            "Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+        ):
             expected_task_id = args.task_id
         else:
             expected_task_id = snapshot_evidence.get("task_id", "Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT")
+
+        if args.task_id:
+            m_top_task = re.search(r'^TASK_ID=([^\r\n]+)', actual_content, re.M)
+            if not m_top_task or m_top_task.group(1).strip() != args.task_id:
+                actual_top = m_top_task.group(1).strip() if m_top_task else "<MISSING>"
+                mismatches.append(f"[TOP_TASK_ID] committed='{actual_top}' != expected='{args.task_id}'")
 
         expected_snapshot_facts = {
             "task_id": expected_task_id,
@@ -1537,6 +1692,40 @@ def main() -> None:
             actual_content, expected_final_facts, scope="STD019_FINAL_RELEASE"
         )
         mismatches.extend([f"[STD019_SCOPE] {m}" for m in final_mismatches])
+        if not args.final_evidence:
+            active_ev_path = resolve_release_evidence_path(project_root)
+            if active_ev_path.resolve() != final_ev_path.resolve():
+                ok_act, act_errors, act_ev = load_release_evidence(project_root, active_ev_path)
+                if not ok_act or act_ev is None:
+                    print(f"[FAIL] Cross-session handoff verification blocked: active release evidence error ({len(act_errors)} issues):")
+                    for e in act_errors:
+                        print(f"  - {e}")
+                    sys.exit(1)
+                expected_active_facts = {
+                    "task_id": act_ev.get("task_id", "Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION"),
+                    "candidate_commit": act_ev["candidate_commit"],
+                    "snapshot_commit": act_ev["snapshot_commit"],
+                    "last_verified_ci_commit": act_ev["last_verified_ci_commit"],
+                    "ci_commit": act_ev["last_verified_ci_commit"],
+                    "ci_run_id": act_ev.get("main_ci_run_id") or act_ev["push_run_id"],
+                    "push_run_id": act_ev.get("main_ci_run_id") or act_ev["push_run_id"],
+                    "pr_run_id": act_ev["pr_run_id"],
+                    "ci_status": act_ev["ci_status"],
+                    "test_count": act_ev["test_count"],
+                    "pr_number": act_ev["pr_number"],
+                    "pr_status": act_ev["pr_status"],
+                    "main_head": act_ev["main_head"],
+                    "release_flow_status": act_ev["release_flow_status"],
+                    "release_tag": act_ev.get("release_tag"),
+                    "tag_object_sha": act_ev.get("tag_object_sha"),
+                    "peeled_commit": act_ev.get("peeled_commit"),
+                    "tag_publish_status": act_ev.get("tag_publish_status"),
+                    "pr_merged_by": act_ev.get("pr_merged_by"),
+                }
+                act_mismatches = verify_handoff_semantic_facts(
+                    actual_content, expected_active_facts, scope="STD020_FINAL_RELEASE"
+                )
+                mismatches.extend([f"[STD020_SCOPE] {m}" for m in act_mismatches])
         mismatches.extend(
             [f"[GIT_SNAPSHOT] {m}" for m in verify_git_snapshot_facts(project_root, actual_content, "handoff")]
         )
@@ -1577,7 +1766,7 @@ def main() -> None:
         pending_verifications=args.pending_verifications,
         test_results_override=test_override,
         ci_run_override=ci_override,
-        captured_at=args.captured_at,
+        captured_at=effective_captured_at,
         release_evidence_path=args.release_evidence,
         snapshot_evidence_path=args.snapshot_evidence,
         final_evidence_path=args.final_evidence,

@@ -6,6 +6,7 @@ on:
       - "feature/**"
       - "feat/**"
       - "fix/**"
+      - "release/**"
       - "main"
       - "codex/**"
       - "docs/**"
@@ -68,7 +69,7 @@ jobs:
 
       - name: Verify Automated Cross-Session Handoff Contract (STD-020)
         run: |
-          python tools/generate_handoff.py --project-root . --task-id Std-019-V3-0-0-POST-RELEASE-CLOSEOUT --verify-only
+          python tools/generate_handoff.py --project-root . --task-id Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION --verify-only
 
       - name: Verify Official Standards Sync Tool & Lock Contract (STD-034)
         run: |

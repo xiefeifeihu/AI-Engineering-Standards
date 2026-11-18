@@ -216,18 +216,26 @@ def _copy_minimal_valid_project(dst: Path) -> str:
         "- **远端 main", "- **远端 main (" + tick + "remote_main_head" + tick + ")**：" + tick + snapshot_head + tick,
         "baseline remote_main_head",
     )
-    baseline_text = replace_section_line(
-        baseline_text, "### 19.3 Std-019 正式发布收口事实与治理追踪", None,
-        "  7. **当前分支与 HEAD**：",
-        "  7. **当前分支与 HEAD**：分支 " + tick + branch + tick + "，本地 HEAD " + tick + snapshot_head + tick + "，worktree_clean=true。",
-        "baseline current branch summary",
-    )
-    baseline_text = replace_section_line(
-        baseline_text, "### 19.3 Std-019 正式发布收口事实与治理追踪", None,
-        "  9. **Git 快照观测时间**：",
-        "  9. **Git 快照观测时间**：" + tick + captured_at + tick + "（快照有效时间 24 小时；过期事实标记 STALE 或 NOT_VERIFIABLE）。",
-        "baseline capture time",
-    )
+    if "### 19.3 Std-019 正式发布收口事实与治理追踪" in baseline_text:
+        baseline_text = replace_section_line(
+            baseline_text, "### 19.3 Std-019 正式发布收口事实与治理追踪", None,
+            "  7. **当前分支与 HEAD**：",
+            "  7. **当前分支与 HEAD**：分支 " + tick + branch + tick + "，本地 HEAD " + tick + snapshot_head + tick + "，worktree_clean=true。",
+            "baseline current branch summary",
+        )
+        baseline_text = replace_section_line(
+            baseline_text, "### 19.3 Std-019 正式发布收口事实与治理追踪", None,
+            "  9. **Git 快照观测时间**：",
+            "  9. **Git 快照观测时间**：" + tick + captured_at + tick + "（快照有效时间 24 小时；过期事实标记 STALE 或 NOT_VERIFIABLE）。",
+            "baseline capture time",
+        )
+    else:
+        baseline_text = replace_section_line(
+            baseline_text, "## 9. 最近 CI 事实", "### 9.",
+            "- **2. Git 快照观测时间",
+            "- **2. Git 快照观测时间 (" + tick + "git_snapshot_observed_at" + tick + ")**：" + tick + captured_at + tick + "（有效时效：24 小时；快照状态：" + tick + "FRESH" + tick + "）",
+            "baseline capture time",
+        )
     baseline_text = refresh_frontmatter_digest(baseline_text)
     baseline_path.write_text(baseline_text, encoding="utf-8")
 
@@ -494,9 +502,9 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             dst = Path(tmp)
             head = _copy_minimal_valid_project(dst)
             # Create a second commit in dst so it is verifiable in git but mismatches other docs
-            (dst / "VERSION").write_text("3.0.1\n", encoding="utf-8")
+            (dst / "VERSION").write_text("9.9.9\n", encoding="utf-8")
             subprocess.run(["git", "-C", str(dst), "add", "VERSION"], capture_output=True, check=True)
-            subprocess.run(["git", "-C", str(dst), "commit", "-m", "second"], capture_output=True, check=True)
+            subprocess.run(["git", "-C", str(dst), "commit", "--allow-empty", "-m", "second"], capture_output=True, check=True)
             second_head = subprocess.run(
                 ["git", "-C", str(dst), "rev-parse", "HEAD"],
                 capture_output=True,
@@ -4846,6 +4854,98 @@ while True:
                     ok, path, err = _validate_journal_target(dst, "standards.lock.json.bak", target_key="lock_bak", tx_id="malicious-symlink-tx")
                     self.assertFalse(ok)
                     self.assertIn("TARGET_SYMLINK_PROHIBITED", str(err))
+
+
+class ReleaseEvidenceVersioningTests(unittest.TestCase):
+    """R2: Dynamic VERSION-based release evidence resolution, previous-release fallback, and patch-release schema compatibility."""
+
+    def _base_patch_evidence(self) -> Dict[str, Any]:
+        return {
+            "repository": "xiefeifeihu/AI-Engineering-Standards",
+            "version": "3.0.1",
+            "task_id": "Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+            "pr_number": 13,
+            "pr_status": "MERGED",
+            "pr_merged": True,
+            "pr_merged_by": "xiefeifeihu",
+            "main_head": "a" * 40,
+            "candidate_commit": "b" * 40,
+            "snapshot_commit": "b" * 40,
+            "last_verified_ci_commit": "a" * 40,
+            "push_run_id": "123456",
+            "push_head_branch": "main",
+            "pr_run_id": "123455",
+            "main_ci_run_id": "123456",
+            "ci_status": "PASS",
+            "test_count": 320,
+            "test_failed": 0,
+            "test_skipped": 0,
+            "windows_status": "PASS",
+            "ubuntu_status": "PASS",
+            "release_tag": "v3.0.1",
+            "tag_object_sha": "c" * 40,
+            "peeled_commit": "a" * 40,
+            "tag_publish_status": "PASS",
+            "old_tag_deleted": False,
+            "release_flow_status": "RELEASED",
+            "observed_at": "2026-11-18T08:00:00Z",
+        }
+
+    def test_version_resolution_and_candidate_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "schemas").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / "schemas" / "release-evidence.schema.json", root / "schemas" / "release-evidence.schema.json")
+            rev_dir = root / "docs" / "release-evidence"
+            rev_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / "docs" / "release-evidence" / "std019-final-release.json", rev_dir / "std019-final-release.json")
+            shutil.copy2(ROOT / "docs" / "release-evidence" / "v3.0.0-reissue.json", rev_dir / "v3.0.0-reissue.json")
+
+            # Candidate VERSION=3.0.1 without v3.0.1.json -> safe fallback to previous official v3.0.0 evidence
+            (root / "VERSION").write_text("3.0.1\n", encoding="utf-8")
+            resolved_cand = resolve_release_evidence_path(root)
+            self.assertEqual(resolved_cand.name, "std019-final-release.json")
+
+            # Once v3.0.1.json exists -> default MUST resolve to v3.0.1.json
+            patch_ev = self._base_patch_evidence()
+            (rev_dir / "v3.0.1.json").write_text(json.dumps(patch_ev, indent=2), encoding="utf-8")
+            resolved_rel = resolve_release_evidence_path(root)
+            self.assertEqual(resolved_rel.name, "v3.0.1.json")
+
+            # VERSION=3.0.2 candidate without v3.0.2.json -> falls back to latest official v3.0.1.json
+            (root / "VERSION").write_text("3.0.2\n", encoding="utf-8")
+            resolved_next = resolve_release_evidence_path(root)
+            self.assertEqual(resolved_next.name, "v3.0.1.json")
+
+    def test_patch_release_schema_allows_non_reissue_and_blocks_fake_zero_shas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "schemas").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / "schemas" / "release-evidence.schema.json", root / "schemas" / "release-evidence.schema.json")
+            rev_dir = root / "docs" / "release-evidence"
+            rev_dir.mkdir(parents=True, exist_ok=True)
+
+            # Valid patch evidence with old_tag_deleted=False and omitted old_tag_* SHAs
+            ev_path = rev_dir / "v3.0.1.json"
+            ev = self._base_patch_evidence()
+            ev_path.write_text(json.dumps(ev, indent=2), encoding="utf-8")
+            ok, errs, loaded = load_release_evidence(root, ev_path)
+            self.assertTrue(ok, errs)
+            assert loaded is not None
+
+            # Zero dummy SHA rejected
+            ev_zero = dict(ev, old_tag_object="0" * 40, old_tag_bundle_sha256="0" * 64)
+            ev_path.write_text(json.dumps(ev_zero, indent=2), encoding="utf-8")
+            ok_z, errs_z, _ = load_release_evidence(root, ev_path)
+            self.assertFalse(ok_z)
+            self.assertTrue(errs_z)
+
+            # old_tag_deleted=True without old_tag_object/bundle rejected
+            ev_reissue_missing = dict(ev, old_tag_deleted=True)
+            ev_path.write_text(json.dumps(ev_reissue_missing, indent=2), encoding="utf-8")
+            ok_r, errs_r, _ = load_release_evidence(root, ev_path)
+            self.assertFalse(ok_r)
+            self.assertTrue(errs_r)
 
 
 if __name__ == "__main__":

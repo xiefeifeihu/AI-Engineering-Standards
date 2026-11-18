@@ -330,7 +330,7 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
         self.assertIn("[PASS]", res_b.stdout)
 
         res_h = subprocess.run(
-            [sys.executable, str(ROOT / "tools" / "generate_handoff.py"), "--project-root", str(ROOT), "--task-id", "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT", "--verify-only"],
+            [sys.executable, str(ROOT / "tools" / "generate_handoff.py"), "--project-root", str(ROOT), "--task-id", "Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION", "--verify-only"],
             capture_output=True, text=True, encoding="utf-8",
         )
         self.assertEqual(res_h.returncode, 0, f"Handoff verify-only failed: {res_h.stdout} {res_h.stderr}")

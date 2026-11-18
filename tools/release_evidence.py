@@ -42,12 +42,46 @@ REQUIRED_EVIDENCE_FIELDS: Tuple[str, ...] = (
     "test_skipped",
     "windows_status",
     "ubuntu_status",
-    "old_tag_deleted",
-    "old_tag_object",
-    "old_tag_peeled_commit",
-    "old_tag_bundle_sha256",
     "release_flow_status",
 )
+
+
+def _parse_semver_tuple(ver: str) -> Optional[Tuple[int, int, int]]:
+    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)$", str(ver).strip())
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+def _find_latest_official_fallback(rev_dir: Path, max_version: Optional[str] = None) -> Optional[Path]:
+    """Select the latest released official evidence file <= max_version safely (never modifying std019)."""
+    if not rev_dir.exists():
+        return None
+    max_tuple = _parse_semver_tuple(max_version) if max_version else None
+    candidates: List[Tuple[Tuple[int, int, int], int, Path]] = []
+
+    for p in rev_dir.glob("*.json"):
+        m = re.match(r"^v(\d+\.\d+\.\d+)\.json$", p.name)
+        if m:
+            vt = _parse_semver_tuple(m.group(1))
+            if vt is not None and (max_tuple is None or vt <= max_tuple):
+                candidates.append((vt, 3, p))
+            continue
+        if p.name == "std019-final-release.json":
+            vt = (3, 0, 0)
+            if max_tuple is None or vt <= max_tuple:
+                candidates.append((vt, 2, p))
+            continue
+        mr = re.match(r"^v(\d+\.\d+\.\d+)-reissue\.json$", p.name)
+        if mr:
+            vt = _parse_semver_tuple(mr.group(1))
+            if vt is not None and (max_tuple is None or vt <= max_tuple):
+                candidates.append((vt, 1, p))
+
+    if candidates:
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return candidates[0][2]
+    return None
 
 
 def resolve_release_evidence_path(
@@ -63,21 +97,44 @@ def resolve_release_evidence_path(
     rev_dir = project_root / "docs" / "release-evidence"
     if version is not None:
         ver_str = str(version).lstrip("v")
-        # Explicit version requested: do NOT let std019-final-release.json silently mask historical versions
-        reissue_candidate = rev_dir / f"v{ver_str}-reissue.json"
-        if reissue_candidate.exists():
-            return reissue_candidate
+        # Explicit version requested: check current-version plain file, reissue file, and v3.0.0 std019 file
         plain_candidate = rev_dir / f"v{ver_str}.json"
         if plain_candidate.exists():
             return plain_candidate
+        reissue_candidate = rev_dir / f"v{ver_str}-reissue.json"
+        if reissue_candidate.exists():
+            return reissue_candidate
         if ver_str == "3.0.0":
             final_candidate = rev_dir / "std019-final-release.json"
             if final_candidate.exists():
                 return final_candidate
         return reissue_candidate
 
-    # Default path when neither explicit_path nor version is specified:
-    # Current official release defaults to std019-final-release.json
+    # Default selection reads VERSION first; if current version formal evidence does not exist yet
+    # (candidate release branch prior to formal Tag publish), safely fall back to previous official release evidence.
+    version_file = project_root / "VERSION"
+    cur_ver: Optional[str] = None
+    if version_file.exists():
+        raw_ver = version_file.read_text(encoding="utf-8-sig").strip().lstrip("v")
+        if _parse_semver_tuple(raw_ver) is not None:
+            cur_ver = raw_ver
+
+    if cur_ver:
+        cur_plain = rev_dir / f"v{cur_ver}.json"
+        if cur_plain.exists():
+            return cur_plain
+        if cur_ver == "3.0.0":
+            std019 = rev_dir / "std019-final-release.json"
+            if std019.exists():
+                return std019
+        cur_reissue = rev_dir / f"v{cur_ver}-reissue.json"
+        if cur_reissue.exists():
+            return cur_reissue
+
+        prev_fallback = _find_latest_official_fallback(rev_dir, max_version=cur_ver)
+        if prev_fallback is not None:
+            return prev_fallback
+
     final_candidate = rev_dir / "std019-final-release.json"
     if final_candidate.exists():
         return final_candidate
@@ -139,8 +196,6 @@ def load_release_evidence(
         "candidate_commit",
         "snapshot_commit",
         "last_verified_ci_commit",
-        "old_tag_object",
-        "old_tag_peeled_commit",
     ):
         val = str(data.get(sha_field, ""))
         if not re.match(r"^[0-9a-f]{40}$", val):
@@ -148,16 +203,28 @@ def load_release_evidence(
                 f"RELEASE_EVIDENCE_INVALID_SHA: '{sha_field}' must be a 40-hex commit SHA (got '{val}')"
             )
 
-    bundle_sha = str(data.get("old_tag_bundle_sha256", ""))
-    if not re.match(r"^[0-9a-f]{64}$", bundle_sha):
-        errors.append(
-            f"RELEASE_EVIDENCE_INVALID_BUNDLE_SHA: 'old_tag_bundle_sha256' must be a 64-hex SHA (got '{bundle_sha}')"
-        )
-
-    if not isinstance(data.get("old_tag_deleted"), bool):
+    if "old_tag_deleted" in data and not isinstance(data.get("old_tag_deleted"), bool):
         errors.append(
             f"RELEASE_EVIDENCE_INVALID_TYPE: 'old_tag_deleted' must be a boolean (got {type(data.get('old_tag_deleted')).__name__})"
         )
+
+    old_tag_deleted_flag = data.get("old_tag_deleted") is True
+    for sha_field in ("old_tag_object", "old_tag_peeled_commit"):
+        raw_val = data.get(sha_field)
+        if old_tag_deleted_flag or raw_val is not None:
+            val = str(raw_val or "")
+            if not re.match(r"^[0-9a-f]{40}$", val) or val == "0" * 40:
+                errors.append(
+                    f"RELEASE_EVIDENCE_INVALID_SHA: '{sha_field}' must be a non-zero 40-hex commit SHA (got '{val}')"
+                )
+
+    raw_bundle = data.get("old_tag_bundle_sha256")
+    if old_tag_deleted_flag or raw_bundle is not None:
+        bundle_sha = str(raw_bundle or "")
+        if not re.match(r"^[0-9a-f]{64}$", bundle_sha) or bundle_sha == "0" * 64:
+            errors.append(
+                f"RELEASE_EVIDENCE_INVALID_BUNDLE_SHA: 'old_tag_bundle_sha256' must be a non-zero 64-hex SHA (got '{bundle_sha}')"
+            )
 
     push_id = str(data.get("push_run_id", "")).strip()
     if not push_id.isdigit():
