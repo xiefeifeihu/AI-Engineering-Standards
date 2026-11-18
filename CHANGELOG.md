@@ -5,6 +5,9 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 ## [Unreleased]
 
 ### Added
+- **F12 回滚 Commit 级内容绑定与打包器路径安全/崩溃恢复/跨进程并发锁加固**:
+  - `rollback_lock`、`promote_upgrade` 与 `verify_approval_event_provenance` 对 `STANDARDS_LOCK_PROMOTION` / `LOCK_ROLLBACK` 强制基于 `commit_bindings.consumer.candidate_commit`（`prefer_git=True`，严禁静默回退工作区未提交文件）重算并双边校验 `content_bindings`，同时核验 `consumer.repository == engineering-manifest.yaml project.repository` 与消费端 Commit 可读性（缺失或不可读返回 `NOT_VERIFIABLE`）。
+  - `scripts/package_acceptance.py` 强制执行 `task_id` 白名单（`^[A-Za-z0-9_-]+$`）、严格 SemVer、解析后路径边界包含校验（`.artifacts/acceptance/` 与 `.artifacts/packages/`）与全链路符号链接拒绝（预检失败零写入）；新增按 `(task_id, version)` 隔离的跨进程 OS 互斥锁（`msvcrt.locking`/`fcntl.flock`）、持久化 `flush`+`os.fsync` 备份与仅含受控相对路径的原子事务日志，以及启动/独立恢复入口 `recover_incomplete_package_transactions()`（覆盖 8 类事务状态、真实子进程崩溃恢复、`RECOVERY_FAILED`/损坏/篡改日志 fail-closed 阻断与重复恢复幂等性）。
 - **基线生成器 Scope 彻底解耦 (F10 / STD-035)**:
   - 增加 `--scope {consumer,standards-release}` 参数（默认 `consumer`）。消费端工程仅校验自身 source_commit、文档完整性、SHA256、Git 快照及消费端真实 CI 证据，无需 Standards 发布证据；Standards 自身 CI 显式调用 `--scope standards-release` 执行全量语义事实校验。
   - 针对真实消费端工程夹具增加正向与反向作用域测试覆盖。

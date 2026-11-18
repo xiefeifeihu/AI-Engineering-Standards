@@ -469,12 +469,18 @@ def verify_approval_event_provenance(
                 return "FAILED", [f"APPROVAL_TIME_MISMATCH: approved_at '{record_approved_at}' does not match GitHub PR merged_at '{merged_at}'"]
 
         if record_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK") or event_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK") or content_bindings:
+            is_controlled_scope = record_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK") or event_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK")
+            eff_git_commit = content_binding_git_commit
+            eff_prefer_git = prefer_git_content
+            if is_controlled_scope:
+                eff_git_commit = content_binding_git_commit or ((commit_bindings or {}).get("consumer") or {}).get("candidate_commit")
+                eff_prefer_git = True
             cb_st, cb_errs = verify_content_bindings_digests(
                 record=record,
                 event=event,
                 project_root=project_root,
-                git_commit=content_binding_git_commit,
-                prefer_git=prefer_git_content,
+                git_commit=eff_git_commit,
+                prefer_git=eff_prefer_git,
             )
             if cb_st == "FAIL":
                 return "FAILED", cb_errs
@@ -692,12 +698,18 @@ def validate_approval_record(
             errors.append("DUAL_COMMIT_CONFUSION_FORBIDDEN: consumer.candidate_commit cannot equal standards.peeled_commit")
 
     if not verify_provenance and effective_project_root is not None and isinstance(record.get("content_bindings"), dict):
+        is_controlled_scope = decision_scope in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK") or record.get("approval_scope") in ("STANDARDS_LOCK_PROMOTION", "LOCK_ROLLBACK")
+        eff_git_commit = content_binding_git_commit
+        eff_prefer_git = prefer_git_content
+        if is_controlled_scope:
+            eff_git_commit = content_binding_git_commit or (((cb_obj or {}).get("consumer") or {}).get("candidate_commit") if isinstance(cb_obj, dict) else None)
+            eff_prefer_git = True
         cb_st, cb_errs = verify_content_bindings_digests(
             record=record,
             event=record.get("approval_event"),
             project_root=effective_project_root,
-            git_commit=content_binding_git_commit,
-            prefer_git=prefer_git_content,
+            git_commit=eff_git_commit,
+            prefer_git=eff_prefer_git,
         )
         if cb_st != "PASS":
             errors.extend(cb_errs)

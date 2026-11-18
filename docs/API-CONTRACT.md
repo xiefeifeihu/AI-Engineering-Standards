@@ -58,7 +58,7 @@ content_sha256: null
 
 `python tools/standards_sync/cli.py rollback --project-root <PROJECT_ROOT> --rollback-authorization-ref <PATH>`
 
-1. **强制 Owner 授权（零旁路）**：官方 CLI `rollback` 子命令强制要求 `--rollback-authorization-ref`，核心 API `rollback_lock` 彻底移除 `require_authorization=False` 安全旁路（传入 `False` 直接拒绝）；授权验证与内容摘要重算必须在任何远端查询或文件写入前完成，授权记录必须满足 `schemas/documentation-approval.schema.json`、`reviewer_type == "OWNER"` 且 `approval_status == "OWNER_APPROVED"`。
+1. **强制 Owner 授权与 Commit 内容绑定（零旁路）**：官方 CLI `rollback` 子命令强制要求 `--rollback-authorization-ref`，核心 API `rollback_lock` 彻底移除 `require_authorization=False` 安全旁路（传入 `False` 直接拒绝）；授权验证、`consumer.repository == engineering-manifest.yaml project.repository` 一致性核验以及 `content_bindings` 基于 `commit_bindings.consumer.candidate_commit`（`prefer_git=True`，严禁静默回退工作区文件）的规范化摘要重算必须在任何远端查询或文件写入前完成（消费端 Commit 不可读返回 `NOT_VERIFIABLE`），授权记录必须满足 `schemas/documentation-approval.schema.json`、`reviewer_type == "OWNER"` 且 `approval_status == "OWNER_APPROVED"`。
 2. **官方历史 Tag 远端与对象完整性核验**：回滚时必须调用 `verify_official_historical_tag` 核验目标 Tag 在官方规范仓远端存在、Tag 对象与剥离提交匹配、位于官方 `main` 祖先链上且目标 Commit 的 `VERSION` 文件真实可读匹配；`standards_root` 缺失、Git 对象缺失或网络不可达返回 `NOT_VERIFIABLE`，Tag/`VERSION` 缺失或不匹配返回 `FAIL`。
 3. **历史 Lock 真实性保持与 CI 状态**：历史 Lock 的 `approval_evidence_ref` 允许为 `null`（如初始引导态），严禁篡改或伪造历史审批事实；历史 Lock 缺失或无效 CI 记录时默认标记为 `NOT_VERIFIABLE`，严禁假定或自动回退为 `PASS`。
 4. **两文件可恢复事务**：回滚操作经可恢复两文件事务更新 `standards.lock.json` 与 `engineering-manifest.yaml`；任一文件写入或校验失败时彻底回退，保留 `previous_locks` 完整审计链。
@@ -90,8 +90,8 @@ content_sha256: null
 
 - **验证规则**：GitHub PR Merge 事件必须由仓库属主独立执行（`merged=true`，`merged_by=Owner`，`base.ref=main`，`head.sha=consumer.candidate_commit`）；严禁智能体自批或合并（`CODING_AGENT` 角色严格阻断）。
 - **内容摘要真实重算算法**：
-  - `ci_job_mapping_sha256`：读取实际工作区文件或受控 Git Commit 中的 `engineering-manifest.yaml`，提取 `standards_validation.required_ci_jobs` 并以 `sort_keys=True, separators=(",", ":"), ensure_ascii=False` 规范化序列化为 UTF-8 JSON 后计算 SHA-256。
-  - `lock_manifest_sha256`：读取 `standards.lock.json` 与 `engineering-manifest.yaml`，构建 `{"standards_lock": ..., "engineering_manifest": ...}` 并以紧凑排序 JSON 序列化后计算 SHA-256。
+  - `ci_job_mapping_sha256`：读取受控 Git Commit 中的 `engineering-manifest.yaml`（在 `STANDARDS_LOCK_PROMOTION` 与 `LOCK_ROLLBACK` 作用域强制以 `commit_bindings.consumer.candidate_commit` 且 `prefer_git=True` 读取，严禁静默回退工作区文件），提取 `standards_validation.required_ci_jobs` 并以 `sort_keys=True, separators=(",", ":"), ensure_ascii=False` 规范化序列化为 UTF-8 JSON 后计算 SHA-256。
+  - `lock_manifest_sha256`：从受控 Git Commit（或受控非锁作用域工作区）读取 `standards.lock.json` 与 `engineering-manifest.yaml`，构建 `{"standards_lock": ..., "engineering_manifest": ...}` 并以紧凑排序 JSON 序列化后计算 SHA-256。
   - 验证器强制重算并与 Approval Record 和 Approval Event 双边比对；任一内容修改导致重算不一致时立即阻断，文件缺失或 Git Commit 不可读时返回 `NOT_VERIFIABLE`。
 - **字段双向对齐与时间戳匹配**：审批记录与 `approval_event` 内部的 `commit_bindings`（consumer 2项、standards 4项）与 `content_bindings`（2项真实摘要）必须逐字段完全一致；`event_timestamp` 必须精确匹配 GitHub PR API 返回的 `merged_at`。
 - **禁止单 Commit 旁路绕过**：针对 `STANDARDS_LOCK_PROMOTION` 和 `LOCK_ROLLBACK` 作用域，必须具备上述双向 Commit 绑定与内容绑定，严禁使用旧版单 Commit 结构绕过。

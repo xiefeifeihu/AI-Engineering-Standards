@@ -3559,6 +3559,105 @@ def execute_transactional_two_file_update(
 
     finally:
         release_transaction_lock(project_root, lock_fd)
+
+
+def _verify_consumer_commit_and_content_bindings(
+    project_root: Path,
+    record: Dict[str, Any],
+    consumer_binding: Dict[str, Any],
+    standards_peeled_commit: str,
+    fail_status: str,
+    expected_consumer_commit: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Verify Consumer repository, 40-hex candidate_commit, commit readability in Consumer repo,
+    and canonical content_bindings digests bound strictly to consumer.candidate_commit (prefer_git=True).
+    Never falls back silently to working-tree files when Git objects are missing or unreadable.
+    """
+    cons_repo = str(consumer_binding.get("repository") or "").strip()
+    if not cons_repo:
+        return {"status": fail_status, "reason": "MISSING_CONSUMER_REPOSITORY: commit_bindings.consumer.repository is required"}
+
+    rec_repo = str(record.get("repository") or "").strip()
+    if rec_repo and cons_repo.lower() != rec_repo.lower():
+        return {"status": fail_status, "reason": f"CONSUMER_REPO_BINDING_MISMATCH: '{cons_repo}' != approval repository '{rec_repo}'"}
+
+    manifest_path = project_root / "engineering-manifest.yaml"
+    if not manifest_path.exists():
+        return {"status": "NOT_VERIFIABLE", "reason": f"MISSING_ENGINEERING_MANIFEST: {manifest_path} not found"}
+    try:
+        mf = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(mf, dict):
+            return {"status": fail_status, "reason": "INVALID_ENGINEERING_MANIFEST: must be a YAML mapping"}
+    except Exception as exc:
+        return {"status": fail_status, "reason": f"INVALID_ENGINEERING_MANIFEST: {exc}"}
+
+    proj_repo = str((mf.get("project") or {}).get("repository") or "").strip()
+    if not proj_repo:
+        return {"status": fail_status, "reason": "MISSING_MANIFEST_PROJECT_REPOSITORY: engineering-manifest.yaml missing project.repository"}
+    if cons_repo.lower() != proj_repo.lower():
+        return {"status": fail_status, "reason": f"CONSUMER_REPO_MISMATCH: commit_bindings.consumer.repository '{cons_repo}' != project.repository '{proj_repo}'"}
+
+    cons_commit = str(consumer_binding.get("candidate_commit") or "").strip()
+    if not re.match(r"^[0-9a-f]{40}$", cons_commit):
+        return {"status": fail_status, "reason": f"INVALID_CONSUMER_CANDIDATE_COMMIT: '{cons_commit}'"}
+    if cons_commit == standards_peeled_commit:
+        return {
+            "status": fail_status,
+            "reason": "PROMOTION_COMMIT_CONFUSION_FORBIDDEN: consumer.candidate_commit cannot equal standards.peeled_commit",
+        }
+    if expected_consumer_commit and cons_commit != expected_consumer_commit:
+        return {
+            "status": fail_status,
+            "reason": f"CONSUMER_COMMIT_MISMATCH: commit_bindings.consumer.candidate_commit '{cons_commit}' != consumer PR HEAD '{expected_consumer_commit}'",
+        }
+    rec_cand = str(record.get("candidate_commit") or "").strip()
+    if rec_cand != cons_commit:
+        return {
+            "status": fail_status,
+            "reason": f"CONSUMER_COMMIT_MISMATCH: approval candidate_commit '{rec_cand}' != consumer.candidate_commit '{cons_commit}'",
+        }
+
+    # Verify consumer candidate_commit is genuinely readable in the consumer Git repository
+    rc_cat, _, _ = run_git(project_root, ["cat-file", "-e", f"{cons_commit}^{{commit}}"])
+    if rc_cat != 0:
+        return {
+            "status": "NOT_VERIFIABLE",
+            "reason": f"CONSUMER_COMMIT_NOT_VERIFIABLE: Consumer candidate commit '{cons_commit}' does not exist or is unreadable in {project_root}",
+        }
+
+    # Verify manifest repository inside that exact Git commit matches consumer repository
+    rc_show, commit_mf_raw, _ = run_git(project_root, ["show", f"{cons_commit}:engineering-manifest.yaml"])
+    if rc_show != 0:
+        return {
+            "status": "NOT_VERIFIABLE",
+            "reason": f"CONSUMER_COMMIT_NOT_VERIFIABLE: Cannot read engineering-manifest.yaml at {cons_commit}",
+        }
+    try:
+        commit_mf = yaml.safe_load(commit_mf_raw) or {}
+        commit_proj_repo = str((commit_mf.get("project") or {}).get("repository") or "").strip()
+        if commit_proj_repo and commit_proj_repo.lower() != cons_repo.lower():
+            return {
+                "status": fail_status,
+                "reason": f"CONSUMER_REPO_MISMATCH_AT_COMMIT: commit {cons_commit} repository '{commit_proj_repo}' != '{cons_repo}'",
+            }
+    except Exception as exc:
+        return {"status": fail_status, "reason": f"INVALID_MANIFEST_AT_COMMIT: {exc}"}
+
+    from tools.validate_approval_contract import verify_content_bindings_digests
+    cb_st, cb_errs = verify_content_bindings_digests(
+        record=record,
+        event=record.get("approval_event"),
+        project_root=project_root,
+        git_commit=cons_commit,
+        prefer_git=True,
+    )
+    if cb_st == "NOT_VERIFIABLE":
+        return {"status": "NOT_VERIFIABLE", "reason": f"CONTENT_BINDINGS_NOT_VERIFIABLE: {'; '.join(cb_errs)}"}
+    if cb_st != "PASS":
+        return {"status": fail_status, "reason": f"CONTENT_BINDINGS_MISMATCH: {'; '.join(cb_errs)}"}
+    return None
+
+
 def promote_upgrade(
     project_root: Path,
     target_tag: str,
@@ -3681,54 +3780,18 @@ def promote_upgrade(
     consumer_b = commit_bindings.get("consumer") or {}
     if not consumer_b:
         return {"status": "UPGRADE_BLOCKED", "reason": "MISSING_CONSUMER_COMMIT_BINDING: commit_bindings.consumer is required"}
-    cons_repo = str(consumer_b.get("repository") or "").strip()
-    if not cons_repo:
-        return {"status": "UPGRADE_BLOCKED", "reason": "MISSING_CONSUMER_REPOSITORY: commit_bindings.consumer.repository is required"}
-    rec_repo = str(approval_record.get("repository") or "").strip()
-    if rec_repo and cons_repo.lower() != rec_repo.lower():
-        return {"status": "UPGRADE_BLOCKED", "reason": f"PROMOTION_BINDING_MISMATCH: consumer repository '{cons_repo}' != approval repository '{rec_repo}'"}
-
-    manifest_path = project_root / "engineering-manifest.yaml"
-    if manifest_path.exists():
-        try:
-            mf = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-            proj_repo = str((mf.get("project") or {}).get("repository") or "").strip()
-            if proj_repo and cons_repo.lower() != proj_repo.lower():
-                return {"status": "UPGRADE_BLOCKED", "reason": f"PROMOTION_CONSUMER_REPO_MISMATCH: '{cons_repo}' != '{proj_repo}'"}
-        except Exception:
-            pass
 
     cand_c = str(consumer_b.get("candidate_commit") or "").strip()
-    if not re.match(r"^[0-9a-f]{40}$", cand_c):
-        return {"status": "UPGRADE_BLOCKED", "reason": f"INVALID_CONSUMER_CANDIDATE_COMMIT: '{cand_c}'"}
-    if cand_c == target_peeled_commit:
-        return {
-            "status": "UPGRADE_BLOCKED",
-            "reason": "PROMOTION_COMMIT_CONFUSION_FORBIDDEN: consumer.candidate_commit cannot equal standards.peeled_commit",
-        }
-    if consumer_candidate_commit and cand_c != consumer_candidate_commit:
-        return {
-            "status": "UPGRADE_BLOCKED",
-            "reason": f"CONSUMER_COMMIT_MISMATCH: commit_bindings.consumer.candidate_commit '{cand_c}' != consumer PR HEAD '{consumer_candidate_commit}'",
-        }
-    rec_cand = str(approval_record.get("candidate_commit") or "").strip()
-    if rec_cand != cand_c:
-        return {
-            "status": "UPGRADE_BLOCKED",
-            "reason": f"PROMOTION_BINDING_MISMATCH: approval candidate_commit '{rec_cand}' != consumer.candidate_commit '{cand_c}'",
-        }
-
-    # Verify recomputed content_bindings against both approval record and approval event
-    from tools.validate_approval_contract import verify_content_bindings_digests
-    cb_st, cb_errs = verify_content_bindings_digests(
-        record=approval_record,
-        event=approval_record.get("approval_event"),
+    cons_err = _verify_consumer_commit_and_content_bindings(
         project_root=project_root,
+        record=approval_record,
+        consumer_binding=consumer_b,
+        standards_peeled_commit=target_peeled_commit,
+        fail_status="UPGRADE_BLOCKED",
+        expected_consumer_commit=consumer_candidate_commit,
     )
-    if cb_st == "NOT_VERIFIABLE":
-        return {"status": "NOT_VERIFIABLE", "reason": f"CONTENT_BINDINGS_NOT_VERIFIABLE: {'; '.join(cb_errs)}"}
-    if cb_st != "PASS":
-        return {"status": "UPGRADE_BLOCKED", "reason": f"CONTENT_BINDINGS_MISMATCH: {'; '.join(cb_errs)}"}
+    if cons_err is not None:
+        return cons_err
 
     app_ok, app_errors = validate_approval_record(
         record=approval_record,
@@ -3736,6 +3799,8 @@ def promote_upgrade(
         standards_root=std_root,
         simulate_provenance_data=simulate_provenance_data,
         project_root=project_root,
+        content_binding_git_commit=cand_c,
+        prefer_git_content=True,
     )
     if not app_ok:
         return {
@@ -3881,11 +3946,10 @@ def rollback_lock(
     from tools.validate_approval_contract import (
         validate_approval_record,
         verify_approval_event_provenance,
-        verify_content_bindings_digests,
         FORBIDDEN_SELF_APPROVAL_ROLES,
     )
 
-    rec_ok, rec_errs = validate_approval_record(auth_data, verify_provenance=False, project_root=project_root)
+    rec_ok, rec_errs = validate_approval_record(auth_data, verify_provenance=False)
     if not rec_ok:
         return {"status": "FAIL", "reason": f"INVALID_ROLLBACK_AUTHORIZATION_RECORD: {rec_errs}"}
 
@@ -3921,31 +3985,25 @@ def rollback_lock(
     consumer_binding = commit_bindings.get("consumer") or {}
     if not consumer_binding:
         return {"status": "FAIL", "reason": "MISSING_CONSUMER_COMMIT_BINDING: commit_bindings.consumer is required"}
-    manifest_path = project_root / "engineering-manifest.yaml"
-    if manifest_path.exists():
-        try:
-            mf = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-            proj_repo = (mf.get("project") or {}).get("repository")
-            if proj_repo and consumer_binding.get("repository") != proj_repo:
-                return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_CONSUMER_REPO_MISMATCH: '{consumer_binding.get('repository')}' != '{proj_repo}'"}
-        except Exception:
-            pass
 
-    cb_st, cb_errs = verify_content_bindings_digests(
-        record=auth_data,
-        event=auth_data.get("approval_event"),
+    cons_commit = str(consumer_binding.get("candidate_commit") or "").strip()
+    cons_err = _verify_consumer_commit_and_content_bindings(
         project_root=project_root,
+        record=auth_data,
+        consumer_binding=consumer_binding,
+        standards_peeled_commit=restored["peeled_commit"],
+        fail_status="FAIL",
     )
-    if cb_st == "NOT_VERIFIABLE":
-        return {"status": "NOT_VERIFIABLE", "reason": f"ROLLBACK_CONTENT_BINDINGS_NOT_VERIFIABLE: {cb_errs}"}
-    if cb_st != "PASS":
-        return {"status": "FAIL", "reason": f"ROLLBACK_CONTENT_BINDINGS_MISMATCH: {cb_errs}"}
+    if cons_err is not None:
+        return cons_err
 
     prov_st, prov_errs = verify_approval_event_provenance(
         record=auth_data,
         standards_root=std_root,
         simulate_data=simulate_provenance_data,
         project_root=project_root,
+        content_binding_git_commit=cons_commit,
+        prefer_git_content=True,
     )
     if prov_st == "FAILED":
         return {"status": "FAIL", "reason": f"ROLLBACK_AUTHORIZATION_PROVENANCE_FAILED: {prov_errs}"}

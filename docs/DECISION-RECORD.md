@@ -35,8 +35,8 @@ content_sha256: null
 | 决策编号 | 决策主题 | 决策内容摘要 | 审批状态 | 生效版本 |
 | :--- | :--- | :--- | :--- | :--- |
 | **`D10`** | 基线生成器 Scope 彻底解耦 (F10) | 彻底解耦 Standards 发布证据核验与消费端工程基线核验。默认 `--scope consumer` 仅校验消费端自身事实，Standards CI 显式调用 `--scope standards-release`。 | `IN_REVIEW` | `v3.0.0` |
-| **`D11`** | 历史基线 Lock 回滚契约与原子性 (F11) | 历史 bootstrap lock 允许 `approval_evidence_ref: null`；CLI `rollback` 强制要求 `--rollback-authorization-ref`（默认 `require_authorization=True`）；历史 Tag 远端一致性核验；缺失 CI 严格默认标记 `NOT_VERIFIABLE`；两文件原子更新与失败回滚。 | `IN_REVIEW` | `v3.0.0` |
-| **`D12`** | 单 Owner 双 Commit PR Merge 审批契约 (F12) | 采用方案 C，通过 `commit_bindings` 显式解耦消费端候选 Commit 与 Standards Peeled Commit；审批记录与事件强绑定内容摘要与时间戳；智能体合并权限阻断；禁止单 Commit 旁路绕过；彻底废除未实现的 `SIGNED_OWNER_EVENT` 伪枚举。 | `IN_REVIEW` | `v3.0.0` |
+| **`D11`** | 历史基线 Lock 回滚契约与原子性 (F11) | 历史 bootstrap lock 允许 `approval_evidence_ref: null`；CLI `rollback` 强制要求 `--rollback-authorization-ref`，核心 API `rollback_lock` 彻底移除 `require_authorization=False` 旁路并强绑定 `candidate_commit` 内容摘要；历史 Tag 远端与 `VERSION` 一致性核验；缺失 CI 严格默认标记 `NOT_VERIFIABLE`；两文件原子更新与失败回滚。 | `IN_REVIEW` | `v3.0.0` |
+| **`D12`** | 单 Owner 双 Commit PR Merge 审批契约 (F12) | 采用方案 C，通过 `commit_bindings` 显式解耦消费端候选 Commit 与 Standards Peeled Commit；晋升与回滚作用域严格基于 `consumer.candidate_commit` (`prefer_git=True`) 重算比对内容摘要并核验 `consumer.repository == project.repository`，严禁工作区静默旁路与单 Commit 旁路绕过；彻底废除未实现的 `SIGNED_OWNER_EVENT` 伪枚举。 | `IN_REVIEW` | `v3.0.0` |
 
 ## 3. 迁移与演进关联文档
 

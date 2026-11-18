@@ -62,7 +62,7 @@ content_sha256: null
 ### 3.3 单 Owner 双 Commit PR Merge Event 审批契约 (F12 / 方案 C)
 
 - **概念解耦与双向绑定完整性**：彻底消除消费端候选 Commit 与 Standards Peeled Commit 的概念混淆（允许且明确要求两者独立，`consumer.candidate_commit != standards.peeled_commit`），审批记录显式包含 `commit_bindings`，明确 `consumer.candidate_commit` 与 `standards.peeled_commit`（包含 repository、target_tag、tag_object_sha、peeled_commit 4 项完整字段），以及真实重算比对的 `content_bindings`（`ci_job_mapping_sha256` 与 `lock_manifest_sha256`）。
-- **内容摘要真实重算**：依据规范化 JSON 排序紧凑编码，从工作区文件或受控 Git Commit 重算 `ci_job_mapping_sha256` 与 `lock_manifest_sha256` 并同时与 Record 与 Event 比对；内容篡改即时阻断，文件缺失或 Git Commit 不可读返回 `NOT_VERIFIABLE`。
+- **内容摘要真实重算**：依据规范化 JSON 排序紧凑编码，从受控 Git Commit 重算 `ci_job_mapping_sha256` 与 `lock_manifest_sha256`（在 `STANDARDS_LOCK_PROMOTION` 与 `LOCK_ROLLBACK` 作用域强制以 `commit_bindings.consumer.candidate_commit` 且 `prefer_git=True` 读取并校验 `consumer.repository == project.repository`，严禁静默回退工作区文件），并同时与 Record 与 Event 比对；内容篡改即时阻断，文件缺失或 Git Commit 不可读返回 `NOT_VERIFIABLE`。
 - **记录与事件字段对齐与强时间校验**：审批记录与 `approval_event` 内的 `commit_bindings` 和 `content_bindings` 必须逐字段严格相等；`event_timestamp` 必须精确等于 GitHub PR API 返回的 `merged_at`。
 - **GitHub PR Merge Provenance 与智能体边界**：通过 GitHub API 读取 PR Merge 事件，核验 `merged=true`、`merged_by` 为仓库属主、`base.ref=main`、`head.sha=consumer.candidate_commit`，严禁智能体自批或合并（`CODING_AGENT` 强阻断）。
 - **禁止单 Commit 旁路绕过**：针对 `STANDARDS_LOCK_PROMOTION` 和 `LOCK_ROLLBACK` 作用域，强制要求双向绑定，禁止退化为单 Commit 遗留旁路。
@@ -70,9 +70,9 @@ content_sha256: null
 
 ### 3.4 官方验收打包器可恢复多文件事务与事务日志
 
-- **移除静默回填**：彻底移除 `package_acceptance.py` 对 `task_id` 和 `version` 的静默回填逻辑，缺失必需字段时立即抛出 `ValueError`，强制 `validate_acceptance_manifest` 发挥完整门禁作用。
-- **可恢复多文件事务模型**：鉴于操作系统不天然支持跨多个文件的原生原子重命名，打包器将 Manifest 临时写入、ZIP 临时写入、Sidecar (`.sha256`) 临时写入以及解压与 SHA-256 校验全部纳入同一可恢复事务，并在发布前对既有 Manifest、ZIP 与 Sidecar 执行完整备份，通过 `.tx_journal_*.json` 持久化事务状态。
-- **临时文件+原子替换式回滚与显式异常报告**：发布阶段若 Manifest 替换、ZIP 写入或 Sidecar 替换发生任何异常，立即利用临时还原文件配合 `os.replace` 恢复全部三个原始文件，严禁产生新 ZIP 搭配旧 Sidecar 的撕裂状态；若原始文件恢复失败，则保留备份与 `RECOVERY_FAILED` 事务日志并显式抛出异常；若全部恢复成功则清理全部临时与备份文件（清理失败时亦显式报错）。
+- **移除静默回填与严格路径安全**：彻底移除 `package_acceptance.py` 对 `task_id` 和 `version` 的静默回填逻辑，缺失必需字段时立即抛出 `ValueError`，强制 `validate_acceptance_manifest` 发挥完整门禁作用；并在创建任何目录或文件前完成 `task_id` 白名单（`^[A-Za-z0-9_-]+$`）、严格 SemVer、解析后路径边界包含校验（`.artifacts/acceptance/` 与 `.artifacts/packages/`）及全链路符号链接拒绝。
+- **跨进程 OS 互斥锁与崩溃耐久事务模型**：打包器通过 `.artifacts/packages/locks/<task_id>_<v_ver>.lock` 获取跨进程 OS 排他锁（Windows `msvcrt.locking` / POSIX `fcntl.flock`），将 Manifest 临时写入、ZIP 临时写入、Sidecar (`.sha256`) 临时写入以及解压与 SHA-256 校验全部纳入可恢复多文件事务；备份与状态转移（`INITIALIZING` → `BACKED_UP` → `COMMITTING` → `COMMITTED`）均执行 `flush` + `os.fsync` 与 `tmp` + `os.replace` 原子写，事务日志 `.tx_journal_*.json` 仅记录经校验的工程相对路径。
+- **启动/独立崩溃恢复与 fail-closed 状态机**：`package_acceptance()` 启动前及独立入口 `recover_incomplete_package_transactions()` 自动接管未完成事务：清理中断的 `INITIALIZING` 与预备份临时日志，回滚未到达 `COMMITTED` 的中断提交，校验 `COMMITTED` / `COMMITTED_CLEANUP_PENDING` 三目标真实哈希后清理备份；遇到损坏或恶意路径日志、缺失/篡改备份或 `RECOVERY_FAILED` 时保持 fail-closed (`BLOCKED`) 并保留取证现场。
 
 ## 4. 消费端接入模式与首个试点
 

@@ -3005,12 +3005,13 @@ COMMIT_HASH=4538b8ba29cb9413782c4197e73bddab64849d82
                 }
             ]
             lock_path.write_text(json.dumps(lock_data, indent=2), encoding="utf-8")
+            subprocess.run(["git", "-C", str(dst), "add", "standards.lock.json"], capture_output=True, check=True)
+            subprocess.run(["git", "-C", str(dst), "commit", "-m", "setup rollback lock"], capture_output=True, check=True)
+            cons_sha = subprocess.run(["git", "-C", str(dst), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
 
             from tools.validate_approval_contract import compute_content_bindings
-            cb_st, computed_cb, cb_errs = compute_content_bindings(dst)
+            cb_st, computed_cb, cb_errs = compute_content_bindings(dst, git_commit=cons_sha, prefer_git=True)
             self.assertEqual(cb_st, "PASS", cb_errs)
-
-            cons_sha = "c483a9366df653e0ec0e722a57aa8c41ecb2b719"
             cb_block = {
                 "consumer": {"repository": "xiefeifeihu/AI-Engineering-Standards", "candidate_commit": cons_sha},
                 "standards": {

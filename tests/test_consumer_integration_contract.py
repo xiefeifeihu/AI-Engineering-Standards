@@ -2493,6 +2493,10 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
         lock_data = json.loads(self.lock_path.read_text(encoding="utf-8"))
         lock_data["previous_locks"] = [restored_lock]
         self.lock_path.write_text(json.dumps(lock_data, indent=2), encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", "standards.lock.json"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "--allow-empty", "-m", "setup lock"], capture_output=True, check=True)
+        self.consumer_sha = subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        self.sim_pr["head"]["sha"] = self.consumer_sha
 
     def _create_valid_auth_file(
         self,
@@ -2575,7 +2579,7 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
             auth_data["approval_event"]["commit_bindings"] = cb
         if not omit_content_bindings:
             from tools.validate_approval_contract import compute_content_bindings
-            cb_st, cnt, cb_errs = compute_content_bindings(self.root)
+            cb_st, cnt, cb_errs = compute_content_bindings(self.root, git_commit=self.consumer_sha, prefer_git=True)
             if cb_st != "PASS" or cnt is None:
                 raise AssertionError(f"Failed computing test content_bindings: {cb_st} {cb_errs}")
             auth_data["content_bindings"] = cnt
@@ -2914,9 +2918,12 @@ class HistoricalLockRollbackContractTests(unittest.TestCase):
         cur_lock["peeled_commit"] = self.v211_peeled
         cur_lock["previous_locks"] = []
         self.lock_path.write_text(json.dumps(cur_lock, indent=2), encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", "standards.lock.json"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "--allow-empty", "-m", "promote pre-state"], capture_output=True, check=True)
+        self.consumer_sha = subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
 
         from tools.validate_approval_contract import compute_content_bindings
-        cb_st, real_cnt, cb_errs = compute_content_bindings(self.root)
+        cb_st, real_cnt, cb_errs = compute_content_bindings(self.root, git_commit=self.consumer_sha, prefer_git=True)
         self.assertEqual(cb_st, "PASS", cb_errs)
 
         target_peeled = "8b223019c254e0edeb94576b94af46c1e48b0316"
@@ -3043,11 +3050,10 @@ class DualCommitApprovalContractTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             dst = Path(tmp)
-            _copy_minimal_valid_project(dst)
-            cb_st, real_cnt, cb_errs = compute_content_bindings(dst)
+            consumer_sha = _copy_minimal_valid_project(dst)
+            cb_st, real_cnt, cb_errs = compute_content_bindings(dst, git_commit=consumer_sha, prefer_git=True)
             self.assertEqual(cb_st, "PASS", cb_errs)
 
-            consumer_sha = "c" * 40
             standards_sha = "8b223019c254e0edeb94576b94af46c1e48b0316"
             event = {
                 "event_id": "42",
@@ -3606,7 +3612,11 @@ class FinalBlockerClosureRound2Tests(unittest.TestCase):
         lk["peeled_commit"] = "5e17c0ef560ab8abafe880b988d70f85f380a104"
         lk["previous_locks"] = []
         lk_path.write_text(json.dumps(lk, indent=2), encoding="utf-8")
-        return root, "d" * 40
+
+        subprocess.run(["git", "-C", str(root), "add", "engineering-manifest.yaml", "standards.lock.json"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "--allow-empty", "-m", "consumer fixture"], capture_output=True, check=True)
+        commit_sha = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        return root, commit_sha
 
     def _make_promo_approval(
         self,
@@ -3620,7 +3630,9 @@ class FinalBlockerClosureRound2Tests(unittest.TestCase):
     ) -> Dict[str, Any]:
         from tools.validate_approval_contract import compute_content_bindings
         if content_bindings_override is None:
-            st, cnt, errs = compute_content_bindings(root)
+            st, cnt, errs = compute_content_bindings(root, git_commit=consumer_commit, prefer_git=True)
+            if st != "PASS" or cnt is None:
+                st, cnt, errs = compute_content_bindings(root)
             self.assertEqual(st, "PASS", errs)
             assert cnt is not None
         else:
@@ -3883,19 +3895,31 @@ class FinalBlockerClosureRound2Tests(unittest.TestCase):
         from tools.standards_sync.core import promote_upgrade
 
         root, consumer_commit = self._build_consumer_fixture()
-        app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", consumer_commit)
+        old_app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", consumer_commit)
 
-        # Modify engineering-manifest.yaml required_ci_jobs AFTER approval was issued
+        # Modify engineering-manifest.yaml required_ci_jobs in a new commit AFTER approval was issued
         mf_path = root / "engineering-manifest.yaml"
         mf_data = yaml.safe_load(mf_path.read_text(encoding="utf-8"))
         mf_data["standards_validation"]["required_ci_jobs"]["unit_tests"]["command"] = "pytest --skip-all"
         mf_path.write_text(yaml.safe_dump(mf_data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "engineering-manifest.yaml"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-m", "modify manifest"], capture_output=True, check=True)
+        new_sha = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+
+        # Rebind commit pointers to new_sha while retaining old content_bindings digests
+        app = json.loads(json.dumps(old_app))
+        app["candidate_commit"] = new_sha
+        app["commit_bindings"]["consumer"]["candidate_commit"] = new_sha
+        app["chatgpt_review"]["candidate_commit"] = new_sha
+        app["owner_approval"]["candidate_commit"] = new_sha
+        app["approval_event"]["candidate_commit"] = new_sha
+        app["approval_event"]["commit_bindings"]["consumer"]["candidate_commit"] = new_sha
 
         sim_pr = {
             "merged": True,
             "merged_by": {"login": "xiefeifeihu"},
             "base": {"ref": "main"},
-            "head": {"sha": consumer_commit},
+            "head": {"sha": new_sha},
             "merged_at": "2026-11-18T00:00:00Z",
         }
         with patch("tools.standards_sync.core.check_remote_main_ci", return_value=("PASS", 99999, "Mock CI")):
@@ -3916,19 +3940,28 @@ class FinalBlockerClosureRound2Tests(unittest.TestCase):
         from tools.validate_approval_contract import verify_approval_event_provenance
 
         root, consumer_commit = self._build_consumer_fixture()
-        app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", consumer_commit)
+        old_app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", consumer_commit)
 
-        # Modify standards.lock.json AFTER approval was issued
+        # Modify standards.lock.json in a new commit AFTER approval was issued
         lk_path = root / "standards.lock.json"
         lk = json.loads(lk_path.read_text(encoding="utf-8"))
         lk["lock_reason"] = "Tampered reason"
         lk_path.write_text(json.dumps(lk, indent=2), encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "standards.lock.json"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-m", "modify lock"], capture_output=True, check=True)
+        new_sha = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+
+        app = json.loads(json.dumps(old_app))
+        app["candidate_commit"] = new_sha
+        app["commit_bindings"]["consumer"]["candidate_commit"] = new_sha
+        app["approval_event"]["candidate_commit"] = new_sha
+        app["approval_event"]["commit_bindings"]["consumer"]["candidate_commit"] = new_sha
 
         sim_pr = {
             "merged": True,
             "merged_by": {"login": "xiefeifeihu"},
             "base": {"ref": "main"},
-            "head": {"sha": consumer_commit},
+            "head": {"sha": new_sha},
             "merged_at": "2026-11-18T00:00:00Z",
         }
         status, errors = verify_approval_event_provenance(app, simulate_data=sim_pr, project_root=root)
@@ -3939,14 +3972,22 @@ class FinalBlockerClosureRound2Tests(unittest.TestCase):
         from tools.validate_approval_contract import verify_approval_event_provenance
 
         root, consumer_commit = self._build_consumer_fixture()
-        app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", consumer_commit)
-        (root / "standards.lock.json").unlink()
+        old_app = self._make_promo_approval(root, "xiefeifeihu/AI-Engineering-Hub", consumer_commit)
+        subprocess.run(["git", "-C", str(root), "rm", "-f", "standards.lock.json"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-m", "remove lock"], capture_output=True, check=True)
+        new_sha = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+
+        app = json.loads(json.dumps(old_app))
+        app["candidate_commit"] = new_sha
+        app["commit_bindings"]["consumer"]["candidate_commit"] = new_sha
+        app["approval_event"]["candidate_commit"] = new_sha
+        app["approval_event"]["commit_bindings"]["consumer"]["candidate_commit"] = new_sha
 
         sim_pr = {
             "merged": True,
             "merged_by": {"login": "xiefeifeihu"},
             "base": {"ref": "main"},
-            "head": {"sha": consumer_commit},
+            "head": {"sha": new_sha},
             "merged_at": "2026-11-18T00:00:00Z",
         }
         status, errors = verify_approval_event_provenance(app, simulate_data=sim_pr, project_root=root)
@@ -3960,10 +4001,7 @@ class FinalBlockerClosureRound2Tests(unittest.TestCase):
     def test_b6_content_bindings_git_commit_mode_and_unreadable_commit(self) -> None:
         from tools.validate_approval_contract import compute_content_bindings, verify_content_bindings_digests
 
-        root, _ = self._build_consumer_fixture()
-        subprocess.run(["git", "-C", str(root), "add", "."], capture_output=True, check=True)
-        subprocess.run(["git", "-C", str(root), "commit", "-m", "bind state"], capture_output=True, check=True)
-        head_sha = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        root, head_sha = self._build_consumer_fixture()
 
         st, digests, errs = compute_content_bindings(root, git_commit=head_sha, prefer_git=True)
         self.assertEqual(st, "PASS", errs)
@@ -4259,6 +4297,847 @@ class FinalBlockerClosureRound2Tests(unittest.TestCase):
         self.assertEqual(manifest_path.read_bytes(), orig_m)
         self.assertEqual(zip_path.read_bytes(), orig_z)
         self.assertEqual(sha_path.read_bytes(), orig_s)
+
+
+class F12RollbackCommitBindingTests(unittest.TestCase):
+    """F12: Strict candidate_commit binding and no worktree bypass for rollback and promotion."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _init_git(self, repo_dir: Path) -> None:
+        subprocess.run(["git", "-C", str(repo_dir), "init", "-b", "main"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(repo_dir), "config", "user.email", "test@example.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(repo_dir), "config", "user.name", "Test User"], capture_output=True, check=True)
+
+    def _setup_rollback_env(self):
+        std_root = self.base / "standards_repo"
+        std_root.mkdir(parents=True, exist_ok=True)
+        self._init_git(std_root)
+        (std_root / "VERSION").write_text("2.11.0\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(std_root), "add", "VERSION"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(std_root), "commit", "-m", "v2.11.0"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(std_root), "tag", "-a", "v2.11.0", "-m", "Release v2.11.0"], capture_output=True, check=True)
+        v211_peeled = subprocess.run(["git", "-C", str(std_root), "rev-parse", "v2.11.0^{commit}"], capture_output=True, text=True, check=True).stdout.strip()
+        v211_tag_obj = subprocess.run(["git", "-C", str(std_root), "rev-parse", "v2.11.0"], capture_output=True, text=True, check=True).stdout.strip()
+
+        (std_root / "VERSION").write_text("3.0.0\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(std_root), "add", "VERSION"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(std_root), "commit", "-m", "v3.0.0"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(std_root), "tag", "-a", "v3.0.0", "-m", "Release v3.0.0"], capture_output=True, check=True)
+        v300_peeled = subprocess.run(["git", "-C", str(std_root), "rev-parse", "v3.0.0^{commit}"], capture_output=True, text=True, check=True).stdout.strip()
+        v300_tag_obj = subprocess.run(["git", "-C", str(std_root), "rev-parse", "v3.0.0"], capture_output=True, text=True, check=True).stdout.strip()
+
+        cons_root = self.base / "consumer_repo"
+        cons_root.mkdir(parents=True, exist_ok=True)
+        self._init_git(cons_root)
+        _copy_minimal_valid_project(cons_root)
+        mf_path = cons_root / "engineering-manifest.yaml"
+        mf_data = yaml.safe_load(mf_path.read_text(encoding="utf-8"))
+        mf_data["project"]["repository"] = "xiefeifeihu/AI-Engineering-Hub"
+        mf_data["standards_validation"] = {
+            "required_ci_jobs": {"gate": "validate-standards"}
+        }
+        mf_path.write_text(yaml.safe_dump(mf_data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+        lock_data = {
+            "schema_version": "1.0.0",
+            "repository": "xiefeifeihu/AI-Engineering-Standards",
+            "version": "3.0.0",
+            "tag": "v3.0.0",
+            "tag_object_sha": v300_tag_obj,
+            "peeled_commit": v300_peeled,
+            "locked_at": "2026-11-18T00:00:00Z",
+            "lock_reason": "Upgraded to v3.0.0",
+            "approval_evidence_ref": "docs/promo-auth.json",
+            "ci_verification_status": "PASS",
+            "previous_locks": [
+                {
+                    "repository": "xiefeifeihu/AI-Engineering-Standards",
+                    "version": "2.11.0",
+                    "tag": "v2.11.0",
+                    "tag_object_sha": v211_tag_obj,
+                    "peeled_commit": v211_peeled,
+                    "locked_at": "2026-11-10T00:00:00Z",
+                    "lock_reason": "Bootstrap v2.11.0",
+                    "approval_evidence_ref": None,
+                    "ci_verification_status": "NOT_VERIFIABLE",
+                }
+            ],
+        }
+        (cons_root / "standards.lock.json").write_text(json.dumps(lock_data, indent=2), encoding="utf-8")
+        subprocess.run(["git", "-C", str(cons_root), "add", "engineering-manifest.yaml", "standards.lock.json"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(cons_root), "commit", "-m", "consumer head"], capture_output=True, check=True)
+        cons_sha = subprocess.run(["git", "-C", str(cons_root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+
+        sim_refs = {
+            "refs/tags/v2.11.0": v211_tag_obj,
+            "refs/tags/v2.11.0^{}": v211_peeled,
+            "refs/tags/v3.0.0": v300_tag_obj,
+            "refs/tags/v3.0.0^{}": v300_peeled,
+            "refs/heads/main": v300_peeled,
+        }
+        return std_root, cons_root, cons_sha, v211_tag_obj, v211_peeled, sim_refs
+
+    def _build_auth(
+        self,
+        cons_root: Path,
+        cons_sha: str,
+        tag: str,
+        tag_obj: str,
+        peeled: str,
+        content_bindings: Dict[str, str],
+        scope: str = "LOCK_ROLLBACK",
+        repo: str = "xiefeifeihu/AI-Engineering-Hub",
+        pr_head_sha: Optional[str] = None,
+    ):
+        auth = {
+            "schema_version": "1.0.0",
+            "task_id": "F12-PARITY-01",
+            "repository": repo,
+            "candidate_commit": cons_sha,
+            "content_sha256": "sha256:" + "a" * 64,
+            "decision_scope": scope,
+            "approval_scope": scope,
+            "reviewer_type": "OWNER",
+            "actor_role": "REPOSITORY_OWNER",
+            "review_result": "OWNER_APPROVED",
+            "approval_status": "OWNER_APPROVED",
+            "approved_at": "2026-11-18T00:00:00Z",
+            "approval_reference": f"https://github.com/{repo}/pull/101",
+            "commit_bindings": {
+                "consumer": {"repository": repo, "candidate_commit": cons_sha},
+                "standards": {
+                    "repository": "xiefeifeihu/AI-Engineering-Standards",
+                    "target_tag": tag,
+                    "tag_object_sha": tag_obj,
+                    "peeled_commit": peeled,
+                },
+            },
+            "content_bindings": dict(content_bindings),
+            "chatgpt_review": {
+                "reviewer": "ChatGPT",
+                "reviewed_at": "2026-11-18T00:00:00Z",
+                "candidate_commit": cons_sha,
+                "content_sha256": "sha256:" + "a" * 64,
+                "review_result": "READY_FOR_OWNER_MERGE",
+                "review_reference": "REF-PARITY",
+                "summary": "Independent review",
+            },
+            "owner_approval": {
+                "approver": "xiefeifeihu",
+                "approval_channel": "GITHUB_PR_MERGE",
+                "approved_at": "2026-11-18T00:00:00Z",
+                "candidate_commit": cons_sha,
+                "content_sha256": "sha256:" + "a" * 64,
+                "approved_decision_ids": ["D-01"],
+                "approval_reference": f"https://github.com/{repo}/pull/101",
+                "decision": "OWNER_APPROVED",
+            },
+            "approval_event": {
+                "event_id": "101",
+                "event_type": "GITHUB_PR_MERGE_EVENT",
+                "provenance_type": "GITHUB_PR_MERGE",
+                "actor_identity": {
+                    "identity_id": "xiefeifeihu",
+                    "identity_type": "GITHUB_USER",
+                    "service_provenance_ref": f"https://api.github.com/repos/{repo}/pulls/101",
+                },
+                "candidate_commit": cons_sha,
+                "content_sha256": "sha256:" + "a" * 64,
+                "approval_scope": scope,
+                "event_timestamp": "2026-11-18T00:00:00Z",
+                "commit_bindings": {
+                    "consumer": {"repository": repo, "candidate_commit": cons_sha},
+                    "standards": {
+                        "repository": "xiefeifeihu/AI-Engineering-Standards",
+                        "target_tag": tag,
+                        "tag_object_sha": tag_obj,
+                        "peeled_commit": peeled,
+                    },
+                },
+                "content_bindings": dict(content_bindings),
+            },
+        }
+        sim_pr = {
+            "number": 101,
+            "merged": True,
+            "merged_at": "2026-11-18T00:00:00Z",
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": pr_head_sha or cons_sha},
+            "user": {"login": "xiefeifeihu"},
+        }
+        auth_file = cons_root / "docs" / "auth-record.json"
+        auth_file.parent.mkdir(parents=True, exist_ok=True)
+        auth_file.write_text(json.dumps(auth, indent=2), encoding="utf-8")
+        return auth_file, auth, sim_pr
+
+    def test_a1_rollback_content_bindings_match_candidate_commit_passes(self) -> None:
+        from tools.standards_sync.core import rollback_lock
+        from tools.validate_approval_contract import compute_content_bindings
+
+        std_root, cons_root, cons_sha, v211_tag, v211_peeled, sim_refs = self._setup_rollback_env()
+        st, digests, errs = compute_content_bindings(cons_root, git_commit=cons_sha, prefer_git=True)
+        self.assertEqual(st, "PASS", errs)
+        assert digests is not None
+
+        auth_file, _, sim_pr = self._build_auth(cons_root, cons_sha, "v2.11.0", v211_tag, v211_peeled, digests)
+        res = rollback_lock(
+            cons_root,
+            rollback_authorization_ref=str(auth_file),
+            standards_root=std_root,
+            simulate_provenance_data=sim_pr,
+            simulate_remote_refs=sim_refs,
+        )
+        self.assertEqual(res["status"], "ROLLED_BACK", res)
+        lock_after = json.loads((cons_root / "standards.lock.json").read_text(encoding="utf-8"))
+        self.assertEqual(lock_after["version"], "2.11.0")
+
+    def test_a2_rollback_worktree_matches_but_candidate_commit_differs_blocks_without_bypass(self) -> None:
+        from tools.standards_sync.core import rollback_lock
+        from tools.validate_approval_contract import compute_content_bindings, verify_approval_event_provenance
+
+        std_root, cons_root, cons_sha, v211_tag, v211_peeled, sim_refs = self._setup_rollback_env()
+        orig_lock = (cons_root / "standards.lock.json").read_text(encoding="utf-8")
+
+        # Mutate working tree ONLY (uncommitted) and compute digests from worktree
+        mf_path = cons_root / "engineering-manifest.yaml"
+        mf_data = yaml.safe_load(mf_path.read_text(encoding="utf-8"))
+        mf_data["standards_validation"] = {"required_ci_jobs": {"gate": "tampered-worktree-job"}}
+        mf_path.write_text(yaml.safe_dump(mf_data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+        st_wt, wt_digests, errs_wt = compute_content_bindings(cons_root, prefer_git=False)
+        self.assertEqual(st_wt, "PASS", errs_wt)
+        assert wt_digests is not None
+
+        auth_file, auth_dict, sim_pr = self._build_auth(
+            cons_root, cons_sha, "v2.11.0", v211_tag, v211_peeled, wt_digests
+        )
+        # rollback_lock must verify strictly against cons_sha (prefer_git=True), NOT worktree!
+        res = rollback_lock(
+            cons_root,
+            rollback_authorization_ref=str(auth_file),
+            standards_root=std_root,
+            simulate_provenance_data=sim_pr,
+            simulate_remote_refs=sim_refs,
+        )
+        self.assertEqual(res["status"], "FAIL", res)
+        self.assertIn("CONTENT_BINDINGS_MISMATCH", res["reason"])
+        self.assertEqual((cons_root / "standards.lock.json").read_text(encoding="utf-8"), orig_lock)
+
+        # Direct provenance call on LOCK_ROLLBACK must ALSO refuse worktree fallback
+        pst, perrs = verify_approval_event_provenance(auth_dict, simulate_data=sim_pr, project_root=cons_root)
+        self.assertEqual(pst, "FAILED")
+        self.assertTrue(any("CONTENT_BINDING_DIGEST_MISMATCH" in e for e in perrs), perrs)
+
+    def test_a3_rollback_forged_digest_equal_in_record_and_event_fails(self) -> None:
+        from tools.standards_sync.core import rollback_lock
+
+        std_root, cons_root, cons_sha, v211_tag, v211_peeled, sim_refs = self._setup_rollback_env()
+        forged = {"ci_job_mapping_sha256": "sha256:" + "f" * 64, "lock_manifest_sha256": "sha256:" + "e" * 64}
+        auth_file, _, sim_pr = self._build_auth(cons_root, cons_sha, "v2.11.0", v211_tag, v211_peeled, forged)
+        res = rollback_lock(
+            cons_root,
+            rollback_authorization_ref=str(auth_file),
+            standards_root=std_root,
+            simulate_provenance_data=sim_pr,
+            simulate_remote_refs=sim_refs,
+        )
+        self.assertEqual(res["status"], "FAIL")
+        self.assertIn("CONTENT_BINDINGS_MISMATCH", str(res))
+
+    def test_a4_rollback_unreadable_consumer_commit_returns_not_verifiable(self) -> None:
+        from tools.standards_sync.core import rollback_lock
+
+        std_root, cons_root, _, v211_tag, v211_peeled, sim_refs = self._setup_rollback_env()
+        fake_sha = "d" * 40
+        forged = {"ci_job_mapping_sha256": "sha256:" + "1" * 64, "lock_manifest_sha256": "sha256:" + "2" * 64}
+        auth_file, _, sim_pr = self._build_auth(cons_root, fake_sha, "v2.11.0", v211_tag, v211_peeled, forged)
+        res = rollback_lock(
+            cons_root,
+            rollback_authorization_ref=str(auth_file),
+            standards_root=std_root,
+            simulate_provenance_data=sim_pr,
+            simulate_remote_refs=sim_refs,
+        )
+        self.assertEqual(res["status"], "NOT_VERIFIABLE", res)
+
+    def test_a5_rollback_pr_head_sha_mismatch_fails(self) -> None:
+        from tools.standards_sync.core import rollback_lock
+        from tools.validate_approval_contract import compute_content_bindings
+
+        std_root, cons_root, cons_sha, v211_tag, v211_peeled, sim_refs = self._setup_rollback_env()
+        _, digests, _ = compute_content_bindings(cons_root, git_commit=cons_sha, prefer_git=True)
+        assert digests is not None
+        auth_file, _, sim_pr = self._build_auth(
+            cons_root, cons_sha, "v2.11.0", v211_tag, v211_peeled, digests, pr_head_sha="9" * 40
+        )
+        res = rollback_lock(
+            cons_root,
+            rollback_authorization_ref=str(auth_file),
+            standards_root=std_root,
+            simulate_provenance_data=sim_pr,
+            simulate_remote_refs=sim_refs,
+        )
+        self.assertEqual(res["status"], "FAIL", res)
+        self.assertIn("APPROVAL_PR_HEAD_COMMIT_MISMATCH", res["reason"])
+
+    def test_a6_promote_and_rollback_parity_against_candidate_commit(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import promote_upgrade
+        from tools.validate_approval_contract import compute_content_bindings
+
+        promo_root = self.base / "promo_consumer_repo"
+        promo_root.mkdir(parents=True, exist_ok=True)
+        self._init_git(promo_root)
+        _copy_minimal_valid_project(promo_root)
+
+        mf_path = promo_root / "engineering-manifest.yaml"
+        mf_data = yaml.safe_load(mf_path.read_text(encoding="utf-8"))
+        mf_data["project"]["repository"] = "xiefeifeihu/AI-Engineering-Hub"
+        mf_path.write_text(yaml.safe_dump(mf_data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+        subprocess.run(["git", "-C", str(promo_root), "add", "."], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(promo_root), "commit", "-m", "promo consumer head"], capture_output=True, check=True)
+        cons_sha = subprocess.run(
+            ["git", "-C", str(promo_root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+        v300_tag = "8256bb384e62894219db0992a2cb57e16d4fa8cd"
+        v300_peeled = "8b223019c254e0edeb94576b94af46c1e48b0316"
+        real_refs = {
+            "refs/tags/v3.0.0": v300_tag,
+            "refs/tags/v3.0.0^{}": v300_peeled,
+            "refs/heads/main": v300_peeled,
+        }
+
+        # Mutate schema-valid working tree differently from cons_sha (changes lock_manifest_sha256)
+        mf_data["project"]["description"] = "wt-only-modified"
+        mf_path.write_text(yaml.safe_dump(mf_data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+        _, wt_digests, _ = compute_content_bindings(promo_root, prefer_git=False)
+        _, commit_digests, _ = compute_content_bindings(promo_root, git_commit=cons_sha, prefer_git=True)
+        assert wt_digests is not None and commit_digests is not None
+
+        with patch("tools.standards_sync.core.check_remote_main_ci", return_value=("PASS", 99999, "Mock CI")), \
+             patch("tools.standards_sync.core.validate_upgrade_candidate", return_value={"status": "PASS", "errors": []}):
+            # Worktree-only digest MUST fail promote_upgrade
+            _, app_wt, sim_pr = self._build_auth(
+                promo_root, cons_sha, "v3.0.0", v300_tag, v300_peeled, wt_digests, scope="STANDARDS_LOCK_PROMOTION"
+            )
+            res_fail = promote_upgrade(
+                promo_root,
+                target_tag="v3.0.0",
+                target_version="3.0.0",
+                target_tag_object_sha=v300_tag,
+                target_peeled_commit=v300_peeled,
+                approval_record=app_wt,
+                standards_root=ROOT,
+                consumer_candidate_commit=cons_sha,
+                simulate_provenance_data=sim_pr,
+                simulate_remote_refs=real_refs,
+            )
+            self.assertEqual(res_fail["status"], "UPGRADE_BLOCKED", res_fail)
+
+            # Commit-bound digest MUST pass promote_upgrade even with dirty worktree
+            _, app_ok, sim_pr_ok = self._build_auth(
+                promo_root, cons_sha, "v3.0.0", v300_tag, v300_peeled, commit_digests, scope="STANDARDS_LOCK_PROMOTION"
+            )
+            res_ok = promote_upgrade(
+                promo_root,
+                target_tag="v3.0.0",
+                target_version="3.0.0",
+                target_tag_object_sha=v300_tag,
+                target_peeled_commit=v300_peeled,
+                approval_record=app_ok,
+                standards_root=ROOT,
+                consumer_candidate_commit=cons_sha,
+                simulate_provenance_data=sim_pr_ok,
+                simulate_remote_refs=real_refs,
+            )
+            self.assertEqual(res_ok["status"], "PROMOTED", res_ok)
+
+
+class PackagerPathSecurityTests(unittest.TestCase):
+    """Strict whitelist, SemVer, resolved containment, and symlink rejection for package_acceptance."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name)
+        self.repo = self.base / "repo"
+        self.repo.mkdir(parents=True, exist_ok=True)
+        (self.repo / "VERSION").write_text("3.0.0\n", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _seed_acceptance(self, task_id: str = "SEC-TASK", version: str = "v3.0.0") -> Path:
+        acc_dir = self.repo / ".artifacts" / "acceptance" / task_id / version
+        acc_dir.mkdir(parents=True, exist_ok=True)
+        rpt = acc_dir / "acceptance_report.md"
+        rpt.write_text("# Report\nOVERALL=PASS\n", encoding="utf-8")
+        log = acc_dir / "test_results.txt"
+        log.write_text("Ran 1 test in 0.01s\nOK\n", encoding="utf-8")
+        files = []
+        for name, p in [("acceptance_report.md", rpt), ("test_results.txt", log)]:
+            data = p.read_bytes()
+            files.append({
+                "path": name,
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "size": len(data),
+            })
+        manifest = {
+            "task_id": task_id,
+            "version": version,
+            "run_id": "sec-run-1",
+            "created_at": "2026-11-18T00:00:00Z",
+            "status": "PASS",
+            "files": files,
+        }
+        (acc_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return acc_dir
+
+    def test_p1_rejects_traversal_and_absolute_task_ids_without_creating_files(self) -> None:
+        from scripts.package_acceptance import package_acceptance, validate_task_id
+
+        outside = self.base / "outside"
+        outside.mkdir(parents=True, exist_ok=True)
+
+        bad_ids = [
+            "../outside",
+            "../../../outside",
+            "../../../../outside",
+            "/abs/path",
+            "C:\\drive\\bad",
+            "\\\\server\\share",
+            "foo/bar",
+            "foo\\bar",
+            "",
+            "bad task",
+            "bad:id",
+        ]
+        for bad in bad_ids:
+            with self.subTest(bad_task_id=bad):
+                with self.assertRaises(ValueError):
+                    validate_task_id(bad)
+                with self.assertRaises(ValueError):
+                    package_acceptance(bad, version="3.0.0", repo_root=self.repo)
+
+        # Must create ZERO packages/acceptance files when preflight rejects
+        self.assertFalse((self.repo / ".artifacts").exists())
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_p2_rejects_bad_versions_and_accepts_strict_semver(self) -> None:
+        from scripts.package_acceptance import normalize_version, package_acceptance
+
+        bad_versions = [
+            "../3.0.0",
+            "3.0.0/foo",
+            "3.0.0\\foo",
+            "3.0",
+            "03.0.0",
+            "3.0.0-alpha",
+            "v3.0.0.1",
+            "v03.0.0",
+            "",
+            "3.0.0 ",
+        ]
+        for bad_v in bad_versions:
+            with self.subTest(bad_version=bad_v):
+                with self.assertRaises(ValueError):
+                    normalize_version(bad_v, self.repo)
+                with self.assertRaises(ValueError):
+                    package_acceptance("SEC-TASK", version=bad_v, repo_root=self.repo)
+        self.assertFalse((self.repo / ".artifacts").exists())
+
+        self._seed_acceptance("SEC-TASK", "v3.0.0")
+        res = package_acceptance("SEC-TASK", version="3.0.0", run_id="ok-1", repo_root=self.repo)
+        self.assertTrue((self.repo / res["zip_path"]).exists())
+        res2 = package_acceptance("SEC-TASK", version="v3.0.0", run_id="ok-2", repo_root=self.repo)
+        self.assertTrue((self.repo / res2["zip_path"]).exists())
+
+    def test_p3_symlink_escape_rejected(self) -> None:
+        from unittest.mock import patch
+        from scripts.package_acceptance import package_acceptance
+
+        acc_dir = self._seed_acceptance("SYM-TASK", "v3.0.0")
+        pkg_dir = self.repo / ".artifacts" / "packages"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        outside = self.base / "outside_target"
+        outside.mkdir(parents=True, exist_ok=True)
+
+        symlink_supported = True
+        sym_acc = self.repo / ".artifacts" / "acceptance" / "SYM-ESCAPE"
+        try:
+            os.symlink(str(outside), str(sym_acc), target_is_directory=True)
+        except OSError:
+            symlink_supported = False
+
+        if symlink_supported:
+            with self.assertRaises(ValueError) as ctx_s:
+                package_acceptance("SYM-ESCAPE", version="3.0.0", repo_root=self.repo)
+            self.assertIn("Symlink", str(ctx_s.exception))
+        else:
+            # Verify symlink rejection deterministically even without Windows SeCreateSymbolicLinkPrivilege
+            orig_is_symlink = Path.is_symlink
+
+            def fake_is_symlink(p: Path) -> bool:
+                if p.name == "packages" or p.name == "SYM-TASK":
+                    return True
+                return orig_is_symlink(p)
+
+            with patch.object(Path, "is_symlink", fake_is_symlink):
+                with self.assertRaises(ValueError) as ctx_m:
+                    package_acceptance("SYM-TASK", version="3.0.0", repo_root=self.repo)
+                self.assertIn("Symlink", str(ctx_m.exception))
+        self.assertTrue((acc_dir / "manifest.json").exists())
+
+
+class PackagerCrashRecoveryAndConcurrencyTests(unittest.TestCase):
+    """Real OS subprocess crash injection (os._exit), recovery states, and multiprocess locking."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name) / "repo"
+        self.repo.mkdir(parents=True, exist_ok=True)
+        (self.repo / "VERSION").write_text("3.0.0\n", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _seed_task(self, task_id: str = "CRASH-TASK", version: str = "v3.0.0", run_id: str = "orig-run") -> tuple[Path, Path, Path]:
+        acc_dir = self.repo / ".artifacts" / "acceptance" / task_id / version
+        acc_dir.mkdir(parents=True, exist_ok=True)
+        rpt = acc_dir / "acceptance_report.md"
+        rpt.write_text("# Acceptance\nSTATUS=PASS\n", encoding="utf-8")
+        log = acc_dir / "test_results.txt"
+        log.write_text("Ran 5 tests\nOK\n", encoding="utf-8")
+        files = []
+        for name, p in [("acceptance_report.md", rpt), ("test_results.txt", log)]:
+            data = p.read_bytes()
+            files.append({"path": name, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)})
+        manifest = {
+            "task_id": task_id,
+            "version": version,
+            "run_id": run_id,
+            "created_at": "2026-11-18T00:00:00Z",
+            "status": "PASS",
+            "files": files,
+        }
+        (acc_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        manifest_path = acc_dir / "manifest.json"
+        pkg_dir = self.repo / ".artifacts" / "packages"
+        zip_path = pkg_dir / f"Acceptance-{task_id}-{version}.zip"
+        sha_path = pkg_dir / f"Acceptance-{task_id}-{version}.zip.sha256"
+        return manifest_path, zip_path, sha_path
+
+    def _spawn_worker(self, code: str) -> subprocess.Popen[str]:
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        return subprocess.Popen(
+            [sys.executable, "-c", code],
+            cwd=str(ROOT),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    def _crash_child_code(self, task_id: str, version: str, run_id: str, crash_mode: str) -> str:
+        return f"""
+import json, os, sys
+from pathlib import Path
+from scripts import package_acceptance as pa
+
+repo = Path({repr(str(self.repo))})
+task_id = {repr(task_id)}
+version = {repr(version)}
+crash_mode = {repr(crash_mode)}
+
+manifest_target = (repo / ".artifacts" / "acceptance" / task_id / version / "manifest.json").resolve()
+pkg_dir = (repo / ".artifacts" / "packages").resolve()
+zip_target = pkg_dir / f"Acceptance-{{task_id}}-{{version}}.zip"
+sha_target = pkg_dir / f"Acceptance-{{task_id}}-{{version}}.zip.sha256"
+journal_target = pkg_dir / f".tx_journal_{{task_id}}_{{version}}.json"
+
+def crash_replace(src: Path, dst: Path) -> None:
+    src_r = Path(src).resolve()
+    dst_r = Path(dst).resolve()
+    if crash_mode == "during_tmp_journal_init" and dst_r == journal_target:
+        os._exit(99)
+    os.replace(src, dst)
+    if crash_mode == "after_manifest_replace" and dst_r == manifest_target:
+        os._exit(99)
+    if crash_mode == "after_zip_replace" and dst_r == zip_target:
+        os._exit(99)
+    if crash_mode == "after_sha_replace_before_committed" and dst_r == sha_target:
+        os._exit(99)
+    if crash_mode == "during_initializing_backup" and dst_r == journal_target:
+        j = json.loads(dst_r.read_text(encoding="utf-8"))
+        if j.get("state") == "INITIALIZING":
+            os._exit(99)
+    if crash_mode == "after_committed_before_cleanup" and dst_r == journal_target:
+        j = json.loads(dst_r.read_text(encoding="utf-8"))
+        if j.get("state") == "COMMITTED":
+            os._exit(99)
+
+pa.package_acceptance(task_id, version=version, run_id={repr(run_id)}, repo_root=repo, replace_fn=crash_replace)
+"""
+
+    def test_c1_real_os_crash_during_committing_points_recovers_originals_and_succeeds(self) -> None:
+        from scripts.package_acceptance import package_acceptance, recover_incomplete_package_transactions
+
+        for mode in ("after_manifest_replace", "after_zip_replace", "after_sha_replace_before_committed"):
+            with self.subTest(crash_mode=mode):
+                task_id = f"TX-{mode[:10].upper().replace('_', '-')}"
+                manifest_path, zip_path, sha_path = self._seed_task(task_id, "v3.0.0", "orig-run")
+                package_acceptance(task_id, version="3.0.0", run_id="orig-run", repo_root=self.repo)
+                orig_m = manifest_path.read_bytes()
+                orig_z = zip_path.read_bytes()
+                orig_s = sha_path.read_bytes()
+
+                proc = self._spawn_worker(self._crash_child_code(task_id, "v3.0.0", "crashed-run", mode))
+                _, err = proc.communicate(timeout=20)
+                self.assertEqual(proc.returncode, 99, f"Expected os._exit(99), got {proc.returncode}: {err}")
+
+                pkg_dir = self.repo / ".artifacts" / "packages"
+                self.assertTrue((pkg_dir / f".tx_journal_{task_id}_v3.0.0.json").exists())
+
+                # Explicit recovery restores all 3 original files and cleans artifacts
+                rec = recover_incomplete_package_transactions(self.repo, task_id=task_id, version="3.0.0")
+                self.assertEqual(rec["status"], "RECOVERED", rec)
+                self.assertEqual(manifest_path.read_bytes(), orig_m)
+                self.assertEqual(zip_path.read_bytes(), orig_z)
+                self.assertEqual(sha_path.read_bytes(), orig_s)
+                self.assertFalse((pkg_dir / f".tx_journal_{task_id}_v3.0.0.json").exists())
+
+                # Repeat crash and recover automatically via startup recovery inside next package_acceptance call
+                proc2 = self._spawn_worker(self._crash_child_code(task_id, "v3.0.0", "crashed-run-2", mode))
+                proc2.communicate(timeout=20)
+                self.assertEqual(proc2.returncode, 99)
+
+                res_next = package_acceptance(task_id, version="3.0.0", run_id="final-run", repo_root=self.repo)
+                self.assertEqual(json.loads(manifest_path.read_text(encoding="utf-8"))["run_id"], "final-run")
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    self.assertEqual(json.loads(zf.read("manifest.json").decode("utf-8"))["run_id"], "final-run")
+                self.assertIn(res_next["zip_sha256"], sha_path.read_text(encoding="utf-8"))
+
+    def test_c2_crash_after_committed_and_tampered_committed_target(self) -> None:
+        from scripts.package_acceptance import package_acceptance, recover_incomplete_package_transactions
+
+        manifest_path, zip_path, sha_path = self._seed_task("COM-TASK", "v3.0.0", "orig-run")
+        package_acceptance("COM-TASK", version="3.0.0", run_id="orig-run", repo_root=self.repo)
+
+        proc = self._spawn_worker(
+            self._crash_child_code("COM-TASK", "v3.0.0", "committed-run", "after_committed_before_cleanup")
+        )
+        proc.communicate(timeout=20)
+        self.assertEqual(proc.returncode, 99)
+
+        # Startup recovery must verify all 3 committed targets match staged_sha256 and preserve committed state
+        rec = recover_incomplete_package_transactions(self.repo, task_id="COM-TASK", version="3.0.0")
+        self.assertEqual(rec["status"], "RECOVERED", rec)
+        self.assertEqual(json.loads(manifest_path.read_text(encoding="utf-8"))["run_id"], "committed-run")
+        pkg_dir = self.repo / ".artifacts" / "packages"
+        self.assertEqual(list(pkg_dir.glob(".bak_*")), [])
+        self.assertEqual(list(pkg_dir.glob(".tx_journal_*")), [])
+
+        # If COMMITTED journal exists but target ZIP was corrupted, recovery must BLOCK
+        proc2 = self._spawn_worker(
+            self._crash_child_code("COM-TASK", "v3.0.0", "committed-run-2", "after_committed_before_cleanup")
+        )
+        proc2.communicate(timeout=20)
+        self.assertEqual(proc2.returncode, 99)
+        zip_path.write_bytes(b"corrupted zip bytes")
+        blk = recover_incomplete_package_transactions(self.repo, task_id="COM-TASK", version="3.0.0")
+        self.assertEqual(blk["status"], "BLOCKED", blk)
+        self.assertIn("COMMITTED_STATE_MISMATCH", blk["reason"])
+
+    def test_c3_interrupted_init_corrupt_journal_missing_backup_and_malicious_journal(self) -> None:
+        from scripts.package_acceptance import package_acceptance, recover_incomplete_package_transactions
+
+        manifest_path, _, _ = self._seed_task("EDGE-TASK", "v3.0.0", "orig-run")
+        package_acceptance("EDGE-TASK", version="3.0.0", run_id="orig-run", repo_root=self.repo)
+        orig_m = manifest_path.read_bytes()
+        pkg_dir = self.repo / ".artifacts" / "packages"
+
+        # 1) Crash during INITIALIZING tmp_journal write -> safe cleanup of .tx_journal_tmp_*
+        proc_tmp = self._spawn_worker(self._crash_child_code("EDGE-TASK", "v3.0.0", "init-tmp", "during_tmp_journal_init"))
+        proc_tmp.communicate(timeout=20)
+        self.assertEqual(proc_tmp.returncode, 99)
+        self.assertTrue(list(pkg_dir.glob(".tx_journal_tmp_EDGE-TASK_v3.0.0_*")))
+        rec_tmp = recover_incomplete_package_transactions(self.repo, task_id="EDGE-TASK", version="3.0.0")
+        self.assertEqual(rec_tmp["status"], "RECOVERED", rec_tmp)
+        self.assertEqual(manifest_path.read_bytes(), orig_m)
+
+        # 2) Crash while INITIALIZING journal is active -> cleans INITIALIZING journal safely
+        proc_init = self._spawn_worker(self._crash_child_code("EDGE-TASK", "v3.0.0", "init-run", "during_initializing_backup"))
+        proc_init.communicate(timeout=20)
+        self.assertEqual(proc_init.returncode, 99)
+        rec_init = recover_incomplete_package_transactions(self.repo, task_id="EDGE-TASK", version="3.0.0")
+        self.assertEqual(rec_init["status"], "RECOVERED", rec_init)
+        self.assertEqual(manifest_path.read_bytes(), orig_m)
+
+        # 3) Missing backup during COMMITTING -> BLOCKED (BACKUP_MISSING_OR_CORRUPT)
+        proc_bak = self._spawn_worker(self._crash_child_code("EDGE-TASK", "v3.0.0", "bak-miss", "after_manifest_replace"))
+        proc_bak.communicate(timeout=20)
+        self.assertEqual(proc_bak.returncode, 99)
+        for bf in pkg_dir.glob(".bak_manifest_EDGE-TASK_v3.0.0_*"):
+            bf.unlink()
+        blk_bak = recover_incomplete_package_transactions(self.repo, task_id="EDGE-TASK", version="3.0.0")
+        self.assertEqual(blk_bak["status"], "BLOCKED", blk_bak)
+        self.assertIn("BACKUP_MISSING_OR_CORRUPT", blk_bak["reason"])
+
+        # 4) Corrupt JSON journal -> BLOCKED (CORRUPT_JOURNAL)
+        jpath = pkg_dir / ".tx_journal_EDGE-TASK_v3.0.0.json"
+        jpath.write_text("{bad json", encoding="utf-8")
+        blk_corrupt = recover_incomplete_package_transactions(self.repo, task_id="EDGE-TASK", version="3.0.0")
+        self.assertEqual(blk_corrupt["status"], "BLOCKED", blk_corrupt)
+        self.assertIn("CORRUPT_JOURNAL", blk_corrupt["reason"])
+
+        # 5) Malicious traversal path inside journal -> BLOCKED (CORRUPT_OR_MALICIOUS_JOURNAL)
+        evil_j = {
+            "tx_id": "tx1",
+            "task_id": "EDGE-TASK",
+            "version": "v3.0.0",
+            "run_id": "r1",
+            "state": "COMMITTING",
+            "orig_existed": {"manifest": True, "zip": True, "sha": True},
+            "orig_sha256": {"manifest": "a" * 64, "zip": "b" * 64, "sha": "c" * 64},
+            "targets": {
+                "manifest": "../../etc/passwd",
+                "zip": ".artifacts/packages/Acceptance-EDGE-TASK-v3.0.0.zip",
+                "sha": ".artifacts/packages/Acceptance-EDGE-TASK-v3.0.0.zip.sha256",
+            },
+            "backups": {
+                "manifest": ".artifacts/packages/.bak_manifest_EDGE-TASK_v3.0.0_tx1.json",
+                "zip": ".artifacts/packages/.bak_Acceptance-EDGE-TASK-v3.0.0.zip_tx1.zip",
+                "sha": ".artifacts/packages/.bak_Acceptance-EDGE-TASK-v3.0.0.zip_tx1.sha256",
+            },
+        }
+        jpath.write_text(json.dumps(evil_j), encoding="utf-8")
+        blk_mal = recover_incomplete_package_transactions(self.repo, task_id="EDGE-TASK", version="3.0.0")
+        self.assertEqual(blk_mal["status"], "BLOCKED", blk_mal)
+        self.assertIn("CORRUPT_OR_MALICIOUS_JOURNAL", blk_mal["reason"])
+
+    def test_c4_recovery_failed_preserved_and_repeated_recovery_idempotent(self) -> None:
+        from scripts.package_acceptance import package_acceptance, recover_incomplete_package_transactions
+
+        self._seed_task("IDEM-TASK", "v3.0.0", "orig-run")
+        package_acceptance("IDEM-TASK", version="3.0.0", run_id="orig-run", repo_root=self.repo)
+        # Crash then recover once
+        proc = self._spawn_worker(self._crash_child_code("IDEM-TASK", "v3.0.0", "r2", "after_zip_replace"))
+        proc.communicate(timeout=20)
+        self.assertEqual(proc.returncode, 99)
+
+        rec1 = recover_incomplete_package_transactions(self.repo, task_id="IDEM-TASK", version="3.0.0")
+        self.assertEqual(rec1["status"], "RECOVERED")
+        # Repeated calls are strictly idempotent
+        rec2 = recover_incomplete_package_transactions(self.repo, task_id="IDEM-TASK", version="3.0.0")
+        self.assertEqual(rec2["status"], "CLEAN")
+        rec3 = recover_incomplete_package_transactions(self.repo)
+        self.assertEqual(rec3["status"], "CLEAN")
+
+        # RECOVERY_FAILED preserves journal and blocks further recovery/packaging
+        pkg_dir = self.repo / ".artifacts" / "packages"
+        jpath = pkg_dir / ".tx_journal_IDEM-TASK_v3.0.0.json"
+        rf_j = {
+            "tx_id": "txrf",
+            "task_id": "IDEM-TASK",
+            "version": "v3.0.0",
+            "run_id": "r3",
+            "state": "RECOVERY_FAILED",
+            "orig_existed": {"manifest": True, "zip": True, "sha": True},
+            "orig_sha256": {"manifest": "a" * 64, "zip": "b" * 64, "sha": "c" * 64},
+            "targets": {
+                "manifest": ".artifacts/acceptance/IDEM-TASK/v3.0.0/manifest.json",
+                "zip": ".artifacts/packages/Acceptance-IDEM-TASK-v3.0.0.zip",
+                "sha": ".artifacts/packages/Acceptance-IDEM-TASK-v3.0.0.zip.sha256",
+            },
+            "backups": {
+                "manifest": ".artifacts/packages/.bak_manifest_IDEM-TASK_v3.0.0_txrf.json",
+                "zip": ".artifacts/packages/.bak_Acceptance-IDEM-TASK-v3.0.0.zip_txrf.zip",
+                "sha": ".artifacts/packages/.bak_Acceptance-IDEM-TASK-v3.0.0.zip_txrf.sha256",
+            },
+        }
+        jpath.write_text(json.dumps(rf_j), encoding="utf-8")
+        blk_rf = recover_incomplete_package_transactions(self.repo, task_id="IDEM-TASK", version="3.0.0")
+        self.assertEqual(blk_rf["status"], "BLOCKED")
+        self.assertIn("RECOVERY_FAILED", blk_rf["reason"])
+        self.assertTrue(jpath.exists())
+        with self.assertRaises(RuntimeError) as ctx_rf:
+            package_acceptance("IDEM-TASK", version="3.0.0", run_id="r4", repo_root=self.repo)
+        self.assertIn("TRANSACTION_RECOVERY_BLOCKED", str(ctx_rf.exception))
+
+    def test_c5_multiprocess_os_lock_serialization_and_timeout_block(self) -> None:
+        from scripts.package_acceptance import package_acceptance
+
+        manifest_path, zip_path, sha_path = self._seed_task("CONC-TASK", "v3.0.0", "init")
+        package_acceptance("CONC-TASK", version="3.0.0", run_id="init", repo_root=self.repo)
+
+        # 1) Two real concurrent OS processes serialize cleanly via OS lock
+        code_a = f"""
+import os, time
+from pathlib import Path
+from scripts.package_acceptance import package_acceptance
+repo = Path({repr(str(self.repo))})
+def slow_replace(src, dst):
+    if Path(dst).name == "manifest.json":
+        time.sleep(0.4)
+    os.replace(src, dst)
+package_acceptance("CONC-TASK", version="3.0.0", run_id="proc-A", repo_root=repo, replace_fn=slow_replace, lock_timeout=15.0)
+"""
+        code_b = f"""
+from pathlib import Path
+from scripts.package_acceptance import package_acceptance
+repo = Path({repr(str(self.repo))})
+package_acceptance("CONC-TASK", version="3.0.0", run_id="proc-B", repo_root=repo, lock_timeout=15.0)
+"""
+        p_a = self._spawn_worker(code_a)
+        p_b = self._spawn_worker(code_b)
+        out_a, err_a = p_a.communicate(timeout=25)
+        out_b, err_b = p_b.communicate(timeout=25)
+        self.assertEqual(p_a.returncode, 0, f"proc A failed: {out_a} {err_a}")
+        self.assertEqual(p_b.returncode, 0, f"proc B failed: {out_b} {err_b}")
+
+        # Verify zero torn state: disk manifest, ZIP internal manifest, and .sha256 sidecar must match identically
+        disk_run = json.loads(manifest_path.read_text(encoding="utf-8"))["run_id"]
+        self.assertIn(disk_run, ("proc-A", "proc-B"))
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zip_run = json.loads(zf.read("manifest.json").decode("utf-8"))["run_id"]
+        self.assertEqual(disk_run, zip_run)
+        zip_hash = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+        self.assertIn(zip_hash, sha_path.read_text(encoding="utf-8"))
+
+        # 2) Explicit lock contention timeout blocks cleanly with TRANSACTION_CONCURRENCY_BLOCKED
+        holder_code = f"""
+import os, sys, time
+from pathlib import Path
+from scripts.package_acceptance import package_acceptance
+repo = Path({repr(str(self.repo))})
+def hold_lock(src, dst):
+    if Path(dst).name == "manifest.json":
+        print("LOCK_HELD", flush=True)
+        time.sleep(1.5)
+    os.replace(src, dst)
+package_acceptance("CONC-TASK", version="3.0.0", run_id="holder", repo_root=repo, replace_fn=hold_lock, lock_timeout=10.0)
+"""
+        p_hold = self._spawn_worker(holder_code)
+        try:
+            assert p_hold.stdout is not None
+            ready_line = p_hold.stdout.readline().strip()
+            self.assertEqual(ready_line, "LOCK_HELD")
+            with self.assertRaises(RuntimeError) as ctx_blk:
+                package_acceptance("CONC-TASK", version="3.0.0", run_id="contender", repo_root=self.repo, lock_timeout=0.15)
+            self.assertIn("TRANSACTION_CONCURRENCY_BLOCKED", str(ctx_blk.exception))
+        finally:
+            _, hold_err = p_hold.communicate(timeout=20)
+            self.assertEqual(p_hold.returncode, 0, hold_err)
 
 
 if __name__ == "__main__":
