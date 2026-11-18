@@ -90,15 +90,30 @@ def _ensure_no_symlink_in_chain(target_path: Path, stop_ancestor: Path) -> None:
     if stop_ancestor.exists() and stop_ancestor.is_symlink():
         raise ValueError(f"Symlink prohibited at boundary directory: {stop_ancestor}")
 
-    # Check components starting at stop_ancestor downward without resolving symlinks prematurely
     raw_abs = Path(os.path.abspath(str(target_path)))
     stop_abs = Path(os.path.abspath(str(stop_ancestor)))
+    base_dir: Path | None = None
     try:
         rel_parts = raw_abs.relative_to(stop_abs).parts
+        base_dir = stop_abs
     except ValueError as exc:
-        raise ValueError(f"Path outside boundary {stop_ancestor}: {target_path}") from exc
+        # Handle Windows 8.3 short paths (e.g. RUNNER~1 vs runneradmin) without accepting symlinked ancestors
+        for cand in [raw_abs, *raw_abs.parents]:
+            try:
+                if cand.resolve(strict=False) == resolved_stop:
+                    if cand.exists() and cand.is_symlink():
+                        raise ValueError(f"Symlink prohibited at boundary directory: {cand}")
+                    base_dir = cand
+                    rel_parts = raw_abs.relative_to(cand).parts
+                    break
+            except ValueError:
+                raise
+            except Exception:
+                continue
+        if base_dir is None:
+            raise ValueError(f"Path outside boundary {stop_ancestor}: {target_path}") from exc
 
-    cur = stop_abs
+    cur = base_dir
     if cur.exists() and cur.is_symlink():
         raise ValueError(f"Symlink prohibited in path: {cur}")
     for part in rel_parts:

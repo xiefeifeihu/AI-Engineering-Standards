@@ -4138,7 +4138,7 @@ class FinalBlockerClosureRound2Tests(unittest.TestCase):
 
     # --- D. Packager Multi-File Transaction Fault Injection Tests ---
     def _setup_pkg_fixture(self, with_existing_pkg: bool = True):
-        root = Path(tempfile.mkdtemp())
+        root = Path(tempfile.mkdtemp()).resolve()
         self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
         acc_dir = root / ".artifacts" / "acceptance" / "TX-TASK" / "v3.0.0"
         acc_dir.mkdir(parents=True, exist_ok=True)
