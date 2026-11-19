@@ -11,7 +11,7 @@ change_summary: "自动采集生成任务 Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-RE
 history_reference: null
 primary_entrypoint: false
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:89702e3504c0d5aaaa63c2ea86e3f32d5f495242c4d45c6663c6fc110936c0ed"
+content_sha256: "sha256:2149da3cad09f07773e1c8e5b0639f01737104634c4abdf9e12fbf9a875f475b"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
@@ -23,20 +23,20 @@ TASK_ID=Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION
 VERSION=v3.0.1
 HANDOFF_TYPE=DURABLE
 STATUS=IN_PROGRESS
-COMMIT_HASH=b34b7702a54bf067f298a3842f1000b8f55d63cd
-CAPTURED_AT=2026-11-19T01:30:40Z
-CONTENT_SHA256=sha256:134b6121edb054c6868fe5fccab85effb57aad6b92db950eb31da66b5d3d9dbb
+COMMIT_HASH=0056ca1a9421569f1b211eb5ca133df9a209f07e
+CAPTURED_AT=2026-11-19T09:13:53Z
+CONTENT_SHA256=sha256:b09a915b4ef10ed9aa6f698e378a8e89b5532b9ee2955b15049205322c3186bc
 ```
 
 > **强制重核验约束 (`STD-020` §3)**：新会话接手时必须重新核验实时工程事实（Git、Standards 锁定、CI 与 Runtime），严禁仅凭旧聊天摘要推断当前状态。
 
 ## 1. 当前 Git 状态与分支身份 (`git_state`)
 - **当前分支 (`branch`)**：`release/std-020-v3.0.1`
-- **当前快照 Commit (`snapshot_commit`)**：`b34b7702a54bf067f298a3842f1000b8f55d63cd`
-- **本地 HEAD (`local_head`)**：`b34b7702a54bf067f298a3842f1000b8f55d63cd`
+- **当前快照 Commit (`snapshot_commit`)**：`0056ca1a9421569f1b211eb5ca133df9a209f07e`
+- **本地 HEAD (`local_head`)**：`0056ca1a9421569f1b211eb5ca133df9a209f07e`
 - **远端 main (`remote_head`)**：`18c4ced02f72198e9556b7f159169294f1c399f0`
 - **工作区干净状态 (`worktree_clean`)**：`true`
-- **Git 状态摘要 (`status_summary`)**：`## release/std-020-v3.0.1...origin/release/std-020-v3.0.1 [ahead 3]`
+- **Git 状态摘要 (`status_summary`)**：`## release/std-020-v3.0.1...origin/release/std-020-v3.0.1`
 
 ## 2. 当前 Standards 锁定 (`standards_lock`)
 - **规范仓库 (`repository`)**：`xiefeifeihu/AI-Engineering-Standards`
@@ -53,19 +53,19 @@ CONTENT_SHA256=sha256:134b6121edb054c6868fe5fccab85effb57aad6b92db950eb31da66b5d
 - **证据引用 (`evidence_ref`)**：`NONE`
 
 ## 4. 远端 CI 关联 (`ci_run`)
-- **Run ID (`run_id`)**：`44272059516`
-- **Push Run ID**：`44272059516`
-- **PR Run ID**：`44272124416`
+- **Run ID (`run_id`)**：`None`
+- **Push Run ID**：`None`
+- **PR Run ID**：`None`
 - **工作流 (`workflow`)**：`.github/workflows/standards-ci.yml`
-- **关联 Commit (`commit`)**：`badeca821122dc2cefeb4455b9ab48050934b690`
+- **关联 Commit (`commit`)**：`0056ca1a9421569f1b211eb5ca133df9a209f07e`
 - **核验状态 (`verification_status`)**：`NOT_VERIFIABLE`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)
 - **1. 基线源 Commit**：`9687f961b22df612c4311961e06fc1c1fd508c37`
-- **2. Git 快照观测时间**：`2026-11-19T01:30:40Z`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
-- **3. 最近一次已验证 CI Commit**：`badeca821122dc2cefeb4455b9ab48050934b690`（Run 44272059516 Push / Run 44272124416 PR #13 双平台全绿）
-- **4. 当前候选 Commit**：`b34b7702a54bf067f298a3842f1000b8f55d63cd`
+- **2. Git 快照观测时间**：`2026-11-19T09:13:53Z`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
+- **3. 最近一次已验证 CI Commit**：`NOT_VERIFIABLE`
+- **4. 当前候选 Commit**：`0056ca1a9421569f1b211eb5ca133df9a209f07e`
 - **5. 当前待验证事项**：远端 GitHub Actions CI 双平台实测；严禁在推送前或运行完成前伪造 CI PASS
 - **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644, 42843755347, 42843964061（避免每次记录 CI 无限触发基线变更）
 
@@ -135,29 +135,30 @@ CONTENT_SHA256=sha256:134b6121edb054c6868fe5fccab85effb57aad6b92db950eb31da66b5d
 - **旧 Tag 删除状态**：`OLD_TAG_DELETED=true`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
-### 4.5 当前发布候选状态 (v3.0.1 Candidate)
+### 4.5 当前发布候选状态与实时 PR 身份 (CURRENT_CANDIDATE_PR)
 - **任务编号 (`task_id`)**：`Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION`
 - **候选版本 (`candidate_version`)**：`3.0.1`
 - **当前候选 PR 编号 (`candidate_pr_number`)**：`13`
 - **当前候选 PR 状态 (`candidate_pr_status`)**：`OPEN`
 - **PR 状态标记 (`PR_STATE`)**：`OPEN`
 - **PR 草稿标记 (`PR_DRAFT`)**：`false`
-- **当前候选 PR HEAD (`candidate_pr_head`)**：`b34b7702a54bf067f298a3842f1000b8f55d63cd`
 - **当前候选 PR Base (`candidate_pr_base`)**：`main`
-- **当前候选 Commit (`candidate_commit`)**：`b34b7702a54bf067f298a3842f1000b8f55d63cd`
+- **当前候选 Commit (`candidate_commit`)**：`0056ca1a9421569f1b211eb5ca133df9a209f07e`
+- **实时 PR HEAD 核验方式 (`live_pr_head_verification`)**：`GITHUB_PR_API_REQUIRED`（实时 PR HEAD 与 PR 状态通过 GitHub PR API / Actions Event 在线核验，不自引用静态写入）
+- **实时 CI 运行记录方式 (`ci_runtime_record`)**：`GITHUB_STEP_SUMMARY`（实时 PR HEAD 与 CI Run ID 由 CI Runtime 与 Step Summary 记录）
+- **状态快照观测时间 (`candidate_observed_at`)**：`2026-11-19T09:13:53Z`
 - **当前最新已发布正式 Tag (`LATEST_RELEASED_TAG`)**：`v3.0.0`
 - **发布流程状态 (`RELEASE_STATUS`)**：`CANDIDATE`（待 PR #13 经独立审查与 Owner 批准合入 main 后由 main CI 自动签发 v3.0.1 Tag）
-- **当前候选 Push CI Run ID (`candidate_push_run_id`)**：`44272059516`
-- **当前候选 PR CI Run ID (`candidate_pr_run_id`)**：`44272124416`
 
 ## 5. 已完成事项 (`completed_items`)
 - [x] PR #12 merged into main (18c4ced) and verified via Main CI Run 44259959029 (Windows/Ubuntu PASS)
-- [x] Decoupled current candidate PR #13 identity from historical PR9/STD018/STD019 release evidence in baseline/handoff generators and verify-only
-- [x] Hardened release_evidence.py fallback to select only verified RELEASED evidence (rejecting CANDIDATE/IN_PROGRESS/BLOCKED/corrupt/tag-mismatched files) with 12 regression tests A-L
+- [x] Implemented F13 candidate_commit ancestry PR contract (eliminating static candidate_pr_head self-reference loop)
+- [x] Implemented F14 shared live PR API & GitHub Event contract verification across Baseline, Handoff, and standards-ci.yml
+- [x] Implemented F15 fail-closed local Git annotated tag verification and RELEASED-only fallback across release_evidence.py
 
 ## 6. 未完成事项 (`pending_items`)
-- [ ] Push remediation commits to PR #13, verify new Ubuntu/Windows Push CI and PR CI runs PASS, and await ChatGPT independent review
-- [ ] After Owner merges PR #13 into main and v3.0.1 Annotated Tag is created by main CI, complete R7/R8 post-release evidence and v3.0.1 Acceptance ZIP
+- [ ] Verify final PR #13 dual-platform Push CI and PR CI runs PASS via live GitHub Step Summary and await ChatGPT final review
+- [ ] After Owner merges PR #13 into main and v3.0.1 Annotated Tag is minted by main CI, complete R7/R8 closeout and v3.0.1 Acceptance ZIP
 
 ## 7. 阻断项 (`blockers`)
 - 当前无 `BLOCK` 阻断项。
