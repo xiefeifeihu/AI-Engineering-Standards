@@ -22,7 +22,12 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from tools.validate_approval_contract import compute_canonical_document_sha256
-from tools.release_evidence import load_release_evidence, resolve_release_evidence_path
+from tools.release_evidence import (
+    load_release_evidence,
+    resolve_release_evidence_path,
+    verify_candidate_pr_section,
+    verify_commit_ancestry,
+)
 
 
 def resolve_standards_root(explicit_root: Optional[str] = None) -> Path:
@@ -676,6 +681,41 @@ def verify_handoff_semantic_facts(
     return mismatches
 
 
+def verify_handoff_candidate_pr_facts(
+    content: str,
+    version_str: str,
+    repository: str = "xiefeifeihu/AI-Engineering-Standards",
+    project_root: Optional[Path] = None,
+    historical_merge_commits: Optional[set[str]] = None,
+    historical_candidate_commits: Optional[set[str]] = None,
+    expected_facts: Optional[Dict[str, Any]] = None,
+    verify_live_pr: bool = False,
+    require_live_pr: bool = False,
+    simulate_pr_data: Optional[Dict[str, Any]] = None,
+    simulate_pr_error: Optional[str] = None,
+    simulate_event_data: Optional[Dict[str, Any]] = None,
+    return_details: bool = False,
+):
+    """Delegate handoff CURRENT_CANDIDATE_PR verification to the shared F13+F14 contract."""
+    errs, live_details, live_status = verify_candidate_pr_section(
+        content=content,
+        version_str=version_str,
+        repository=repository,
+        project_root=project_root,
+        historical_merge_commits=historical_merge_commits,
+        historical_candidate_commits=historical_candidate_commits,
+        expected_facts=expected_facts,
+        verify_live_pr=verify_live_pr,
+        require_live_pr=require_live_pr,
+        simulate_pr_data=simulate_pr_data,
+        simulate_pr_error=simulate_pr_error,
+        simulate_event_data=simulate_event_data,
+    )
+    if return_details:
+        return errs, live_details, live_status
+    return errs
+
+
 def build_handoff_payload(
     project_root: Path,
     task_id: str,
@@ -754,13 +794,16 @@ def build_handoff_payload(
     )
     today_date = now_iso[:10]
 
-    # Project ID and version
+    # Project ID, repository, and version
     manifest_path = project_root / "engineering-manifest.yaml"
     project_id = "ai-engineering-standards"
+    repository = "xiefeifeihu/AI-Engineering-Standards"
     if manifest_path.exists():
         try:
             manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-            project_id = str((manifest.get("project") or {}).get("id") or project_id)
+            proj_obj = manifest.get("project") or {}
+            project_id = str(proj_obj.get("id") or project_id)
+            repository = str(proj_obj.get("repository") or repository)
         except Exception:
             pass
 
@@ -823,16 +866,33 @@ def build_handoff_payload(
         or (current_ver_evidence.get("candidate_commit") if current_ver_evidence else None)
         or local_head
     )
+    if (project_root / ".git").exists() and code_candidate_commit:
+        if not re.fullmatch(r"[0-9a-f]{40}", code_candidate_commit) or code_candidate_commit == "0" * 40:
+            errors.append(
+                f"HANDOFF_CANDIDATE_COMMIT_INVALID: '{code_candidate_commit}' must be a non-zero 40-hex commit SHA"
+            )
+        else:
+            rc_cand_obj, _ = run_git(project_root, ["cat-file", "-e", f"{code_candidate_commit}^{{commit}}"])
+            if rc_cand_obj != 0:
+                errors.append(
+                    f"HANDOFF_CANDIDATE_COMMIT_NOT_FOUND: candidate_commit '{code_candidate_commit}' does not exist in Git repository"
+                )
+
     eff_cand_pr_head = candidate_pr_head or pr_head_override or code_candidate_commit
-    if candidate_pr_head and candidate_pr_head != code_candidate_commit:
-        errors.append(
-            f"HANDOFF_CANDIDATE_PR_HEAD_MISMATCH: candidate_pr_head '{candidate_pr_head}' != candidate_commit '{code_candidate_commit}'"
+    if candidate_pr_head:
+        anc_st, anc_errs = verify_commit_ancestry(
+            project_root,
+            code_candidate_commit,
+            candidate_pr_head,
+            repository=repository,
+            allow_remote_compare=True,
         )
+        if anc_st == "FAIL":
+            errors.extend(anc_errs)
     effective_ci_commit = (
         ci_commit
         or last_verified_ci_commit
         or (current_ver_evidence.get("last_verified_ci_commit") if current_ver_evidence else None)
-        or code_candidate_commit
     )
 
     if effective_pr_status == "DRAFT":
@@ -950,7 +1010,7 @@ def build_handoff_payload(
         or (current_ver_evidence.get("pr_run_id") if current_ver_evidence else None)
     )
     active_run_id = active_push_run_id or active_pr_run_id
-    ci_commit_val = effective_ci_commit or (local_head if local_head else "NOT_RUN")
+    ci_commit_val = effective_ci_commit or "NOT_VERIFIABLE"
     if ci_run_override:
         ci_run = dict(ci_run_override)
         if not ci_run.get("run_id") and active_run_id:
@@ -1312,23 +1372,21 @@ def build_handoff_payload(
             cand_pr_num_disp = str(eff_cand_pr_number) if eff_cand_pr_number is not None else "NOT_ASSIGNED"
             sec45_lines = [
                 "",
-                "### 4.5 当前发布候选状态 (v" + str(resolved_version) + " Candidate)",
+                "### 4.5 当前发布候选状态与实时 PR 身份 (CURRENT_CANDIDATE_PR)",
                 f"- **任务编号 (`task_id`)**：`{task_id}`",
                 f"- **候选版本 (`candidate_version`)**：`{resolved_version}`",
                 f"- **当前候选 PR 编号 (`candidate_pr_number`)**：`{cand_pr_num_disp}`",
                 f"- **当前候选 PR 状态 (`candidate_pr_status`)**：`{effective_pr_status}`",
                 f"- **PR 状态标记 (`PR_STATE`)**：`{pr_state_str}`",
                 f"- **PR 草稿标记 (`PR_DRAFT`)**：`{str(pr_draft_bool).lower()}`",
-                f"- **当前候选 PR HEAD (`candidate_pr_head`)**：`{eff_cand_pr_head}`",
                 f"- **当前候选 PR Base (`candidate_pr_base`)**：`{eff_cand_pr_base}`",
                 f"- **当前候选 Commit (`candidate_commit`)**：`{code_candidate_commit}`",
+                "- **实时 PR HEAD 核验方式 (`live_pr_head_verification`)**：`GITHUB_PR_API_REQUIRED`（实时 PR HEAD 与 PR 状态通过 GitHub PR API / Actions Event 在线核验，不自引用静态写入）",
+                "- **实时 CI 运行记录方式 (`ci_runtime_record`)**：`GITHUB_STEP_SUMMARY`（实时 PR HEAD 与 CI Run ID 由 CI Runtime 与 Step Summary 记录）",
+                f"- **状态快照观测时间 (`candidate_observed_at`)**：`{now_iso}`",
                 f"- **当前最新已发布正式 Tag (`LATEST_RELEASED_TAG`)**：`{_h_019_ev['release_tag']}`",
                 f"- **发布流程状态 (`RELEASE_STATUS`)**：`{cand_release_status}`（待 {pr_label} 经独立审查与 Owner 批准合入 main 后由 main CI 自动签发 v{resolved_version} Tag）",
             ]
-            if active_push_run_id:
-                sec45_lines.append(f"- **当前候选 Push CI Run ID (`candidate_push_run_id`)**：`{active_push_run_id}`")
-            if active_pr_run_id:
-                sec45_lines.append(f"- **当前候选 PR CI Run ID (`candidate_pr_run_id`)**：`{active_pr_run_id}`")
             md_lines.extend(sec45_lines)
     else:
         md_lines.extend([
@@ -1533,6 +1591,11 @@ def main() -> None:
     parser.add_argument("--final-evidence", default=None, help="Path to final release evidence JSON file (Std-019)")
     parser.add_argument("--output", default=None, help="Target markdown path for verification (default: docs/CROSS-SESSION-HANDOFF.md)")
     parser.add_argument("--verify-only", action="store_true", help="Verify handoff generation against committed file")
+    parser.add_argument(
+        "--require-live-pr",
+        action="store_true",
+        help="Require real GitHub PR API verification to succeed (blocks if API unavailable)",
+    )
     args = parser.parse_args()
 
     project_root = Path(args.project_root).resolve()
@@ -1795,6 +1858,72 @@ def main() -> None:
         mismatches.extend(
             [f"[GIT_SNAPSHOT] {m}" for m in verify_git_snapshot_facts(project_root, actual_content, "handoff")]
         )
+
+        # Shared F13+F14 Candidate PR & Live PR API contract verification (only on candidate non-released versions)
+        ver_file_chk = project_root / "VERSION"
+        cur_ver_str = ver_file_chk.read_text(encoding="utf-8").strip().lstrip("v") if ver_file_chk.exists() else payload["version"].lstrip("v")
+        active_ev_for_cand = resolve_release_evidence_path(project_root)
+        active_ev_is_current_released = False
+        if active_ev_for_cand.is_file():
+            ok_ae, _, ae_data = load_release_evidence(project_root, active_ev_for_cand)
+            if ok_ae and ae_data and str(ae_data.get("version", "")).lstrip("v") == cur_ver_str and ae_data.get("release_flow_status") == "RELEASED":
+                active_ev_is_current_released = True
+
+        if not active_ev_is_current_released and "CURRENT_CANDIDATE_PR" in actual_content:
+            hist_merge_shas: set[str] = set()
+            hist_cand_shas: set[str] = set()
+            for hev in (release_evidence, snapshot_evidence, final_evidence):
+                if isinstance(hev, dict):
+                    for k in ("main_head", "peeled_commit"):
+                        v = str(hev.get(k) or "").strip()
+                        if re.fullmatch(r"[0-9a-f]{40}", v):
+                            hist_merge_shas.add(v)
+                    cv = str(hev.get("candidate_commit") or "").strip()
+                    if re.fullmatch(r"[0-9a-f]{40}", cv):
+                        hist_cand_shas.add(cv)
+
+            exp_cand_facts: Dict[str, Any] = {}
+            exp_pr_n = args.candidate_pr_number if args.candidate_pr_number is not None else args.pr_number
+            exp_pr_s = args.candidate_pr_status if args.candidate_pr_status is not None else args.pr_status
+            if exp_pr_n is not None:
+                exp_cand_facts["candidate_pr_number"] = exp_pr_n
+            if exp_pr_s is not None:
+                exp_cand_facts["candidate_pr_status"] = str(exp_pr_s).strip().upper()
+            if args.candidate_pr_head is not None:
+                exp_cand_facts["candidate_pr_head"] = args.candidate_pr_head.strip()
+            if args.candidate_pr_base is not None:
+                exp_cand_facts["candidate_pr_base"] = args.candidate_pr_base.strip()
+            if candidate_pr_draft_val is not None:
+                exp_cand_facts["pr_draft"] = candidate_pr_draft_val
+            if args.candidate_commit is not None:
+                exp_cand_facts["candidate_commit"] = args.candidate_commit.strip()
+
+            cand_errs, live_pr_details, live_pr_status = verify_handoff_candidate_pr_facts(
+                content=actual_content,
+                version_str=cur_ver_str,
+                repository=payload["standards_lock"]["repository"],
+                project_root=project_root,
+                historical_merge_commits=hist_merge_shas,
+                historical_candidate_commits=hist_cand_shas,
+                expected_facts=exp_cand_facts or None,
+                verify_live_pr=True,
+                require_live_pr=bool(args.require_live_pr or os.environ.get("GITHUB_ACTIONS") == "true"),
+                return_details=True,
+            )
+            mismatches.extend([f"[CURRENT_CANDIDATE_PR] {m}" for m in cand_errs])
+            if live_pr_status:
+                print(
+                    f"[INFO] Live PR Identity Status: {live_pr_status}"
+                    + (
+                        f" (PR #{live_pr_details.get('candidate_pr_number')}, head={live_pr_details.get('pr_head_sha')}, state={live_pr_details.get('pr_state')}, draft={live_pr_details.get('pr_draft')}, ancestry={live_pr_details.get('ancestry_status')})"
+                        if live_pr_details
+                        else ""
+                    )
+                )
+        elif not active_ev_is_current_released:
+            mismatches.append(
+                "[CURRENT_CANDIDATE_PR] SCOPE_SECTION_MISSING: Active candidate handoff must contain CURRENT_CANDIDATE_PR section"
+            )
 
         if mismatches:
             print(f"[FAIL] Committed handoff mismatches expected facts ({len(mismatches)} issues):")

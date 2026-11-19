@@ -41,15 +41,19 @@ from tools.generate_engineering_baseline import (
 from tools.generate_handoff import (
     build_handoff_payload,
     write_handoff_files,
+    verify_handoff_candidate_pr_facts,
     verify_handoff_semantic_facts,
 )
 from tools.release_evidence import (
     _find_latest_official_fallback,
+    _verify_local_git_tag_consistency,
     is_verified_released_evidence,
     load_release_evidence,
     resolve_release_evidence_path,
+    verify_commit_ancestry,
     verify_git_tag,
     verify_github_ci_runs,
+    verify_live_pr_identity,
     verify_single_github_run,
 )
 from tools.standards_sync.core import (
@@ -241,12 +245,6 @@ def _copy_minimal_valid_project(dst: Path) -> str:
             "baseline capture time",
         )
     if "(CURRENT_CANDIDATE_PR)" in baseline_text:
-        baseline_text = replace_section_line(
-            baseline_text, "## 19. 当前候选状态与消费端试点 (CURRENT_CANDIDATE_PR)", None,
-            "- **当前候选 PR HEAD",
-            "- **当前候选 PR HEAD (" + tick + "candidate_pr_head" + tick + ")**：" + tick + snapshot_head + tick,
-            "baseline candidate_pr_head",
-        )
         baseline_text = replace_section_line(
             baseline_text, "## 19. 当前候选状态与消费端试点 (CURRENT_CANDIDATE_PR)", None,
             "- **当前候选 Commit",
@@ -4915,21 +4913,43 @@ class ReleaseEvidenceVersioningTests(unittest.TestCase):
             shutil.copy2(ROOT / "schemas" / "release-evidence.schema.json", root / "schemas" / "release-evidence.schema.json")
             rev_dir = root / "docs" / "release-evidence"
             rev_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / "docs" / "release-evidence" / "std019-final-release.json", rev_dir / "std019-final-release.json")
             shutil.copy2(ROOT / "docs" / "release-evidence" / "v3.0.0-reissue.json", rev_dir / "v3.0.0-reissue.json")
 
-            # Candidate VERSION=3.0.1 without v3.0.1.json -> safe fallback to previous official v3.0.0 evidence
+            # Initialize real temporary Git repo with real Annotated Tags (F15 production fail-closed check)
+            subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.com"], check=True)
+            subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+            (root / "VERSION").write_text("3.0.0\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "VERSION"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "v3.0.0"], check=True)
+            c300 = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+            subprocess.run(["git", "-C", str(root), "tag", "-a", "v3.0.0", "-m", "v3.0.0"], check=True)
+            t300 = subprocess.check_output(["git", "-C", str(root), "rev-parse", "refs/tags/v3.0.0"], text=True).strip()
+
+            std019_ev = json.loads((ROOT / "docs" / "release-evidence" / "std019-final-release.json").read_text(encoding="utf-8"))
+            std019_ev["tag_object_sha"] = t300
+            std019_ev["peeled_commit"] = c300
+            std019_ev["main_head"] = c300
+            (rev_dir / "std019-final-release.json").write_text(json.dumps(std019_ev, indent=2), encoding="utf-8")
+
+            # Candidate VERSION=3.0.1 without v3.0.1.json -> safe fallback to verified official v3.0.0 evidence
             (root / "VERSION").write_text("3.0.1\n", encoding="utf-8")
             resolved_cand = resolve_release_evidence_path(root)
             self.assertEqual(resolved_cand.name, "std019-final-release.json")
 
-            # Once v3.0.1.json exists -> default MUST resolve to v3.0.1.json
-            patch_ev = self._base_patch_evidence()
+            # Once v3.0.1 is released and tagged in Git -> default MUST resolve to v3.0.1.json
+            subprocess.run(["git", "-C", str(root), "add", "VERSION"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "v3.0.1"], check=True)
+            c301 = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+            subprocess.run(["git", "-C", str(root), "tag", "-a", "v3.0.1", "-m", "v3.0.1"], check=True)
+            t301 = subprocess.check_output(["git", "-C", str(root), "rev-parse", "refs/tags/v3.0.1"], text=True).strip()
+
+            patch_ev = dict(self._base_patch_evidence(), tag_object_sha=t301, peeled_commit=c301, main_head=c301)
             (rev_dir / "v3.0.1.json").write_text(json.dumps(patch_ev, indent=2), encoding="utf-8")
             resolved_rel = resolve_release_evidence_path(root)
             self.assertEqual(resolved_rel.name, "v3.0.1.json")
 
-            # VERSION=3.0.2 candidate without v3.0.2.json -> falls back to latest official v3.0.1.json
+            # VERSION=3.0.2 candidate without v3.0.2.json -> falls back to latest verified official v3.0.1.json
             (root / "VERSION").write_text("3.0.2\n", encoding="utf-8")
             resolved_next = resolve_release_evidence_path(root)
             self.assertEqual(resolved_next.name, "v3.0.1.json")
@@ -5012,7 +5032,8 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
 
     def test_a_historical_merged_never_overrides_current_draft_pr13(self) -> None:
         """A: Historical std019 pr_status=MERGED must NOT overwrite current PR #13 DRAFT."""
-        cand_sha = "1" * 40
+        cand_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD^"], text=True).strip()
+        head_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
         ok, errs, payload, md = build_engineering_baseline(
             project_root=ROOT,
             standards_root=ROOT,
@@ -5021,12 +5042,12 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             candidate_commit_override=cand_sha,
             candidate_pr_number=13,
             candidate_pr_status="DRAFT",
-            candidate_pr_head=cand_sha,
+            candidate_pr_head=head_sha,
             candidate_pr_base="main",
-            push_run_id="44272059516",
-            pr_run_id="44272124416",
+            push_run_id="44442713519",
+            pr_run_id="44442719904",
             ci_status="PASS",
-            test_count=289,
+            test_count=331,
             final_evidence_path="docs/release-evidence/std019-final-release.json",
         )
         self.assertTrue(ok, f"Unexpected failure: {errs}")
@@ -5038,6 +5059,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
         self.assertEqual(cand_meta["pr_state"], "OPEN")
         self.assertTrue(cand_meta["pr_draft"])
         self.assertEqual(cand_meta["release_status"], "CANDIDATE")
+        self.assertNotIn("candidate_pr_head", cand_meta)
 
         sec19, sec_errs = extract_scope_content(md, "CURRENT_CANDIDATE_PR")
         self.assertEqual(sec_errs, [])
@@ -5046,6 +5068,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
         self.assertIn("`OPEN`", sec19)
         self.assertIn("`true`", sec19)
         self.assertIn("`CANDIDATE`", sec19)
+        self.assertNotIn("candidate_pr_head", sec19)
         self.assertNotIn("MERGED", sec19)
         self.assertNotIn("已合入", sec19)
 
@@ -5068,7 +5091,8 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
 
     def test_b_historical_merge_commit_never_used_as_current_pr_merge_commit(self) -> None:
         """B: Historical PR #9 / PR #10 merge commits must never appear as current PR merge commit."""
-        cand_sha = "2" * 40
+        cand_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD^"], text=True).strip()
+        head_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
         hist_pr10_merge = "8b223019c254e0edeb94576b94af46c1e48b0316"
         hist_pr9_merge = "3cd42b69049b148bceea1324d4f8212393cb96df"
 
@@ -5097,7 +5121,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
                 "merged": True,
                 "merged_by": {"login": "xiefeifeihu"},
                 "base": {"ref": "main"},
-                "head": {"sha": cand_sha},
+                "head": {"sha": head_sha},
                 "merge_commit_sha": hist_sha,
             }
             ok_bad, errs_bad, _, _ = build_engineering_baseline(
@@ -5108,7 +5132,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
                 candidate_commit_override=cand_sha,
                 candidate_pr_number=13,
                 candidate_pr_status="MERGED",
-                candidate_pr_head=cand_sha,
+                candidate_pr_head=head_sha,
                 candidate_pr_base="main",
                 candidate_pr_merge_event=fake_event,
             )
@@ -5118,48 +5142,66 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
                 f"Expected historical merge pollution error, got: {errs_bad}",
             )
 
-    def test_c_candidate_pr_head_mismatch_blocks(self) -> None:
-        """C: PR #13 candidate_pr_head != candidate_commit MUST BLOCK both build and verify-only."""
-        cand_sha = "3" * 40
-        other_sha = "4" * 40
-        ok, errs, _, _ = build_engineering_baseline(
+    def test_c_candidate_commit_ancestry_verified_and_non_ancestor_blocks(self) -> None:
+        """C (F13): candidate_commit as ancestor of PR HEAD passes even when SHAs differ; non-ancestor MUST BLOCK."""
+        cand_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD^"], text=True).strip()
+        head_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+        self.assertNotEqual(cand_sha, head_sha)
+
+        # 1. candidate_commit (parent) is an ancestor of PR HEAD (child) -> PASS without self-reference loop
+        ok_anc, errs_anc, _, _ = build_engineering_baseline(
             project_root=ROOT,
             standards_root=ROOT,
             observed_at="2026-11-19T01:00:00Z",
             source_commit_override=PROJECT_SOURCE_COMMIT,
             candidate_commit_override=cand_sha,
             candidate_pr_number=13,
-            candidate_pr_status="DRAFT",
-            candidate_pr_head=other_sha,
+            candidate_pr_status="OPEN",
+            candidate_pr_head=head_sha,
             candidate_pr_base="main",
         )
-        self.assertFalse(ok)
-        self.assertTrue(any("CANDIDATE_PR_HEAD_MISMATCH" in e for e in errs), f"Got: {errs}")
+        self.assertTrue(ok_anc, f"Ancestor candidate_commit must PASS even when PR HEAD moved ahead: {errs_anc}")
 
-        # verify_current_candidate_pr_facts also catches tampered head != candidate_commit
+        # 2. candidate_commit is NOT an ancestor of PR HEAD (reversed: child as candidate, parent as PR HEAD) -> BLOCK
+        ok_non_anc, errs_non_anc, _, _ = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=head_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="OPEN",
+            candidate_pr_head=cand_sha,
+            candidate_pr_base="main",
+        )
+        self.assertFalse(ok_non_anc)
+        self.assertTrue(any("CANDIDATE_COMMIT_NOT_ANCESTOR_OF_PR_HEAD" in e for e in errs_non_anc), f"Got: {errs_non_anc}")
+
+        # 3. verify_current_candidate_pr_facts also catches non-ancestor PR HEAD
         ok_good, errs_good, _, md_good = build_engineering_baseline(
             project_root=ROOT,
             standards_root=ROOT,
             observed_at="2026-11-19T01:00:00Z",
             source_commit_override=PROJECT_SOURCE_COMMIT,
-            candidate_commit_override=cand_sha,
+            candidate_commit_override=head_sha,
             candidate_pr_number=13,
-            candidate_pr_status="DRAFT",
-            candidate_pr_head=cand_sha,
+            candidate_pr_status="OPEN",
             candidate_pr_base="main",
         )
         self.assertTrue(ok_good, errs_good)
         assert md_good is not None
-        tampered = md_good.replace(
-            f"- **当前候选 PR HEAD (`candidate_pr_head`)**：`{cand_sha}`",
-            f"- **当前候选 PR HEAD (`candidate_pr_head`)**：`{other_sha}`",
+        v_errs = verify_current_candidate_pr_facts(
+            md_good,
+            version_str="3.0.1",
+            project_root=ROOT,
+            expected_facts={"candidate_pr_head": cand_sha},
         )
-        v_errs = verify_current_candidate_pr_facts(tampered, version_str="3.0.1")
-        self.assertTrue(any("CANDIDATE_PR_HEAD_MISMATCH" in e for e in v_errs), f"Got: {v_errs}")
+        self.assertTrue(any("CANDIDATE_COMMIT_NOT_ANCESTOR_OF_PR_HEAD" in e for e in v_errs), f"Got: {v_errs}")
 
     def test_d_candidate_pr_base_not_main_blocks(self) -> None:
         """D: PR #13 candidate_pr_base != 'main' MUST BLOCK both build and verify-only."""
-        cand_sha = "5" * 40
+        cand_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD^"], text=True).strip()
+        head_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
         ok, errs, _, _ = build_engineering_baseline(
             project_root=ROOT,
             standards_root=ROOT,
@@ -5168,7 +5210,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             candidate_commit_override=cand_sha,
             candidate_pr_number=13,
             candidate_pr_status="DRAFT",
-            candidate_pr_head=cand_sha,
+            candidate_pr_head=head_sha,
             candidate_pr_base="develop",
         )
         self.assertFalse(ok)
@@ -5183,7 +5225,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             candidate_commit_override=cand_sha,
             candidate_pr_number=13,
             candidate_pr_status="DRAFT",
-            candidate_pr_head=cand_sha,
+            candidate_pr_head=head_sha,
             candidate_pr_base="main",
         )
         self.assertTrue(ok_good)
@@ -5192,12 +5234,13 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             "- **当前候选 PR Base (`candidate_pr_base`)**：`main`",
             "- **当前候选 PR Base (`candidate_pr_base`)**：`release/other`",
         )
-        v_errs = verify_current_candidate_pr_facts(tampered, version_str="3.0.1")
+        v_errs = verify_current_candidate_pr_facts(tampered, version_str="3.0.1", project_root=ROOT)
         self.assertTrue(any("CANDIDATE_PR_BASE_NOT_MAIN" in e for e in v_errs), f"Got: {v_errs}")
 
     def test_e_merged_only_allowed_with_verified_owner_merge_event(self) -> None:
         """E: PR #13 MERGED is blocked without real Owner merge event, and allowed only when fully verified."""
-        cand_sha = "6" * 40
+        cand_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD^"], text=True).strip()
+        head_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
         merge_sha = "7" * 40
 
         # 1. Missing merge event -> BLOCK
@@ -5209,7 +5252,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             candidate_commit_override=cand_sha,
             candidate_pr_number=13,
             candidate_pr_status="MERGED",
-            candidate_pr_head=cand_sha,
+            candidate_pr_head=head_sha,
             candidate_pr_base="main",
         )
         self.assertFalse(ok_no_ev)
@@ -5221,7 +5264,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             "merged": True,
             "merged_by": {"login": "coding-agent-bot"},
             "base": {"ref": "main"},
-            "head": {"sha": cand_sha},
+            "head": {"sha": head_sha},
             "merge_commit_sha": merge_sha,
         }
         ok_bad_owner, errs_bad_owner, _, _ = build_engineering_baseline(
@@ -5232,7 +5275,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             candidate_commit_override=cand_sha,
             candidate_pr_number=13,
             candidate_pr_status="MERGED",
-            candidate_pr_head=cand_sha,
+            candidate_pr_head=head_sha,
             candidate_pr_base="main",
             candidate_pr_merge_event=bad_owner_ev,
         )
@@ -5249,7 +5292,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             candidate_commit_override=cand_sha,
             candidate_pr_number=13,
             candidate_pr_status="MERGED",
-            candidate_pr_head=cand_sha,
+            candidate_pr_head=head_sha,
             candidate_pr_base="main",
             candidate_pr_merge_event=unmerged_ev,
         )
@@ -5262,7 +5305,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             "merged": True,
             "merged_by": {"login": "xiefeifeihu"},
             "base": {"ref": "main"},
-            "head": {"sha": cand_sha},
+            "head": {"sha": head_sha},
             "merge_commit_sha": merge_sha,
         }
         ok_valid, errs_valid, payload_valid, md_valid = build_engineering_baseline(
@@ -5273,7 +5316,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             candidate_commit_override=cand_sha,
             candidate_pr_number=13,
             candidate_pr_status="MERGED",
-            candidate_pr_head=cand_sha,
+            candidate_pr_head=head_sha,
             candidate_pr_base="main",
             candidate_pr_merge_event=valid_ev,
         )
@@ -5290,8 +5333,8 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
         self.assertIn("`xiefeifeihu`", sec19)
 
     def test_f_no_hardcoded_pr9_pr10_pollution_and_historical_scopes_preserved(self) -> None:
-        """F: No hardcoded PR #9 / PR #10 pollutes current facts; historical PR9/STD018/STD019 remain intact; verify-only catches drift."""
-        cand_sha = "8" * 40
+        """F: No hardcoded PR #9 / PR #10 pollutes current facts; no self-referencing PR HEAD; historical scopes preserved."""
+        cand_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD^"], text=True).strip()
         ok, errs, payload, md = build_engineering_baseline(
             project_root=ROOT,
             standards_root=ROOT,
@@ -5300,18 +5343,19 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             candidate_commit_override=cand_sha,
             candidate_pr_number=13,
             candidate_pr_status="DRAFT",
-            push_run_id="44272059516",
-            pr_run_id="44272124416",
+            push_run_id="44442713519",
+            pr_run_id="44442719904",
             ci_status="PASS",
-            test_count=289,
+            test_count=331,
         )
         self.assertTrue(ok, errs)
         assert payload is not None and md is not None
 
-        # 1. Section 19 has NO PR #9 / PR #10
+        # 1. Section 19 has NO PR #9 / PR #10 and NO static self-referencing candidate_pr_head
         sec19, sec19_errs = extract_scope_content(md, "CURRENT_CANDIDATE_PR")
         self.assertEqual(sec19_errs, [])
         self.assertNotRegex(sec19, r"PR\s*#(9|10)\b")
+        self.assertNotIn("candidate_pr_head", sec19)
         self.assertIn("PR #13", sec19)
 
         # 2. Section 9 summary line has NO PR #9 / PR #10 and dynamically binds PR #13
@@ -5339,34 +5383,58 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
 
         # 5. verify_current_candidate_pr_facts catches injected PR #9 or wrong expected PR number
         polluted_md = md.replace("- **当前候选 PR 编号 (`candidate_pr_number`)**：`13`", "- **当前候选 PR 编号 (`candidate_pr_number`)**：`9`")
-        p_errs = verify_current_candidate_pr_facts(polluted_md, version_str="3.0.1")
+        p_errs = verify_current_candidate_pr_facts(polluted_md, version_str="3.0.1", project_root=ROOT)
         self.assertTrue(any("CANDIDATE_PR_HISTORICAL_NUMBER_POLLUTION" in e for e in p_errs), f"Got: {p_errs}")
 
         mismatch_errs = verify_current_candidate_pr_facts(
             md,
             version_str="3.0.1",
+            project_root=ROOT,
             expected_facts={"candidate_pr_number": 99},
         )
         self.assertTrue(any("CANDIDATE_PR_EXPECTED_FIELD_MISMATCH" in e for e in mismatch_errs), f"Got: {mismatch_errs}")
 
-    # --- Release Evidence Fallback Tests (G-L) ---
+    # --- Release Evidence Fallback Tests (G-L) with Real Git Repo + Annotated Tags ---
 
-    def _setup_rev_dir(self, tmpdir: str) -> tuple[Path, Path]:
+    def _setup_rev_dir(self, tmpdir: str) -> tuple[Path, Path, str, str]:
         root = Path(tmpdir)
         (root / "schemas").mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / "schemas" / "release-evidence.schema.json", root / "schemas" / "release-evidence.schema.json")
         rev_dir = root / "docs" / "release-evidence"
         rev_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / "docs" / "release-evidence" / "std019-final-release.json", rev_dir / "std019-final-release.json")
         shutil.copy2(ROOT / "docs" / "release-evidence" / "v3.0.0-reissue.json", rev_dir / "v3.0.0-reissue.json")
-        return root, rev_dir
+
+        # Initialize real temp Git repo with real Annotated v3.0.0 tag so F15 production validation is exercised
+        subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.com"], check=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+        (root / "README.md").write_text("v3.0.0\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "v3.0.0"], check=True)
+        c300 = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+        subprocess.run(["git", "-C", str(root), "tag", "-a", "v3.0.0", "-m", "v3.0.0"], check=True)
+        t300 = subprocess.check_output(["git", "-C", str(root), "rev-parse", "refs/tags/v3.0.0"], text=True).strip()
+
+        std019_ev = json.loads((ROOT / "docs" / "release-evidence" / "std019-final-release.json").read_text(encoding="utf-8"))
+        std019_ev["tag_object_sha"] = t300
+        std019_ev["peeled_commit"] = c300
+        std019_ev["main_head"] = c300
+        (rev_dir / "std019-final-release.json").write_text(json.dumps(std019_ev, indent=2), encoding="utf-8")
+
+        (root / "README.md").write_text("v3.0.1\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "v3.0.1"], check=True)
+        c301 = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+        subprocess.run(["git", "-C", str(root), "tag", "-a", "v3.0.1", "-m", "v3.0.1"], check=True)
+        t301 = subprocess.check_output(["git", "-C", str(root), "rev-parse", "refs/tags/v3.0.1"], text=True).strip()
+        return root, rev_dir, t301, c301
 
     def test_g_released_301_is_valid_fallback_for_302(self) -> None:
-        """G: Verified 3.0.1 RELEASED evidence is selected as fallback when VERSION=3.0.2."""
+        """G: Verified 3.0.1 RELEASED evidence with matching Git annotated tag is selected as fallback when VERSION=3.0.2."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            root, rev_dir = self._setup_rev_dir(tmpdir)
+            root, rev_dir, t301, c301 = self._setup_rev_dir(tmpdir)
             (rev_dir / "v3.0.1.json").write_text(
-                json.dumps(self._make_release_evidence("3.0.1", "RELEASED"), indent=2),
+                json.dumps(self._make_release_evidence("3.0.1", "RELEASED", tag_object_sha=t301, peeled_commit=c301), indent=2),
                 encoding="utf-8",
             )
             (root / "VERSION").write_text("3.0.2\n", encoding="utf-8")
@@ -5381,9 +5449,9 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
         """H: 3.0.1 CANDIDATE / IN_PROGRESS must NOT be selected as 3.0.2 fallback (falls back to v3.0.0)."""
         for non_released in ("CANDIDATE", "IN_PROGRESS"):
             with tempfile.TemporaryDirectory() as tmpdir:
-                root, rev_dir = self._setup_rev_dir(tmpdir)
+                root, rev_dir, t301, c301 = self._setup_rev_dir(tmpdir)
                 (rev_dir / "v3.0.1.json").write_text(
-                    json.dumps(self._make_release_evidence("3.0.1", non_released), indent=2),
+                    json.dumps(self._make_release_evidence("3.0.1", non_released, tag_object_sha=t301, peeled_commit=c301), indent=2),
                     encoding="utf-8",
                 )
                 (root / "VERSION").write_text("3.0.2\n", encoding="utf-8")
@@ -5397,9 +5465,9 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
     def test_i_blocked_301_not_selected_as_fallback(self) -> None:
         """I: 3.0.1 BLOCKED must NOT be selected as fallback (falls back to v3.0.0)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            root, rev_dir = self._setup_rev_dir(tmpdir)
+            root, rev_dir, t301, c301 = self._setup_rev_dir(tmpdir)
             (rev_dir / "v3.0.1.json").write_text(
-                json.dumps(self._make_release_evidence("3.0.1", "BLOCKED"), indent=2),
+                json.dumps(self._make_release_evidence("3.0.1", "BLOCKED", tag_object_sha=t301, peeled_commit=c301), indent=2),
                 encoding="utf-8",
             )
             (root / "VERSION").write_text("3.0.2\n", encoding="utf-8")
@@ -5409,7 +5477,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
     def test_j_corrupt_schema_invalid_or_version_mismatched_file_not_selected_as_fallback(self) -> None:
         """J: Corrupt JSON, schema-invalid JSON, and filename/version mismatch must NOT be selected as fallback."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            root, rev_dir = self._setup_rev_dir(tmpdir)
+            root, rev_dir, t301, c301 = self._setup_rev_dir(tmpdir)
             (root / "VERSION").write_text("3.0.2\n", encoding="utf-8")
 
             # 1. Corrupt JSON
@@ -5424,7 +5492,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             self.assertEqual(resolve_release_evidence_path(root).name, "std019-final-release.json")
 
             # 3. Filename says v3.0.1.json but inner version says 3.0.0
-            mismatched = self._make_release_evidence("3.0.0", "RELEASED")
+            mismatched = self._make_release_evidence("3.0.0", "RELEASED", tag_object_sha=t301, peeled_commit=c301)
             (rev_dir / "v3.0.1.json").write_text(json.dumps(mismatched), encoding="utf-8")
             self.assertEqual(resolve_release_evidence_path(root).name, "std019-final-release.json")
 
@@ -5437,41 +5505,27 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
     def test_k_tag_object_mismatch_rejected_as_official_evidence(self) -> None:
         """K: Lightweight tag, zero SHA, non-PASS publish status, or local Git tag object mismatch must be rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            root, rev_dir = self._setup_rev_dir(tmpdir)
+            root, rev_dir, real_tag_obj, real_commit = self._setup_rev_dir(tmpdir)
             (root / "VERSION").write_text("3.0.2\n", encoding="utf-8")
 
-            # 1. Lightweight tag (tag_object_sha == peeled_commit)
-            ev_lw = self._make_release_evidence("3.0.1", "RELEASED", tag_object_sha="a" * 40, peeled_commit="a" * 40)
+            # 1. Lightweight tag in evidence (tag_object_sha == peeled_commit)
+            ev_lw = self._make_release_evidence("3.0.1", "RELEASED", tag_object_sha=real_commit, peeled_commit=real_commit)
             (rev_dir / "v3.0.1.json").write_text(json.dumps(ev_lw), encoding="utf-8")
             self.assertEqual(resolve_release_evidence_path(root).name, "std019-final-release.json")
 
             # 2. All-zero tag_object_sha
-            ev_zero = self._make_release_evidence("3.0.1", "RELEASED", tag_object_sha="0" * 40, peeled_commit="a" * 40)
+            ev_zero = self._make_release_evidence("3.0.1", "RELEASED", tag_object_sha="0" * 40, peeled_commit=real_commit)
             (rev_dir / "v3.0.1.json").write_text(json.dumps(ev_zero), encoding="utf-8")
             self.assertEqual(resolve_release_evidence_path(root).name, "std019-final-release.json")
 
             # 3. tag_publish_status != PASS
-            ev_pub = self._make_release_evidence("3.0.1", "RELEASED", tag_publish_status="SKIPPED")
+            ev_pub = self._make_release_evidence(
+                "3.0.1", "RELEASED", tag_object_sha=real_tag_obj, peeled_commit=real_commit, tag_publish_status="SKIPPED"
+            )
             (rev_dir / "v3.0.1.json").write_text(json.dumps(ev_pub), encoding="utf-8")
             self.assertEqual(resolve_release_evidence_path(root).name, "std019-final-release.json")
 
-            # 4. Real Git repository where refs/tags/v3.0.1 exists with a DIFFERENT tag object SHA
-            subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
-            subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.com"], check=True)
-            subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
-            (root / "README.md").write_text("tag test\n", encoding="utf-8")
-            subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
-            subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "init"], check=True)
-            real_commit = subprocess.check_output(
-                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
-            ).strip()
-            subprocess.run(["git", "-C", str(root), "tag", "-a", "v3.0.1", "-m", "v3.0.1"], check=True)
-            real_tag_obj = subprocess.check_output(
-                ["git", "-C", str(root), "rev-parse", "refs/tags/v3.0.1"], text=True
-            ).strip()
-            self.assertNotEqual(real_tag_obj, real_commit)
-
-            # Wrong tag_object_sha vs real Git annotated tag -> REJECTED
+            # 4. Wrong tag_object_sha vs real Git annotated tag -> REJECTED
             wrong_tag_obj = ("f" if real_tag_obj[0] != "f" else "e") + real_tag_obj[1:]
             ev_drift = self._make_release_evidence(
                 "3.0.1", "RELEASED", tag_object_sha=wrong_tag_obj, peeled_commit=real_commit
@@ -5482,7 +5536,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             self.assertTrue(any("LOCAL_TAG_OBJECT_MISMATCH" in e for e in drift_errs), f"Got: {drift_errs}")
             self.assertEqual(resolve_release_evidence_path(root).name, "std019-final-release.json")
 
-            # Exact match with real Git annotated tag -> ACCEPTED
+            # 5. Exact match with real Git annotated tag -> ACCEPTED
             ev_match = self._make_release_evidence(
                 "3.0.1", "RELEASED", tag_object_sha=real_tag_obj, peeled_commit=real_commit
             )
@@ -5492,20 +5546,20 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             self.assertEqual(resolve_release_evidence_path(root).name, "v3.0.1.json")
 
     def test_l_multiple_versions_select_highest_valid_released_without_mutating_history(self) -> None:
-        """L: Among multiple historical files (RELEASED, CANDIDATE, BLOCKED, corrupt, mismatch),
+        """L: Among multiple historical files (RELEASED, CANDIDATE, BLOCKED, corrupt, missing tag),
         select the highest SemVer verified RELEASED evidence and never mutate any file."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            root, rev_dir = self._setup_rev_dir(tmpdir)
+            root, rev_dir, t301, c301 = self._setup_rev_dir(tmpdir)
             (rev_dir / "v3.0.1.json").write_text(
-                json.dumps(self._make_release_evidence("3.0.1", "RELEASED"), indent=2),
+                json.dumps(self._make_release_evidence("3.0.1", "RELEASED", tag_object_sha=t301, peeled_commit=c301), indent=2),
                 encoding="utf-8",
             )
             (rev_dir / "v3.0.2.json").write_text(
-                json.dumps(self._make_release_evidence("3.0.2", "CANDIDATE"), indent=2),
+                json.dumps(self._make_release_evidence("3.0.2", "CANDIDATE", tag_object_sha=t301, peeled_commit=c301), indent=2),
                 encoding="utf-8",
             )
             (rev_dir / "v3.0.3.json").write_text(
-                json.dumps(self._make_release_evidence("3.0.3", "BLOCKED"), indent=2),
+                json.dumps(self._make_release_evidence("3.0.3", "BLOCKED", tag_object_sha=t301, peeled_commit=c301), indent=2),
                 encoding="utf-8",
             )
             (rev_dir / "v3.0.4.json").write_text("{corrupt", encoding="utf-8")
@@ -5520,6 +5574,270 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             self.assertEqual(resolved.name, "v3.0.1.json")
             after_bytes = {p.name: p.read_bytes() for p in sorted(rev_dir.glob("*.json"))}
             self.assertEqual(before_bytes, after_bytes, "Historical evidence files must never be mutated")
+
+    # =========================================================================
+    # F13 / F14 / F15 Final Candidate Governance Closure Tests
+    # =========================================================================
+
+    def test_m_f15_local_git_tag_consistency_strictly_fail_closed(self) -> None:
+        """F15: Missing .git, missing tag, Git timeout, Git exception -> NOT_VERIFIABLE;
+        lightweight tag, tag object mismatch, peeled mismatch -> FAIL;
+        NONE of FAIL/NOT_VERIFIABLE may enter RELEASED fallback."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            no_git = Path(tmpdir) / "no_git_repo"
+            no_git.mkdir(parents=True)
+            (no_git / "schemas").mkdir()
+            shutil.copy2(ROOT / "schemas" / "release-evidence.schema.json", no_git / "schemas" / "release-evidence.schema.json")
+            rev_ng = no_git / "docs" / "release-evidence"
+            rev_ng.mkdir(parents=True)
+            shutil.copy2(ROOT / "docs" / "release-evidence" / "std019-final-release.json", rev_ng / "std019-final-release.json")
+            (no_git / "VERSION").write_text("3.0.1\n", encoding="utf-8")
+
+            # 1. No .git -> NOT_VERIFIABLE and excluded from fallback
+            st_ng, errs_ng = _verify_local_git_tag_consistency(
+                no_git, "v3.0.0", "8256bb384e62894219db0992a2cb57e16d4fa8cd", "8b223019c254e0edeb94576b94af46c1e48b0316"
+            )
+            self.assertEqual(st_ng, "NOT_VERIFIABLE", errs_ng)
+            self.assertFalse(resolve_release_evidence_path(no_git).exists())
+            self.assertIsNone(_find_latest_official_fallback(rev_ng, max_version="3.0.1", project_root=no_git))
+
+            # Explicit semantic-only opt-out verify_local_git_tag=False works for unit-only schema validation
+            self.assertEqual(resolve_release_evidence_path(no_git, verify_local_git_tag=False).name, "std019-final-release.json")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root, rev_dir, t301, c301 = self._setup_rev_dir(tmpdir)
+            (root / "VERSION").write_text("3.0.5\n", encoding="utf-8")
+
+            # 2. Tag does not exist in Git -> NOT_VERIFIABLE & excluded from fallback
+            ev_missing = self._make_release_evidence("3.0.2", "RELEASED", tag_object_sha=t301, peeled_commit=c301)
+            (rev_dir / "v3.0.2.json").write_text(json.dumps(ev_missing), encoding="utf-8")
+            st_miss, _ = _verify_local_git_tag_consistency(root, "v3.0.2", t301, c301)
+            self.assertEqual(st_miss, "NOT_VERIFIABLE")
+            self.assertNotEqual(resolve_release_evidence_path(root).name, "v3.0.2.json")
+
+            # 3. Lightweight tag -> FAIL & excluded from fallback
+            subprocess.run(["git", "-C", str(root), "tag", "v3.0.3", c301], check=True)
+            ev_lw = self._make_release_evidence("3.0.3", "RELEASED", tag_object_sha=t301, peeled_commit=c301)
+            (rev_dir / "v3.0.3.json").write_text(json.dumps(ev_lw), encoding="utf-8")
+            st_lw, errs_lw = _verify_local_git_tag_consistency(root, "v3.0.3", t301, c301)
+            self.assertEqual(st_lw, "FAIL")
+            self.assertTrue(any("LOCAL_TAG_NOT_ANNOTATED" in e for e in errs_lw))
+
+            # 4. Peeled commit mismatch on real annotated tag -> FAIL
+            wrong_peel = ("f" if c301[0] != "f" else "e") + c301[1:]
+            st_peel, errs_peel = _verify_local_git_tag_consistency(root, "v3.0.1", t301, wrong_peel)
+            self.assertEqual(st_peel, "FAIL")
+            self.assertTrue(any("LOCAL_TAG_PEELED_MISMATCH" in e for e in errs_peel))
+
+            # 5. Git timeout -> NOT_VERIFIABLE & excluded
+            with patch("tools.release_evidence.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=5)):
+                st_to, _ = _verify_local_git_tag_consistency(root, "v3.0.1", t301, c301)
+                self.assertEqual(st_to, "NOT_VERIFIABLE")
+                self.assertFalse(is_verified_released_evidence(root, rev_dir / "v3.0.1.json", expected_version="3.0.1")[0])
+
+            # 6. Git OSError exception -> NOT_VERIFIABLE & excluded
+            with patch("tools.release_evidence.subprocess.run", side_effect=OSError("git crashed")):
+                st_ex, _ = _verify_local_git_tag_consistency(root, "v3.0.1", t301, c301)
+                self.assertEqual(st_ex, "NOT_VERIFIABLE")
+                self.assertFalse(is_verified_released_evidence(root, rev_dir / "v3.0.1.json", expected_version="3.0.1")[0])
+
+    def test_n_f14_live_pr_api_verification_for_baseline_and_handoff(self) -> None:
+        """F13 + F14: Shared live PR identity verification across Baseline & Handoff, including
+        PR API unavailability (offline NOT_VERIFIABLE vs online CI BLOCK), PR base/number/head drift,
+        pull_request event using pull_request.head.sha (never GITHUB_SHA), push event, and merge provenance."""
+        cand_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD^"], text=True).strip()
+        head_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+        synthetic_merge_sha = "f" * 40  # distinct from actual PR head.sha!
+
+        valid_api_pr = {
+            "number": 13,
+            "state": "open",
+            "draft": False,
+            "merged": False,
+            "base": {"ref": "main", "repo": {"full_name": "xiefeifeihu/AI-Engineering-Standards"}},
+            "head": {"ref": "release/std-020-v3.0.1", "sha": head_sha},
+        }
+        valid_pr_event = {
+            "repository": {"full_name": "xiefeifeihu/AI-Engineering-Standards"},
+            "pull_request": {
+                "number": 13,
+                "state": "open",
+                "draft": False,
+                "base": {"ref": "main"},
+                "head": {"ref": "release/std-020-v3.0.1", "sha": head_sha},
+            },
+        }
+
+        # Generate both Baseline and Handoff (no static candidate_pr_head self-reference!)
+        ok_b, errs_b, _, md_b = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="OPEN",
+            candidate_pr_draft=False,
+            candidate_pr_base="main",
+        )
+        self.assertTrue(ok_b, errs_b)
+        assert md_b is not None
+
+        ok_h, errs_h, _, md_h = build_handoff_payload(
+            project_root=ROOT,
+            task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+            version="3.0.1",
+            captured_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            snapshot_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="OPEN",
+            candidate_pr_draft=False,
+            candidate_pr_base="main",
+            standards_root=ROOT,
+        )
+        self.assertTrue(ok_h, errs_h)
+        assert md_h is not None
+        self.assertNotIn("candidate_pr_head", extract_scope_content(md_h, "CURRENT_CANDIDATE_PR")[0])
+
+        # 1. Both Baseline and Handoff PASS on pull_request event even when GITHUB_SHA is synthetic PR merge commit!
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_SHA": synthetic_merge_sha}, clear=False):
+            errs_bv, det_bv, st_bv = verify_current_candidate_pr_facts(
+                md_b, version_str="3.0.1", project_root=ROOT,
+                verify_live_pr=True, require_live_pr=True,
+                simulate_pr_data=valid_api_pr, simulate_event_data=valid_pr_event, return_details=True,
+            )
+            self.assertEqual(errs_bv, [], errs_bv)
+            self.assertEqual(st_bv, "PASS")
+            self.assertEqual(det_bv["pr_head_sha"], head_sha)
+
+            errs_hv, det_hv, st_hv = verify_handoff_candidate_pr_facts(
+                md_h, version_str="3.0.1", project_root=ROOT,
+                verify_live_pr=True, require_live_pr=True,
+                simulate_pr_data=valid_api_pr, simulate_event_data=valid_pr_event, return_details=True,
+            )
+            self.assertEqual(errs_hv, [], errs_hv)
+            self.assertEqual(st_hv, "PASS")
+            self.assertEqual(det_hv["pr_head_sha"], head_sha)
+
+        # 2. Historical PR9 / STD018 / STD019 scopes preserved in Handoff & tampered Handoff SHA256-recomputed STILL caught
+        for h_scope in ("PR9_HISTORICAL_RELEASE_EVIDENCE", "STD018_CURRENT_SNAPSHOT", "STD019_FINAL_RELEASE"):
+            _, h_sc_errs = extract_scope_content(md_h, h_scope)
+            self.assertEqual(h_sc_errs, [], f"Handoff historical scope missing: {h_scope}")
+
+        tampered_h = md_h.replace("- **当前候选 PR Base (`candidate_pr_base`)**：`main`", "- **当前候选 PR Base (`candidate_pr_base`)**：`dev`")
+        from tools.validate_approval_contract import compute_canonical_document_sha256
+        t_sha = compute_canonical_document_sha256(tampered_h)
+        tampered_h = re.sub(r'content_sha256:\s*"[^"]*"', f'content_sha256: "{t_sha}"', tampered_h)
+        errs_tamper_h, _, _ = verify_handoff_candidate_pr_facts(
+            tampered_h, version_str="3.0.1", project_root=ROOT,
+            verify_live_pr=True, require_live_pr=True, simulate_pr_data=valid_api_pr, return_details=True,
+        )
+        self.assertTrue(any("CANDIDATE_PR_BASE_NOT_MAIN" in e for e in errs_tamper_h), errs_tamper_h)
+
+        # 3. PR API unavailable: offline returns NOT_VERIFIABLE (never PASS); online require_live_pr=True BLOCKS
+        errs_off, _, st_off = verify_current_candidate_pr_facts(
+            md_b, version_str="3.0.1", project_root=ROOT,
+            verify_live_pr=True, require_live_pr=False,
+            simulate_pr_error="HTTP 503 offline", return_details=True,
+        )
+        self.assertEqual(st_off, "NOT_VERIFIABLE")
+        self.assertEqual(errs_off, [])
+
+        errs_on, det_on, st_on = verify_current_candidate_pr_facts(
+            md_b, version_str="3.0.1", project_root=ROOT,
+            verify_live_pr=True, require_live_pr=True,
+            simulate_pr_error="HTTP 503 offline", return_details=True,
+        )
+        self.assertEqual(st_on, "FAIL")
+        self.assertEqual(det_on["verification_status"], "NOT_VERIFIABLE")
+        self.assertTrue(any("LIVE_PR_API_BLOCKED" in e for e in errs_on), errs_on)
+
+        # 3b. push event uses current Push commit + live PR API
+        with patch.dict(
+            os.environ,
+            {
+                "GITHUB_EVENT_NAME": "push",
+                "GITHUB_REF": "refs/heads/release/std-020-v3.0.1",
+                "GITHUB_SHA": head_sha,
+            },
+            clear=False,
+        ):
+            st_push_ok, errs_push_ok, _ = verify_live_pr_identity(
+                ROOT, "xiefeifeihu/AI-Engineering-Standards", 13, cand_sha,
+                expected_pr_status="OPEN", simulate_pr_data=valid_api_pr,
+            )
+            self.assertEqual(st_push_ok, "PASS", errs_push_ok)
+
+        older_ancestor_for_push = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD~2"], text=True).strip()
+        with patch.dict(
+            os.environ,
+            {
+                "GITHUB_EVENT_NAME": "push",
+                "GITHUB_REF": "refs/heads/release/std-020-v3.0.1",
+                "GITHUB_SHA": older_ancestor_for_push,
+            },
+            clear=False,
+        ):
+            st_push_bad, errs_push_bad, _ = verify_live_pr_identity(
+                ROOT, "xiefeifeihu/AI-Engineering-Standards", 13, head_sha,
+                expected_pr_status="OPEN", simulate_pr_data=valid_api_pr,
+            )
+            self.assertEqual(st_push_bad, "FAIL")
+            self.assertTrue(any("CANDIDATE_COMMIT_NOT_ANCESTOR_OF_PR_HEAD" in e for e in errs_push_bad), errs_push_bad)
+
+        # 4. PR number / base / repository / head change detected by online check
+        bad_num_pr = dict(valid_api_pr, number=99)
+        st_num, errs_num, _ = verify_live_pr_identity(
+            ROOT, "xiefeifeihu/AI-Engineering-Standards", 13, cand_sha,
+            expected_pr_status="OPEN", simulate_pr_data=bad_num_pr,
+        )
+        self.assertEqual(st_num, "FAIL")
+        self.assertTrue(any("LIVE_PR_NUMBER_MISMATCH" in e for e in errs_num), errs_num)
+
+        bad_base_pr = dict(valid_api_pr, base={"ref": "develop", "repo": {"full_name": "xiefeifeihu/AI-Engineering-Standards"}})
+        st_base, errs_base, _ = verify_live_pr_identity(
+            ROOT, "xiefeifeihu/AI-Engineering-Standards", 13, cand_sha,
+            expected_pr_status="OPEN", simulate_pr_data=bad_base_pr,
+        )
+        self.assertEqual(st_base, "FAIL")
+        self.assertTrue(any("CANDIDATE_PR_BASE_NOT_MAIN" in e for e in errs_base), errs_base)
+
+        # Online PR HEAD force-pushed to unrelated older commit (candidate_commit no longer ancestor of actual_pr_head) -> FAIL
+        older_ancestor = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD~2"], text=True).strip()
+        diverged_head_pr = dict(valid_api_pr, head={"ref": "release/std-020-v3.0.1", "sha": older_ancestor})
+        st_div, errs_div, _ = verify_live_pr_identity(
+            ROOT, "xiefeifeihu/AI-Engineering-Standards", 13, head_sha,
+            expected_pr_status="OPEN", simulate_pr_data=diverged_head_pr,
+        )
+        self.assertEqual(st_div, "FAIL")
+        self.assertTrue(any("CANDIDATE_COMMIT_NOT_ANCESTOR_OF_PR_HEAD" in e for e in errs_div), errs_div)
+
+        # 5. Live PR merge event enforces Owner == xiefeifeihu & non-main non-merged rejection
+        merged_pr = {
+            "number": 13,
+            "state": "closed",
+            "draft": False,
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "merge_commit_sha": "a" * 40,
+            "base": {"ref": "main", "repo": {"full_name": "xiefeifeihu/AI-Engineering-Standards"}},
+            "head": {"ref": "release/std-020-v3.0.1", "sha": head_sha},
+        }
+        st_m_ok, errs_m_ok, _ = verify_live_pr_identity(
+            ROOT, "xiefeifeihu/AI-Engineering-Standards", 13, cand_sha,
+            expected_pr_status="MERGED", simulate_pr_data=merged_pr,
+        )
+        self.assertEqual(st_m_ok, "PASS", errs_m_ok)
+
+        non_owner_merged = dict(merged_pr, merged_by={"login": "someone-else"})
+        st_m_bad, errs_m_bad, _ = verify_live_pr_identity(
+            ROOT, "xiefeifeihu/AI-Engineering-Standards", 13, cand_sha,
+            expected_pr_status="MERGED", simulate_pr_data=non_owner_merged,
+        )
+        self.assertEqual(st_m_bad, "FAIL")
+        self.assertTrue(any("CANDIDATE_PR_MERGED_BY_UNAUTHORIZED" in e for e in errs_m_bad), errs_m_bad)
 
 
 if __name__ == "__main__":

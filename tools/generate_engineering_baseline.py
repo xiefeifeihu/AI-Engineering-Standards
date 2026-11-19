@@ -30,6 +30,10 @@ from tools.release_evidence import (
     _query_pr_via_gh,
     load_release_evidence,
     resolve_release_evidence_path,
+    verify_candidate_pr_merge_event,
+    verify_candidate_pr_section,
+    verify_commit_ancestry,
+    verify_live_pr_identity,
 )
 
 REQUIRED_SOURCE_TYPES: Tuple[str, ...] = (
@@ -762,233 +766,39 @@ def verify_baseline_semantic_facts(
     return mismatches
 
 
-def verify_candidate_pr_merge_event(
-    pr_event: Dict[str, Any],
-    expected_pr_number: int,
-    expected_candidate_commit: str,
-    expected_owner: str,
-    expected_base: str = "main",
-    forbidden_historical_merge_commits: Optional[set[str]] = None,
-) -> Tuple[bool, List[str], Optional[str], Optional[str]]:
-    """Verify a GitHub PR API event before allowing current candidate PR status=MERGED.
-    Requires merged=true, merged_by==expected_owner, base.ref==expected_base ('main'),
-    head.sha==expected_candidate_commit, and a valid non-historical merge_commit_sha.
-    """
-    errors: List[str] = []
-    if not isinstance(pr_event, dict):
-        return False, ["CANDIDATE_PR_MERGE_EVENT_INVALID: PR merge event payload must be an object"], None, None
-
-    ev_num = pr_event.get("number")
-    if ev_num is not None and int(ev_num) != int(expected_pr_number):
-        errors.append(
-            f"CANDIDATE_PR_NUMBER_MISMATCH: PR merge event number={ev_num} != candidate_pr_number={expected_pr_number}"
-        )
-
-    if pr_event.get("merged") is not True:
-        errors.append("CANDIDATE_PR_NOT_MERGED: GitHub PR API event does not confirm merged=true")
-
-    merged_by_raw = pr_event.get("merged_by")
-    if isinstance(merged_by_raw, dict):
-        merged_by_login = str(merged_by_raw.get("login") or "").strip()
-    else:
-        merged_by_login = str(merged_by_raw or "").strip()
-    if not merged_by_login:
-        errors.append("CANDIDATE_PR_MERGED_BY_MISSING: GitHub PR API event missing merged_by")
-    elif merged_by_login != expected_owner:
-        errors.append(
-            f"CANDIDATE_PR_MERGED_BY_UNAUTHORIZED: merged_by='{merged_by_login}' != expected owner '{expected_owner}'"
-        )
-
-    base_raw = pr_event.get("base")
-    base_ref = str(base_raw.get("ref") if isinstance(base_raw, dict) else pr_event.get("base_ref") or "").strip()
-    if base_ref != expected_base:
-        errors.append(
-            f"CANDIDATE_PR_BASE_NOT_MAIN: PR merge event base.ref='{base_ref}' != '{expected_base}'"
-        )
-
-    head_raw = pr_event.get("head")
-    head_sha = str(head_raw.get("sha") if isinstance(head_raw, dict) else pr_event.get("head_sha") or "").strip()
-    if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
-        errors.append(f"CANDIDATE_PR_INVALID_HEAD: PR merge event head.sha='{head_sha}' is not a 40-hex SHA")
-    elif head_sha != expected_candidate_commit:
-        errors.append(
-            f"CANDIDATE_PR_HEAD_MISMATCH: PR merge event head.sha='{head_sha}' != candidate_commit='{expected_candidate_commit}'"
-        )
-
-    merge_commit_sha = str(pr_event.get("merge_commit_sha") or "").strip()
-    if not re.fullmatch(r"[0-9a-f]{40}", merge_commit_sha) or merge_commit_sha == "0" * 40:
-        errors.append(
-            f"CANDIDATE_PR_INVALID_MERGE_COMMIT: merge_commit_sha='{merge_commit_sha}' must be a non-zero 40-hex SHA"
-        )
-    elif forbidden_historical_merge_commits and merge_commit_sha in forbidden_historical_merge_commits:
-        errors.append(
-            f"CANDIDATE_PR_HISTORICAL_MERGE_COMMIT_POLLUTION: merge_commit_sha='{merge_commit_sha}' belongs to a historical release PR"
-        )
-
-    if errors:
-        return False, errors, None, None
-    return True, [], merge_commit_sha, merged_by_login
-
-
 def verify_current_candidate_pr_facts(
     content: str,
     version_str: str,
+    repository: str = "xiefeifeihu/AI-Engineering-Standards",
     project_root: Optional[Path] = None,
     historical_merge_commits: Optional[set[str]] = None,
     historical_candidate_commits: Optional[set[str]] = None,
     expected_facts: Optional[Dict[str, Any]] = None,
-) -> List[str]:
-    """Verify the CURRENT_CANDIDATE_PR section (Section 19) and top-level candidate PR consistency.
-    Ensures current candidate PR identity is never polluted by historical PR #9 / PR #10 / v3.0.0 facts
-    and matches any explicitly provided candidate PR metadata.
-    """
-    scope_text, scope_errs = extract_scope_content(content, "CURRENT_CANDIDATE_PR")
-    if scope_errs:
-        return scope_errs
-
-    errors: List[str] = []
-
-    def _extract_unique(field_label: str, pattern: str) -> Optional[str]:
-        matches = extract_line_field_matches(scope_text, [pattern])
-        if len(matches) == 0:
-            errors.append(f"CANDIDATE_PR_MISSING_FIELD: '{field_label}' missing from CURRENT_CANDIDATE_PR")
-            return None
-        if len(matches) > 1:
-            errors.append(
-                f"CANDIDATE_PR_DUPLICATE_FIELD: '{field_label}' appears {len(matches)} times in CURRENT_CANDIDATE_PR"
-            )
-            return None
-        return matches[0].strip()
-
-    rec_ver = _extract_unique("candidate_version", r"candidate_version[^:：\n]*?[:：]\s*`([^`]+)`")
-    rec_pr_num = _extract_unique("candidate_pr_number", r"candidate_pr_number[^:：\n]*?[:：]\s*`([^`]+)`")
-    rec_pr_status = _extract_unique("candidate_pr_status", r"candidate_pr_status[^:：\n]*?[:：]\s*`([A-Z_]+)`")
-    rec_pr_state = _extract_unique("PR_STATE", r"PR_STATE[^:：\n]*?[:：]\s*`([A-Z_]+)`")
-    rec_pr_draft = _extract_unique("PR_DRAFT", r"PR_DRAFT[^:：\n]*?[:：]\s*`(true|false)`")
-    rec_pr_head = _extract_unique("candidate_pr_head", r"candidate_pr_head[^:：\n]*?[:：]\s*`([0-9a-f]{40})`")
-    rec_pr_base = _extract_unique("candidate_pr_base", r"candidate_pr_base[^:：\n]*?[:：]\s*`([^`]+)`")
-    rec_cand_commit = _extract_unique("candidate_commit", r"candidate_commit[^:：\n]*?[:：]\s*`([0-9a-f]{40})`")
-    rec_rel_status = _extract_unique("RELEASE_STATUS", r"RELEASE_STATUS[^:：\n]*?[:：]\s*`([A-Z_]+)`")
-
-    if rec_ver is not None and rec_ver != version_str:
-        errors.append(
-            f"CANDIDATE_PR_VERSION_MISMATCH: committed candidate_version='{rec_ver}' != VERSION='{version_str}'"
-        )
-
-    if rec_pr_base is not None and rec_pr_base != "main":
-        errors.append(f"CANDIDATE_PR_BASE_NOT_MAIN: committed candidate_pr_base='{rec_pr_base}' != 'main'")
-
-    if rec_pr_head is not None and rec_cand_commit is not None and rec_pr_head != rec_cand_commit:
-        errors.append(
-            f"CANDIDATE_PR_HEAD_MISMATCH: committed candidate_pr_head='{rec_pr_head}' != candidate_commit='{rec_cand_commit}'"
-        )
-
-    if rec_pr_status is not None:
-        if rec_pr_status not in ("DRAFT", "OPEN", "MERGED", "CLOSED"):
-            errors.append(f"CANDIDATE_PR_INVALID_STATUS: committed candidate_pr_status='{rec_pr_status}'")
-        elif rec_pr_status == "DRAFT":
-            if rec_pr_state != "OPEN":
-                errors.append(f"CANDIDATE_PR_STATE_MISMATCH: DRAFT requires PR_STATE='OPEN' (got '{rec_pr_state}')")
-            if rec_pr_draft != "true":
-                errors.append(f"CANDIDATE_PR_DRAFT_MISMATCH: DRAFT requires PR_DRAFT='true' (got '{rec_pr_draft}')")
-            if rec_rel_status != "CANDIDATE":
-                errors.append(
-                    f"CANDIDATE_PR_RELEASE_STATUS_MISMATCH: DRAFT requires RELEASE_STATUS='CANDIDATE' (got '{rec_rel_status}')"
-                )
-        elif rec_pr_status == "OPEN":
-            if rec_pr_state != "OPEN":
-                errors.append(f"CANDIDATE_PR_STATE_MISMATCH: OPEN requires PR_STATE='OPEN' (got '{rec_pr_state}')")
-            if rec_rel_status != "CANDIDATE":
-                errors.append(
-                    f"CANDIDATE_PR_RELEASE_STATUS_MISMATCH: OPEN requires RELEASE_STATUS='CANDIDATE' (got '{rec_rel_status}')"
-                )
-        elif rec_pr_status == "MERGED":
-            if rec_pr_state != "MERGED":
-                errors.append(f"CANDIDATE_PR_STATE_MISMATCH: MERGED requires PR_STATE='MERGED' (got '{rec_pr_state}')")
-            if rec_pr_draft != "false":
-                errors.append(f"CANDIDATE_PR_DRAFT_MISMATCH: MERGED requires PR_DRAFT='false' (got '{rec_pr_draft}')")
-            merge_sha = _extract_unique(
-                "candidate_pr_merge_commit",
-                r"candidate_pr_merge_commit[^:：\n]*?[:：]\s*`([0-9a-f]{40})`",
-            )
-            _extract_unique(
-                "candidate_pr_merged_by",
-                r"candidate_pr_merged_by[^:：\n]*?[:：]\s*`([A-Za-z0-9_-]+)`",
-            )
-            if merge_sha and historical_merge_commits and merge_sha in historical_merge_commits:
-                errors.append(
-                    f"CANDIDATE_PR_HISTORICAL_MERGE_COMMIT_POLLUTION: committed merge commit '{merge_sha}' is from a historical release PR"
-                )
-
-        if rec_pr_status in ("DRAFT", "OPEN"):
-            if re.search(r"\bMERGED\b|已合入|candidate_pr_merge_commit", scope_text):
-                errors.append(
-                    "CANDIDATE_PR_UNMERGED_HAS_MERGED_TEXT: unmerged candidate PR section must not contain MERGED / 已合入 wording"
-                )
-
-    if version_str != "3.0.0":
-        if rec_pr_num in ("9", "10"):
-            errors.append(
-                f"CANDIDATE_PR_HISTORICAL_NUMBER_POLLUTION: candidate_pr_number='{rec_pr_num}' is a historical v3.0.0 PR"
-            )
-        if re.search(r"PR\s*#(9|10)\b", scope_text):
-            errors.append(
-                "CANDIDATE_PR_HISTORICAL_PR_POLLUTION: CURRENT_CANDIDATE_PR section must not reference historical PR #9 / PR #10"
-            )
-        if rec_cand_commit and historical_candidate_commits and rec_cand_commit in historical_candidate_commits:
-            errors.append(
-                f"CANDIDATE_PR_HISTORICAL_COMMIT_POLLUTION: candidate_commit='{rec_cand_commit}' belongs to historical v3.0.0 evidence"
-            )
-        # Check Section 9 top summary (outside historical_ci_runs bullet list) for historical PR #9 / PR #10 pollution
-        sec9_top = re.search(r"## 9\. 最近 CI 事实.*?(?=\n### |\n## 10\.|\Z)", content, re.S)
-        if sec9_top:
-            for line in sec9_top.group(0).splitlines():
-                if line.strip().startswith("- **事实说明**"):
-                    if re.search(r"PR\s*#(9|10)\b", line):
-                        errors.append(
-                            "CANDIDATE_PR_HISTORICAL_CI_SUMMARY_POLLUTION: Section 9 summary references historical PR #9 / PR #10"
-                        )
-                    if rec_pr_status in ("DRAFT", "OPEN") and ("已合入 main" in line or "MERGED" in line):
-                        errors.append(
-                            "CANDIDATE_PR_UNMERGED_SUMMARY_HAS_MERGED_TEXT: Section 9 summary claims MERGED for unmerged candidate PR"
-                        )
-
-    if project_root is not None and rec_cand_commit and (project_root / ".git").exists():
-        rc_obj, _ = run_git(project_root, ["cat-file", "-e", f"{rec_cand_commit}^{{commit}}"])
-        if rc_obj != 0:
-            errors.append(
-                f"CANDIDATE_PR_COMMIT_NOT_FOUND: committed candidate_commit '{rec_cand_commit}' does not exist in Git repository"
-            )
-
-    if expected_facts:
-        actual_map: Dict[str, Optional[str]] = {
-            "candidate_version": rec_ver,
-            "candidate_pr_number": rec_pr_num,
-            "candidate_pr_status": rec_pr_status,
-            "pr_state": rec_pr_state,
-            "pr_draft": rec_pr_draft,
-            "candidate_pr_head": rec_pr_head,
-            "candidate_pr_base": rec_pr_base,
-            "candidate_commit": rec_cand_commit,
-            "release_status": rec_rel_status,
-        }
-        m_push = extract_line_field_matches(scope_text, [r"candidate_push_run_id[^:：\n]*?[:：]\s*`([0-9]+)`"])
-        m_pr = extract_line_field_matches(scope_text, [r"candidate_pr_run_id[^:：\n]*?[:：]\s*`([0-9]+)`"])
-        actual_map["candidate_push_run_id"] = m_push[0] if len(m_push) == 1 else None
-        actual_map["candidate_pr_run_id"] = m_pr[0] if len(m_pr) == 1 else None
-        for k, exp_v in expected_facts.items():
-            if exp_v is None:
-                continue
-            exp_str = str(exp_v).lower() if isinstance(exp_v, bool) else str(exp_v).strip()
-            act_v = actual_map.get(k)
-            if act_v is None:
-                errors.append(f"CANDIDATE_PR_EXPECTED_FIELD_MISSING: '{k}' missing (expected '{exp_str}')")
-            elif str(act_v).strip() != exp_str:
-                errors.append(
-                    f"CANDIDATE_PR_EXPECTED_FIELD_MISMATCH: '{k}' committed='{act_v}' != expected='{exp_str}'"
-                )
-
-    return errors
+    verify_live_pr: bool = False,
+    require_live_pr: bool = False,
+    simulate_pr_data: Optional[Dict[str, Any]] = None,
+    simulate_pr_error: Optional[str] = None,
+    simulate_event_data: Optional[Dict[str, Any]] = None,
+    return_details: bool = False,
+):
+    """Delegate CURRENT_CANDIDATE_PR verification to the shared F13+F14 contract in release_evidence."""
+    errs, live_details, live_status = verify_candidate_pr_section(
+        content=content,
+        version_str=version_str,
+        repository=repository,
+        project_root=project_root,
+        historical_merge_commits=historical_merge_commits,
+        historical_candidate_commits=historical_candidate_commits,
+        expected_facts=expected_facts,
+        verify_live_pr=verify_live_pr,
+        require_live_pr=require_live_pr,
+        simulate_pr_data=simulate_pr_data,
+        simulate_pr_error=simulate_pr_error,
+        simulate_event_data=simulate_event_data,
+    )
+    if return_details:
+        return errs, live_details, live_status
+    return errs
 
 
 def build_engineering_baseline(
@@ -1387,19 +1197,34 @@ def build_engineering_baseline(
     else:
         effective_pr_status = "DRAFT"
 
-    # Candidate PR Head validation: must match candidate_commit if explicitly specified
+    # Validate candidate_commit is a real Git commit (F13 Rule 2)
+    if (project_root / ".git").exists():
+        if not re.fullmatch(r"[0-9a-f]{40}", str(code_candidate_commit or "")) or code_candidate_commit == "0" * 40:
+            errors.append(
+                f"CANDIDATE_COMMIT_INVALID: candidate_commit '{code_candidate_commit}' must be a non-zero 40-hex SHA"
+            )
+        else:
+            rc_cand_obj, _ = run_git(project_root, ["cat-file", "-e", f"{code_candidate_commit}^{{commit}}"])
+            if rc_cand_obj != 0:
+                errors.append(
+                    f"CANDIDATE_COMMIT_NOT_FOUND: candidate_commit '{code_candidate_commit}' does not exist in Git repository"
+                )
+
+    # Candidate PR Head validation (F13): when explicitly supplied, verify candidate_commit is an ancestor
+    # of candidate_pr_head via `git merge-base --is-ancestor` (NEVER require static equality with PR HEAD).
     if candidate_pr_head is not None:
         eff_cand_pr_head = str(candidate_pr_head).strip()
-        if not re.fullmatch(r"[0-9a-f]{40}", eff_cand_pr_head) or eff_cand_pr_head == "0" * 40:
-            errors.append(
-                f"CANDIDATE_PR_INVALID_HEAD: candidate_pr_head '{eff_cand_pr_head}' must be a non-zero 40-hex SHA"
-            )
-        elif eff_cand_pr_head != code_candidate_commit:
-            errors.append(
-                f"CANDIDATE_PR_HEAD_MISMATCH: candidate_pr_head '{eff_cand_pr_head}' != candidate_commit '{code_candidate_commit}'"
-            )
-    else:
-        eff_cand_pr_head = code_candidate_commit
+        anc_st, anc_errs = verify_commit_ancestry(
+            project_root,
+            code_candidate_commit,
+            eff_cand_pr_head,
+            repository=repository,
+            allow_remote_compare=not allow_offline,
+        )
+        if anc_st == "FAIL":
+            errors.extend(anc_errs)
+        elif anc_st == "NOT_VERIFIABLE" and not allow_offline:
+            errors.extend(anc_errs)
 
     # Candidate PR Base validation: must target official 'main'
     eff_cand_pr_base = str(candidate_pr_base).strip() if candidate_pr_base is not None else "main"
@@ -1429,7 +1254,7 @@ def build_engineering_baseline(
                         pr_ev_obj = gh_pr_data
             if pr_ev_obj is None:
                 errors.append(
-                    "CANDIDATE_PR_MERGE_NOT_VERIFIED: Cannot mark current candidate PR as MERGED without verified GitHub PR merge event (merged=true, merged_by=owner, base=main, head.sha=candidate_commit)"
+                    "CANDIDATE_PR_MERGE_NOT_VERIFIED: Cannot mark current candidate PR as MERGED without verified GitHub PR merge event (merged=true, merged_by=owner, base=main, head.sha>=candidate_commit)"
                 )
             else:
                 m_ok, m_errs, m_sha, m_by = verify_candidate_pr_merge_event(
@@ -1439,6 +1264,8 @@ def build_engineering_baseline(
                     expected_owner=eff_owner,
                     expected_base="main",
                     forbidden_historical_merge_commits=historical_merge_commits,
+                    project_root=project_root,
+                    repository=repository,
                 )
                 if not m_ok:
                     errors.extend(m_errs)
@@ -1512,9 +1339,11 @@ def build_engineering_baseline(
         "candidate_pr_status": effective_pr_status,
         "pr_state": pr_state_str,
         "pr_draft": pr_draft_bool,
-        "candidate_pr_head": eff_cand_pr_head,
         "candidate_pr_base": eff_cand_pr_base,
         "candidate_commit": code_candidate_commit,
+        "live_pr_head_source": "GITHUB_PR_API_REQUIRED",
+        "ci_runtime_record": "GITHUB_STEP_SUMMARY",
+        "observed_at": now_iso,
         "release_status": release_status_str,
     }
     if verified_merge_commit:
@@ -2103,15 +1932,13 @@ def build_engineering_baseline(
         f"- **当前候选 PR 状态 (`candidate_pr_status`)**：`{effective_pr_status}`",
         f"- **PR 状态标记 (`PR_STATE`)**：`{pr_state_str}`",
         f"- **PR 草稿标记 (`PR_DRAFT`)**：`{str(pr_draft_bool).lower()}`",
-        f"- **当前候选 PR HEAD (`candidate_pr_head`)**：`{eff_cand_pr_head}`",
         f"- **当前候选 PR Base (`candidate_pr_base`)**：`{eff_cand_pr_base}`",
         f"- **当前候选 Commit (`candidate_commit`)**：`{code_candidate_commit}`",
+        "- **实时 PR HEAD 核验方式 (`live_pr_head_verification`)**：`GITHUB_PR_API_REQUIRED`（通过 GitHub PR API / Actions Event 在线核验 `candidate_commit` 为实时 PR HEAD 祖先，不自引用静态写入）",
+        "- **实时 CI 运行记录方式 (`ci_runtime_record`)**：`GITHUB_STEP_SUMMARY`（实时 PR HEAD 与 CI Run ID 由 CI Runtime 与 Step Summary 记录）",
+        f"- **状态快照观测时间 (`candidate_observed_at`)**：`{now_iso}`",
         f"- **当前发布状态 (`RELEASE_STATUS`)**：`{release_status_str}`",
     ]
-    if effective_push_run:
-        section19_lines.append(f"- **当前候选 Push CI Run ID (`candidate_push_run_id`)**：`{effective_push_run}`")
-    if effective_pr_run:
-        section19_lines.append(f"- **当前候选 PR CI Run ID (`candidate_pr_run_id`)**：`{effective_pr_run}`")
     if effective_pr_status == "MERGED" and verified_merge_commit and verified_merged_by:
         section19_lines.extend([
             f"- **当前候选 PR Merge Commit (`candidate_pr_merge_commit`)**：`{verified_merge_commit}`",
@@ -2178,6 +2005,11 @@ def main() -> None:
         help="Validation scope: 'consumer' verifies project baseline facts without Standards PR release evidence; 'standards-release' verifies Standards release evidence.",
     )
     parser.add_argument("--verify-only", action="store_true", help="Verify generation succeeds against committed baseline")
+    parser.add_argument(
+        "--require-live-pr",
+        action="store_true",
+        help="Require real GitHub PR API verification to succeed (blocks if API unavailable)",
+    )
     args = parser.parse_args()
 
     project_root = Path(args.project_root).resolve()
@@ -2447,15 +2279,28 @@ def main() -> None:
             if args.pr_run_id is not None:
                 exp_cand_pr_facts["candidate_pr_run_id"] = str(args.pr_run_id).strip()
 
-            cand_pr_mismatches = verify_current_candidate_pr_facts(
+            cand_pr_mismatches, live_pr_details, live_pr_status = verify_current_candidate_pr_facts(
                 content=actual_content,
                 version_str=payload["product_version"]["version"],
+                repository=payload["project_identity"]["repository"],
                 project_root=project_root,
                 historical_merge_commits=hist_merge_shas,
                 historical_candidate_commits=hist_cand_shas,
                 expected_facts=exp_cand_pr_facts or None,
+                verify_live_pr=True,
+                require_live_pr=bool(args.require_live_pr or os.environ.get("GITHUB_ACTIONS") == "true"),
+                return_details=True,
             )
             mismatches.extend([f"[CURRENT_CANDIDATE_PR] {m}" for m in cand_pr_mismatches])
+            if live_pr_status:
+                print(
+                    f"[INFO] Live PR Identity Status: {live_pr_status}"
+                    + (
+                        f" (PR #{live_pr_details.get('candidate_pr_number')}, head={live_pr_details.get('pr_head_sha')}, state={live_pr_details.get('pr_state')}, draft={live_pr_details.get('pr_draft')}, ancestry={live_pr_details.get('ancestry_status')})"
+                        if live_pr_details
+                        else ""
+                    )
+                )
 
         elif any(
             x is not None
@@ -2484,6 +2329,7 @@ def main() -> None:
             cand_pr_mismatches = verify_current_candidate_pr_facts(
                 content=actual_content,
                 version_str=payload["product_version"]["version"],
+                repository=payload["project_identity"]["repository"],
                 project_root=project_root,
                 expected_facts=exp_cand_pr_facts,
             )
