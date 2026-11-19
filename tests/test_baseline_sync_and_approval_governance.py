@@ -34,7 +34,9 @@ if str(ROOT) not in sys.path:
 from tools.generate_engineering_baseline import (
     build_engineering_baseline,
     compute_deterministic_baseline_sha256,
+    extract_scope_content,
     verify_baseline_semantic_facts,
+    verify_current_candidate_pr_facts,
 )
 from tools.generate_handoff import (
     build_handoff_payload,
@@ -42,6 +44,8 @@ from tools.generate_handoff import (
     verify_handoff_semantic_facts,
 )
 from tools.release_evidence import (
+    _find_latest_official_fallback,
+    is_verified_released_evidence,
     load_release_evidence,
     resolve_release_evidence_path,
     verify_git_tag,
@@ -4946,6 +4950,563 @@ class ReleaseEvidenceVersioningTests(unittest.TestCase):
             ok_r, errs_r, _ = load_release_evidence(root, ev_path)
             self.assertFalse(ok_r)
             self.assertTrue(errs_r)
+
+
+class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
+    """Std-020 PR #13 Independent Review Remediation Tests (A-F Baseline, G-L Release Evidence)."""
+
+    @staticmethod
+    def _make_release_evidence(
+        version: str = "3.0.1",
+        flow_status: str = "RELEASED",
+        tag_object_sha: str = "c" * 40,
+        peeled_commit: str = "a" * 40,
+        tag_publish_status: str = "PASS",
+    ) -> dict:
+        ev = {
+            "repository": "xiefeifeihu/AI-Engineering-Standards",
+            "version": version,
+            "task_id": "Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+            "pr_number": 13,
+            "pr_status": "MERGED" if flow_status == "RELEASED" else "DRAFT",
+            "pr_merged": flow_status == "RELEASED",
+            "pr_merged_by": "xiefeifeihu",
+            "main_head": peeled_commit,
+            "candidate_commit": "b" * 40,
+            "snapshot_commit": peeled_commit,
+            "last_verified_ci_commit": peeled_commit,
+            "push_run_id": "44299999991",
+            "main_ci_run_id": "44299999991",
+            "push_head_branch": "main" if flow_status == "RELEASED" else "release/std-020-v3.0.1",
+            "pr_run_id": "44299999992",
+            "ci_status": "PASS",
+            "test_count": 290,
+            "test_failed": 0,
+            "test_skipped": 0,
+            "windows_status": "PASS",
+            "ubuntu_status": "PASS",
+            "release_tag": f"v{version}",
+            "tag_object_sha": tag_object_sha,
+            "peeled_commit": peeled_commit,
+            "tag_publish_status": tag_publish_status,
+            "old_tag_deleted": False,
+            "release_flow_status": flow_status,
+            "observed_at": "2026-11-19T00:00:00Z",
+        }
+        return ev
+
+    # --- Baseline Tests (A-F) ---
+
+    def test_a_historical_merged_never_overrides_current_draft_pr13(self) -> None:
+        """A: Historical std019 pr_status=MERGED must NOT overwrite current PR #13 DRAFT."""
+        cand_sha = "1" * 40
+        ok, errs, payload, md = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="DRAFT",
+            candidate_pr_head=cand_sha,
+            candidate_pr_base="main",
+            push_run_id="44272059516",
+            pr_run_id="44272124416",
+            ci_status="PASS",
+            test_count=289,
+            final_evidence_path="docs/release-evidence/std019-final-release.json",
+        )
+        self.assertTrue(ok, f"Unexpected failure: {errs}")
+        assert payload is not None and md is not None
+
+        cand_meta = payload["recent_ci_facts"]["details"]["candidate_pr"]
+        self.assertEqual(cand_meta["candidate_pr_number"], 13)
+        self.assertEqual(cand_meta["candidate_pr_status"], "DRAFT")
+        self.assertEqual(cand_meta["pr_state"], "OPEN")
+        self.assertTrue(cand_meta["pr_draft"])
+        self.assertEqual(cand_meta["release_status"], "CANDIDATE")
+
+        sec19, sec_errs = extract_scope_content(md, "CURRENT_CANDIDATE_PR")
+        self.assertEqual(sec_errs, [])
+        self.assertIn("`13`", sec19)
+        self.assertIn("`DRAFT`", sec19)
+        self.assertIn("`OPEN`", sec19)
+        self.assertIn("`true`", sec19)
+        self.assertIn("`CANDIDATE`", sec19)
+        self.assertNotIn("MERGED", sec19)
+        self.assertNotIn("已合入", sec19)
+
+        # Also verify legacy pr_number=13, pr_status="DRAFT" does NOT fall back to historical MERGED
+        ok_leg, errs_leg, payload_leg, md_leg = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            pr_number=13,
+            pr_status="DRAFT",
+            final_evidence_path="docs/release-evidence/std019-final-release.json",
+        )
+        self.assertTrue(ok_leg, f"Legacy DRAFT failed: {errs_leg}")
+        assert payload_leg is not None and md_leg is not None
+        self.assertEqual(payload_leg["recent_ci_facts"]["details"]["candidate_pr"]["candidate_pr_status"], "DRAFT")
+        self.assertEqual(payload_leg["recent_ci_facts"]["details"]["candidate_pr"]["pr_state"], "OPEN")
+        self.assertTrue(payload_leg["recent_ci_facts"]["details"]["candidate_pr"]["pr_draft"])
+
+    def test_b_historical_merge_commit_never_used_as_current_pr_merge_commit(self) -> None:
+        """B: Historical PR #9 / PR #10 merge commits must never appear as current PR merge commit."""
+        cand_sha = "2" * 40
+        hist_pr10_merge = "8b223019c254e0edeb94576b94af46c1e48b0316"
+        hist_pr9_merge = "3cd42b69049b148bceea1324d4f8212393cb96df"
+
+        # 1. Unmerged PR #13 has no merge commit and never contains historical merge commits in Section 19
+        ok, errs, payload, md = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="OPEN",
+            candidate_pr_draft=False,
+        )
+        self.assertTrue(ok, errs)
+        assert payload is not None and md is not None
+        self.assertNotIn("merge_commit_sha", payload["recent_ci_facts"]["details"]["candidate_pr"])
+        sec19, _ = extract_scope_content(md, "CURRENT_CANDIDATE_PR")
+        self.assertNotIn(hist_pr10_merge, sec19)
+        self.assertNotIn(hist_pr9_merge, sec19)
+
+        # 2. Attempting to supply historical PR #10 or PR #9 merge commit as current PR #13 merge_commit_sha MUST BLOCK
+        for hist_sha in (hist_pr10_merge, hist_pr9_merge):
+            fake_event = {
+                "number": 13,
+                "merged": True,
+                "merged_by": {"login": "xiefeifeihu"},
+                "base": {"ref": "main"},
+                "head": {"sha": cand_sha},
+                "merge_commit_sha": hist_sha,
+            }
+            ok_bad, errs_bad, _, _ = build_engineering_baseline(
+                project_root=ROOT,
+                standards_root=ROOT,
+                observed_at="2026-11-19T01:00:00Z",
+                source_commit_override=PROJECT_SOURCE_COMMIT,
+                candidate_commit_override=cand_sha,
+                candidate_pr_number=13,
+                candidate_pr_status="MERGED",
+                candidate_pr_head=cand_sha,
+                candidate_pr_base="main",
+                candidate_pr_merge_event=fake_event,
+            )
+            self.assertFalse(ok_bad, f"Historical merge commit {hist_sha} should have been rejected")
+            self.assertTrue(
+                any("CANDIDATE_PR_HISTORICAL_MERGE_COMMIT_POLLUTION" in e for e in errs_bad),
+                f"Expected historical merge pollution error, got: {errs_bad}",
+            )
+
+    def test_c_candidate_pr_head_mismatch_blocks(self) -> None:
+        """C: PR #13 candidate_pr_head != candidate_commit MUST BLOCK both build and verify-only."""
+        cand_sha = "3" * 40
+        other_sha = "4" * 40
+        ok, errs, _, _ = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="DRAFT",
+            candidate_pr_head=other_sha,
+            candidate_pr_base="main",
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("CANDIDATE_PR_HEAD_MISMATCH" in e for e in errs), f"Got: {errs}")
+
+        # verify_current_candidate_pr_facts also catches tampered head != candidate_commit
+        ok_good, errs_good, _, md_good = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="DRAFT",
+            candidate_pr_head=cand_sha,
+            candidate_pr_base="main",
+        )
+        self.assertTrue(ok_good, errs_good)
+        assert md_good is not None
+        tampered = md_good.replace(
+            f"- **当前候选 PR HEAD (`candidate_pr_head`)**：`{cand_sha}`",
+            f"- **当前候选 PR HEAD (`candidate_pr_head`)**：`{other_sha}`",
+        )
+        v_errs = verify_current_candidate_pr_facts(tampered, version_str="3.0.1")
+        self.assertTrue(any("CANDIDATE_PR_HEAD_MISMATCH" in e for e in v_errs), f"Got: {v_errs}")
+
+    def test_d_candidate_pr_base_not_main_blocks(self) -> None:
+        """D: PR #13 candidate_pr_base != 'main' MUST BLOCK both build and verify-only."""
+        cand_sha = "5" * 40
+        ok, errs, _, _ = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="DRAFT",
+            candidate_pr_head=cand_sha,
+            candidate_pr_base="develop",
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("CANDIDATE_PR_BASE_NOT_MAIN" in e for e in errs), f"Got: {errs}")
+
+        # verify_current_candidate_pr_facts also catches tampered base != main
+        ok_good, _, _, md_good = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="DRAFT",
+            candidate_pr_head=cand_sha,
+            candidate_pr_base="main",
+        )
+        self.assertTrue(ok_good)
+        assert md_good is not None
+        tampered = md_good.replace(
+            "- **当前候选 PR Base (`candidate_pr_base`)**：`main`",
+            "- **当前候选 PR Base (`candidate_pr_base`)**：`release/other`",
+        )
+        v_errs = verify_current_candidate_pr_facts(tampered, version_str="3.0.1")
+        self.assertTrue(any("CANDIDATE_PR_BASE_NOT_MAIN" in e for e in v_errs), f"Got: {v_errs}")
+
+    def test_e_merged_only_allowed_with_verified_owner_merge_event(self) -> None:
+        """E: PR #13 MERGED is blocked without real Owner merge event, and allowed only when fully verified."""
+        cand_sha = "6" * 40
+        merge_sha = "7" * 40
+
+        # 1. Missing merge event -> BLOCK
+        ok_no_ev, errs_no_ev, _, _ = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="MERGED",
+            candidate_pr_head=cand_sha,
+            candidate_pr_base="main",
+        )
+        self.assertFalse(ok_no_ev)
+        self.assertTrue(any("CANDIDATE_PR_MERGE_NOT_VERIFIED" in e for e in errs_no_ev), f"Got: {errs_no_ev}")
+
+        # 2. Non-owner merger -> BLOCK
+        bad_owner_ev = {
+            "number": 13,
+            "merged": True,
+            "merged_by": {"login": "coding-agent-bot"},
+            "base": {"ref": "main"},
+            "head": {"sha": cand_sha},
+            "merge_commit_sha": merge_sha,
+        }
+        ok_bad_owner, errs_bad_owner, _, _ = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="MERGED",
+            candidate_pr_head=cand_sha,
+            candidate_pr_base="main",
+            candidate_pr_merge_event=bad_owner_ev,
+        )
+        self.assertFalse(ok_bad_owner)
+        self.assertTrue(any("CANDIDATE_PR_MERGED_BY_UNAUTHORIZED" in e for e in errs_bad_owner), f"Got: {errs_bad_owner}")
+
+        # 3. Unmerged event (merged=False) -> BLOCK
+        unmerged_ev = dict(bad_owner_ev, merged=False, merged_by={"login": "xiefeifeihu"})
+        ok_unm, errs_unm, _, _ = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="MERGED",
+            candidate_pr_head=cand_sha,
+            candidate_pr_base="main",
+            candidate_pr_merge_event=unmerged_ev,
+        )
+        self.assertFalse(ok_unm)
+        self.assertTrue(any("CANDIDATE_PR_NOT_MERGED" in e for e in errs_unm), f"Got: {errs_unm}")
+
+        # 4. Valid Owner merge event -> PASS & records MERGED + merge_commit_sha + merged_by
+        valid_ev = {
+            "number": 13,
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "base": {"ref": "main"},
+            "head": {"sha": cand_sha},
+            "merge_commit_sha": merge_sha,
+        }
+        ok_valid, errs_valid, payload_valid, md_valid = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="MERGED",
+            candidate_pr_head=cand_sha,
+            candidate_pr_base="main",
+            candidate_pr_merge_event=valid_ev,
+        )
+        self.assertTrue(ok_valid, f"Valid owner merge event should PASS: {errs_valid}")
+        assert payload_valid is not None and md_valid is not None
+        cand_meta = payload_valid["recent_ci_facts"]["details"]["candidate_pr"]
+        self.assertEqual(cand_meta["candidate_pr_status"], "MERGED")
+        self.assertEqual(cand_meta["pr_state"], "MERGED")
+        self.assertFalse(cand_meta["pr_draft"])
+        self.assertEqual(cand_meta["merge_commit_sha"], merge_sha)
+        self.assertEqual(cand_meta["merged_by"], "xiefeifeihu")
+        sec19, _ = extract_scope_content(md_valid, "CURRENT_CANDIDATE_PR")
+        self.assertIn(merge_sha, sec19)
+        self.assertIn("`xiefeifeihu`", sec19)
+
+    def test_f_no_hardcoded_pr9_pr10_pollution_and_historical_scopes_preserved(self) -> None:
+        """F: No hardcoded PR #9 / PR #10 pollutes current facts; historical PR9/STD018/STD019 remain intact; verify-only catches drift."""
+        cand_sha = "8" * 40
+        ok, errs, payload, md = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="DRAFT",
+            push_run_id="44272059516",
+            pr_run_id="44272124416",
+            ci_status="PASS",
+            test_count=289,
+        )
+        self.assertTrue(ok, errs)
+        assert payload is not None and md is not None
+
+        # 1. Section 19 has NO PR #9 / PR #10
+        sec19, sec19_errs = extract_scope_content(md, "CURRENT_CANDIDATE_PR")
+        self.assertEqual(sec19_errs, [])
+        self.assertNotRegex(sec19, r"PR\s*#(9|10)\b")
+        self.assertIn("PR #13", sec19)
+
+        # 2. Section 9 summary line has NO PR #9 / PR #10 and dynamically binds PR #13
+        sec9_summary = payload["recent_ci_facts"]["summary"]
+        self.assertNotRegex(sec9_summary, r"PR\s*#(9|10)\b")
+        self.assertIn("PR #13", sec9_summary)
+
+        # 3. Default call with NO pr_number does NOT default to PR #9
+        ok_def, errs_def, payload_def, md_def = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-19T01:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+        )
+        self.assertTrue(ok_def, errs_def)
+        assert payload_def is not None and md_def is not None
+        self.assertIsNone(payload_def["recent_ci_facts"]["details"]["candidate_pr"]["candidate_pr_number"])
+        sec19_def, _ = extract_scope_content(md_def, "CURRENT_CANDIDATE_PR")
+        self.assertNotRegex(sec19_def, r"PR\s*#(9|10)\b")
+
+        # 4. Historical scopes PR9, STD018, STD019 are strictly preserved
+        for hist_scope in ("PR9_HISTORICAL_RELEASE_EVIDENCE", "STD018_CURRENT_SNAPSHOT", "STD019_FINAL_RELEASE"):
+            _, h_errs = extract_scope_content(md, hist_scope)
+            self.assertEqual(h_errs, [], f"Historical scope {hist_scope} missing")
+
+        # 5. verify_current_candidate_pr_facts catches injected PR #9 or wrong expected PR number
+        polluted_md = md.replace("- **当前候选 PR 编号 (`candidate_pr_number`)**：`13`", "- **当前候选 PR 编号 (`candidate_pr_number`)**：`9`")
+        p_errs = verify_current_candidate_pr_facts(polluted_md, version_str="3.0.1")
+        self.assertTrue(any("CANDIDATE_PR_HISTORICAL_NUMBER_POLLUTION" in e for e in p_errs), f"Got: {p_errs}")
+
+        mismatch_errs = verify_current_candidate_pr_facts(
+            md,
+            version_str="3.0.1",
+            expected_facts={"candidate_pr_number": 99},
+        )
+        self.assertTrue(any("CANDIDATE_PR_EXPECTED_FIELD_MISMATCH" in e for e in mismatch_errs), f"Got: {mismatch_errs}")
+
+    # --- Release Evidence Fallback Tests (G-L) ---
+
+    def _setup_rev_dir(self, tmpdir: str) -> tuple[Path, Path]:
+        root = Path(tmpdir)
+        (root / "schemas").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "schemas" / "release-evidence.schema.json", root / "schemas" / "release-evidence.schema.json")
+        rev_dir = root / "docs" / "release-evidence"
+        rev_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "docs" / "release-evidence" / "std019-final-release.json", rev_dir / "std019-final-release.json")
+        shutil.copy2(ROOT / "docs" / "release-evidence" / "v3.0.0-reissue.json", rev_dir / "v3.0.0-reissue.json")
+        return root, rev_dir
+
+    def test_g_released_301_is_valid_fallback_for_302(self) -> None:
+        """G: Verified 3.0.1 RELEASED evidence is selected as fallback when VERSION=3.0.2."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root, rev_dir = self._setup_rev_dir(tmpdir)
+            (rev_dir / "v3.0.1.json").write_text(
+                json.dumps(self._make_release_evidence("3.0.1", "RELEASED"), indent=2),
+                encoding="utf-8",
+            )
+            (root / "VERSION").write_text("3.0.2\n", encoding="utf-8")
+            resolved = resolve_release_evidence_path(root)
+            self.assertEqual(resolved.name, "v3.0.1.json")
+            fb = _find_latest_official_fallback(rev_dir, max_version="3.0.2", project_root=root)
+            self.assertIsNotNone(fb)
+            assert fb is not None
+            self.assertEqual(fb.name, "v3.0.1.json")
+
+    def test_h_candidate_and_in_progress_301_not_selected_as_302_fallback(self) -> None:
+        """H: 3.0.1 CANDIDATE / IN_PROGRESS must NOT be selected as 3.0.2 fallback (falls back to v3.0.0)."""
+        for non_released in ("CANDIDATE", "IN_PROGRESS"):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                root, rev_dir = self._setup_rev_dir(tmpdir)
+                (rev_dir / "v3.0.1.json").write_text(
+                    json.dumps(self._make_release_evidence("3.0.1", non_released), indent=2),
+                    encoding="utf-8",
+                )
+                (root / "VERSION").write_text("3.0.2\n", encoding="utf-8")
+                resolved = resolve_release_evidence_path(root)
+                self.assertEqual(
+                    resolved.name,
+                    "std019-final-release.json",
+                    f"{non_released} v3.0.1.json must NOT be chosen as fallback",
+                )
+
+    def test_i_blocked_301_not_selected_as_fallback(self) -> None:
+        """I: 3.0.1 BLOCKED must NOT be selected as fallback (falls back to v3.0.0)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root, rev_dir = self._setup_rev_dir(tmpdir)
+            (rev_dir / "v3.0.1.json").write_text(
+                json.dumps(self._make_release_evidence("3.0.1", "BLOCKED"), indent=2),
+                encoding="utf-8",
+            )
+            (root / "VERSION").write_text("3.0.2\n", encoding="utf-8")
+            resolved = resolve_release_evidence_path(root)
+            self.assertEqual(resolved.name, "std019-final-release.json")
+
+    def test_j_corrupt_schema_invalid_or_version_mismatched_file_not_selected_as_fallback(self) -> None:
+        """J: Corrupt JSON, schema-invalid JSON, and filename/version mismatch must NOT be selected as fallback."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root, rev_dir = self._setup_rev_dir(tmpdir)
+            (root / "VERSION").write_text("3.0.2\n", encoding="utf-8")
+
+            # 1. Corrupt JSON
+            (rev_dir / "v3.0.1.json").write_text("{corrupt_json: [", encoding="utf-8")
+            self.assertEqual(resolve_release_evidence_path(root).name, "std019-final-release.json")
+
+            # 2. Schema-invalid JSON (missing required fields)
+            (rev_dir / "v3.0.1.json").write_text(
+                json.dumps({"version": "3.0.1", "release_flow_status": "RELEASED"}),
+                encoding="utf-8",
+            )
+            self.assertEqual(resolve_release_evidence_path(root).name, "std019-final-release.json")
+
+            # 3. Filename says v3.0.1.json but inner version says 3.0.0
+            mismatched = self._make_release_evidence("3.0.0", "RELEASED")
+            (rev_dir / "v3.0.1.json").write_text(json.dumps(mismatched), encoding="utf-8")
+            self.assertEqual(resolve_release_evidence_path(root).name, "std019-final-release.json")
+
+            # 4. If NO valid RELEASED file exists at all, resolve returns non-existent path (never corrupt file)
+            (rev_dir / "std019-final-release.json").unlink()
+            (rev_dir / "v3.0.1.json").write_text("{broken", encoding="utf-8")
+            resolved_none = resolve_release_evidence_path(root)
+            self.assertFalse(resolved_none.exists())
+
+    def test_k_tag_object_mismatch_rejected_as_official_evidence(self) -> None:
+        """K: Lightweight tag, zero SHA, non-PASS publish status, or local Git tag object mismatch must be rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root, rev_dir = self._setup_rev_dir(tmpdir)
+            (root / "VERSION").write_text("3.0.2\n", encoding="utf-8")
+
+            # 1. Lightweight tag (tag_object_sha == peeled_commit)
+            ev_lw = self._make_release_evidence("3.0.1", "RELEASED", tag_object_sha="a" * 40, peeled_commit="a" * 40)
+            (rev_dir / "v3.0.1.json").write_text(json.dumps(ev_lw), encoding="utf-8")
+            self.assertEqual(resolve_release_evidence_path(root).name, "std019-final-release.json")
+
+            # 2. All-zero tag_object_sha
+            ev_zero = self._make_release_evidence("3.0.1", "RELEASED", tag_object_sha="0" * 40, peeled_commit="a" * 40)
+            (rev_dir / "v3.0.1.json").write_text(json.dumps(ev_zero), encoding="utf-8")
+            self.assertEqual(resolve_release_evidence_path(root).name, "std019-final-release.json")
+
+            # 3. tag_publish_status != PASS
+            ev_pub = self._make_release_evidence("3.0.1", "RELEASED", tag_publish_status="SKIPPED")
+            (rev_dir / "v3.0.1.json").write_text(json.dumps(ev_pub), encoding="utf-8")
+            self.assertEqual(resolve_release_evidence_path(root).name, "std019-final-release.json")
+
+            # 4. Real Git repository where refs/tags/v3.0.1 exists with a DIFFERENT tag object SHA
+            subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.com"], check=True)
+            subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+            (root / "README.md").write_text("tag test\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "init"], check=True)
+            real_commit = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+            subprocess.run(["git", "-C", str(root), "tag", "-a", "v3.0.1", "-m", "v3.0.1"], check=True)
+            real_tag_obj = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "refs/tags/v3.0.1"], text=True
+            ).strip()
+            self.assertNotEqual(real_tag_obj, real_commit)
+
+            # Wrong tag_object_sha vs real Git annotated tag -> REJECTED
+            wrong_tag_obj = ("f" if real_tag_obj[0] != "f" else "e") + real_tag_obj[1:]
+            ev_drift = self._make_release_evidence(
+                "3.0.1", "RELEASED", tag_object_sha=wrong_tag_obj, peeled_commit=real_commit
+            )
+            (rev_dir / "v3.0.1.json").write_text(json.dumps(ev_drift), encoding="utf-8")
+            ok_drift, drift_errs, _ = is_verified_released_evidence(root, rev_dir / "v3.0.1.json", expected_version="3.0.1")
+            self.assertFalse(ok_drift)
+            self.assertTrue(any("LOCAL_TAG_OBJECT_MISMATCH" in e for e in drift_errs), f"Got: {drift_errs}")
+            self.assertEqual(resolve_release_evidence_path(root).name, "std019-final-release.json")
+
+            # Exact match with real Git annotated tag -> ACCEPTED
+            ev_match = self._make_release_evidence(
+                "3.0.1", "RELEASED", tag_object_sha=real_tag_obj, peeled_commit=real_commit
+            )
+            (rev_dir / "v3.0.1.json").write_text(json.dumps(ev_match), encoding="utf-8")
+            ok_match, match_errs, _ = is_verified_released_evidence(root, rev_dir / "v3.0.1.json", expected_version="3.0.1")
+            self.assertTrue(ok_match, f"Exact Git tag match should pass: {match_errs}")
+            self.assertEqual(resolve_release_evidence_path(root).name, "v3.0.1.json")
+
+    def test_l_multiple_versions_select_highest_valid_released_without_mutating_history(self) -> None:
+        """L: Among multiple historical files (RELEASED, CANDIDATE, BLOCKED, corrupt, mismatch),
+        select the highest SemVer verified RELEASED evidence and never mutate any file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root, rev_dir = self._setup_rev_dir(tmpdir)
+            (rev_dir / "v3.0.1.json").write_text(
+                json.dumps(self._make_release_evidence("3.0.1", "RELEASED"), indent=2),
+                encoding="utf-8",
+            )
+            (rev_dir / "v3.0.2.json").write_text(
+                json.dumps(self._make_release_evidence("3.0.2", "CANDIDATE"), indent=2),
+                encoding="utf-8",
+            )
+            (rev_dir / "v3.0.3.json").write_text(
+                json.dumps(self._make_release_evidence("3.0.3", "BLOCKED"), indent=2),
+                encoding="utf-8",
+            )
+            (rev_dir / "v3.0.4.json").write_text("{corrupt", encoding="utf-8")
+            (rev_dir / "v3.0.5.json").write_text(
+                json.dumps(self._make_release_evidence("3.0.5", "RELEASED", tag_object_sha="0" * 40), indent=2),
+                encoding="utf-8",
+            )
+            (root / "VERSION").write_text("3.0.6\n", encoding="utf-8")
+
+            before_bytes = {p.name: p.read_bytes() for p in sorted(rev_dir.glob("*.json"))}
+            resolved = resolve_release_evidence_path(root)
+            self.assertEqual(resolved.name, "v3.0.1.json")
+            after_bytes = {p.name: p.read_bytes() for p in sorted(rev_dir.glob("*.json"))}
+            self.assertEqual(before_bytes, after_bytes, "Historical evidence files must never be mutated")
 
 
 if __name__ == "__main__":

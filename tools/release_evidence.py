@@ -53,30 +53,200 @@ def _parse_semver_tuple(ver: str) -> Optional[Tuple[int, int, int]]:
     return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
 
-def _find_latest_official_fallback(rev_dir: Path, max_version: Optional[str] = None) -> Optional[Path]:
-    """Select the latest released official evidence file <= max_version safely (never modifying std019)."""
+def _infer_expected_version_from_filename(ev_path: Path) -> Optional[Tuple[str, Tuple[int, int, int], int]]:
+    """Return (version_str, semver_tuple, priority) for official release evidence filenames, or None."""
+    name = ev_path.name
+    m = re.match(r"^v(\d+\.\d+\.\d+)\.json$", name)
+    if m:
+        ver = m.group(1)
+        vt = _parse_semver_tuple(ver)
+        if vt is not None:
+            return ver, vt, 3
+        return None
+    if name == "std019-final-release.json":
+        return "3.0.0", (3, 0, 0), 2
+    mr = re.match(r"^v(\d+\.\d+\.\d+)-reissue\.json$", name)
+    if mr:
+        ver = mr.group(1)
+        vt = _parse_semver_tuple(ver)
+        if vt is not None:
+            return ver, vt, 1
+        return None
+    return None
+
+
+def _verify_local_git_tag_consistency(
+    project_root: Path,
+    release_tag: str,
+    expected_tag_object_sha: str,
+    expected_peeled_commit: str,
+) -> Tuple[bool, List[str]]:
+    """If project_root is a Git repo with refs/tags/<release_tag>, verify it is an annotated tag
+    whose tag object SHA and peeled commit match the evidence file."""
+    git_marker = project_root / ".git"
+    if not git_marker.exists():
+        return True, []
+    try:
+        res_obj = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "--verify", "--quiet", f"refs/tags/{release_tag}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if res_obj.returncode != 0 or not (res_obj.stdout or "").strip():
+            # Tag not present locally (e.g., shallow clone or offline synthetic repo without tag fetch)
+            return True, []
+        found_obj = res_obj.stdout.strip()
+
+        res_type = subprocess.run(
+            ["git", "-C", str(project_root), "cat-file", "-t", f"refs/tags/{release_tag}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        obj_type = (res_type.stdout or "").strip() if res_type.returncode == 0 else ""
+        if obj_type != "tag":
+            return False, [
+                f"RELEASE_EVIDENCE_LOCAL_TAG_NOT_ANNOTATED: Local git tag '{release_tag}' has object type '{obj_type}' (annotated 'tag' required)"
+            ]
+
+        errors: List[str] = []
+        if found_obj != expected_tag_object_sha:
+            errors.append(
+                f"RELEASE_EVIDENCE_LOCAL_TAG_OBJECT_MISMATCH: Local git tag '{release_tag}' object '{found_obj}' != evidence '{expected_tag_object_sha}'"
+            )
+
+        res_peeled = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "--verify", "--quiet", f"refs/tags/{release_tag}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        found_peeled = (res_peeled.stdout or "").strip() if res_peeled.returncode == 0 else ""
+        if not found_peeled or found_peeled != expected_peeled_commit:
+            errors.append(
+                f"RELEASE_EVIDENCE_LOCAL_TAG_PEELED_MISMATCH: Local git tag '{release_tag}' peeled commit '{found_peeled}' != evidence '{expected_peeled_commit}'"
+            )
+
+        if errors:
+            return False, errors
+        return True, []
+    except Exception:
+        return True, []
+
+
+def is_verified_released_evidence(
+    project_root: Path,
+    ev_path: Path,
+    expected_version: Optional[str] = None,
+    verify_local_git_tag: bool = True,
+) -> Tuple[bool, List[str], Optional[Dict[str, Any]]]:
+    """Validate that ev_path is a fully verified official RELEASED evidence file.
+    Rejects CANDIDATE, IN_PROGRESS, BLOCKED, corrupt JSON, schema violations,
+    filename/version mismatches, invalid/zero/lightweight tag SHAs, or local Git tag drift.
+    """
+    project_root = Path(project_root).resolve()
+    ev_path = Path(ev_path).resolve()
+    if not ev_path.is_file():
+        return False, [f"RELEASE_EVIDENCE_NOT_FOUND: '{ev_path}' does not exist"], None
+
+    inferred = _infer_expected_version_from_filename(ev_path)
+    if expected_version is None and inferred is not None:
+        expected_version = inferred[0]
+
+    ok, errs, data = load_release_evidence(project_root, evidence_path=ev_path)
+    if not ok or data is None:
+        return False, errs or ["RELEASE_EVIDENCE_INVALID"], None
+
+    check_errors: List[str] = []
+    flow_status = str(data.get("release_flow_status") or "").strip()
+    if flow_status != "RELEASED":
+        check_errors.append(
+            f"RELEASE_EVIDENCE_NOT_RELEASED: release_flow_status='{flow_status}' (must be 'RELEASED')"
+        )
+
+    data_ver = str(data.get("version") or "").strip().lstrip("v")
+    if _parse_semver_tuple(data_ver) is None:
+        check_errors.append(f"RELEASE_EVIDENCE_INVALID_VERSION: '{data_ver}' is not valid SemVer")
+    elif expected_version is not None and data_ver != str(expected_version).strip().lstrip("v"):
+        check_errors.append(
+            f"RELEASE_EVIDENCE_VERSION_FILENAME_MISMATCH: version='{data_ver}' != expected='{expected_version}' for '{ev_path.name}'"
+        )
+
+    rel_tag = str(data.get("release_tag") or "").strip()
+    if rel_tag != f"v{data_ver}":
+        check_errors.append(
+            f"RELEASE_EVIDENCE_TAG_MISMATCH: release_tag='{rel_tag}' != 'v{data_ver}'"
+        )
+
+    tag_obj = str(data.get("tag_object_sha") or "").strip()
+    peeled = str(data.get("peeled_commit") or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", tag_obj) or tag_obj == "0" * 40:
+        check_errors.append(f"RELEASE_EVIDENCE_INVALID_TAG_OBJECT_SHA: '{tag_obj}'")
+    if not re.fullmatch(r"[0-9a-f]{40}", peeled) or peeled == "0" * 40:
+        check_errors.append(f"RELEASE_EVIDENCE_INVALID_PEELED_COMMIT: '{peeled}'")
+    if tag_obj and peeled and tag_obj == peeled:
+        check_errors.append("RELEASE_EVIDENCE_LIGHTWEIGHT_TAG: tag_object_sha must differ from peeled_commit")
+    if peeled and data.get("main_head") and peeled != data.get("main_head"):
+        check_errors.append(
+            f"RELEASE_EVIDENCE_PEELED_MISMATCH: peeled_commit='{peeled}' != main_head='{data.get('main_head')}'"
+        )
+
+    if data.get("tag_publish_status") != "PASS":
+        check_errors.append(
+            f"RELEASE_EVIDENCE_TAG_PUBLISH_NOT_PASS: tag_publish_status='{data.get('tag_publish_status')}'"
+        )
+    if data.get("ci_status") != "PASS":
+        check_errors.append(f"RELEASE_EVIDENCE_CI_NOT_PASS: ci_status='{data.get('ci_status')}'")
+    if data.get("windows_status") != "PASS" or data.get("ubuntu_status") != "PASS":
+        check_errors.append(
+            f"RELEASE_EVIDENCE_PLATFORM_CI_NOT_PASS: windows='{data.get('windows_status')}', ubuntu='{data.get('ubuntu_status')}'"
+        )
+    if data.get("pr_merged") is not True or not str(data.get("pr_merged_by") or "").strip():
+        check_errors.append("RELEASE_EVIDENCE_PR_MERGE_UNVERIFIED: pr_merged=true and pr_merged_by required")
+
+    if not check_errors and verify_local_git_tag:
+        git_ok, git_errs = _verify_local_git_tag_consistency(project_root, rel_tag, tag_obj, peeled)
+        if not git_ok:
+            check_errors.extend(git_errs)
+
+    if check_errors:
+        return False, check_errors, None
+    return True, [], data
+
+
+def _find_latest_official_fallback(
+    rev_dir: Path,
+    max_version: Optional[str] = None,
+    project_root: Optional[Path] = None,
+) -> Optional[Path]:
+    """Select the highest SemVer verified RELEASED official evidence file <= max_version safely.
+    Never selects CANDIDATE, IN_PROGRESS, BLOCKED, corrupt JSON, schema-invalid, or tag-mismatched files,
+    and never mutates historical evidence files.
+    """
     if not rev_dir.exists():
         return None
+    eff_root = Path(project_root).resolve() if project_root is not None else rev_dir.parent.parent.resolve()
     max_tuple = _parse_semver_tuple(max_version) if max_version else None
     candidates: List[Tuple[Tuple[int, int, int], int, Path]] = []
 
-    for p in rev_dir.glob("*.json"):
-        m = re.match(r"^v(\d+\.\d+\.\d+)\.json$", p.name)
-        if m:
-            vt = _parse_semver_tuple(m.group(1))
-            if vt is not None and (max_tuple is None or vt <= max_tuple):
-                candidates.append((vt, 3, p))
+    for p in sorted(rev_dir.glob("*.json")):
+        inferred = _infer_expected_version_from_filename(p)
+        if inferred is None:
             continue
-        if p.name == "std019-final-release.json":
-            vt = (3, 0, 0)
-            if max_tuple is None or vt <= max_tuple:
-                candidates.append((vt, 2, p))
+        expected_ver, vt, priority = inferred
+        if max_tuple is not None and vt > max_tuple:
             continue
-        mr = re.match(r"^v(\d+\.\d+\.\d+)-reissue\.json$", p.name)
-        if mr:
-            vt = _parse_semver_tuple(mr.group(1))
-            if vt is not None and (max_tuple is None or vt <= max_tuple):
-                candidates.append((vt, 1, p))
+        ok, _, _ = is_verified_released_evidence(eff_root, p, expected_version=expected_ver)
+        if not ok:
+            continue
+        candidates.append((vt, priority, p))
 
     if candidates:
         candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
@@ -110,8 +280,9 @@ def resolve_release_evidence_path(
                 return final_candidate
         return reissue_candidate
 
-    # Default selection reads VERSION first; if current version formal evidence does not exist yet
-    # (candidate release branch prior to formal Tag publish), safely fall back to previous official release evidence.
+    # Default selection reads VERSION first; only a fully verified RELEASED evidence file may be selected.
+    # On a candidate release branch prior to formal Tag publish, safely fall back to the highest verified
+    # RELEASED evidence file <= VERSION (never selecting CANDIDATE, IN_PROGRESS, BLOCKED, or corrupt files).
     version_file = project_root / "VERSION"
     cur_ver: Optional[str] = None
     if version_file.exists():
@@ -121,34 +292,27 @@ def resolve_release_evidence_path(
 
     if cur_ver:
         cur_plain = rev_dir / f"v{cur_ver}.json"
-        if cur_plain.exists():
+        if cur_plain.exists() and is_verified_released_evidence(project_root, cur_plain, expected_version=cur_ver)[0]:
             return cur_plain
         if cur_ver == "3.0.0":
             std019 = rev_dir / "std019-final-release.json"
-            if std019.exists():
+            if std019.exists() and is_verified_released_evidence(project_root, std019, expected_version="3.0.0")[0]:
                 return std019
         cur_reissue = rev_dir / f"v{cur_ver}-reissue.json"
-        if cur_reissue.exists():
+        if cur_reissue.exists() and is_verified_released_evidence(project_root, cur_reissue, expected_version=cur_ver)[0]:
             return cur_reissue
 
-        prev_fallback = _find_latest_official_fallback(rev_dir, max_version=cur_ver)
+        prev_fallback = _find_latest_official_fallback(rev_dir, max_version=cur_ver, project_root=project_root)
         if prev_fallback is not None:
             return prev_fallback
 
-    final_candidate = rev_dir / "std019-final-release.json"
-    if final_candidate.exists():
-        return final_candidate
+        return rev_dir / f"v{cur_ver}-no-verified-released-evidence.json"
 
-    fallback = rev_dir / "v3.0.0-reissue.json"
-    if fallback.exists():
-        return fallback
+    any_fallback = _find_latest_official_fallback(rev_dir, max_version=None, project_root=project_root)
+    if any_fallback is not None:
+        return any_fallback
 
-    if rev_dir.exists():
-        json_files = sorted(rev_dir.glob("*.json"))
-        if json_files:
-            return json_files[0]
-
-    return fallback
+    return rev_dir / "no-verified-released-evidence.json"
 
 
 def load_release_evidence(
@@ -190,7 +354,7 @@ def load_release_evidence(
         elif data[field] is None:
             errors.append(f"RELEASE_EVIDENCE_NULL_FIELD: '{field}' cannot be null")
 
-    # Validate commit hashes
+    # Validate commit hashes (reject malformed or all-zero placeholder SHAs)
     for sha_field in (
         "main_head",
         "candidate_commit",
@@ -198,9 +362,9 @@ def load_release_evidence(
         "last_verified_ci_commit",
     ):
         val = str(data.get(sha_field, ""))
-        if not re.match(r"^[0-9a-f]{40}$", val):
+        if not re.match(r"^[0-9a-f]{40}$", val) or val == "0" * 40:
             errors.append(
-                f"RELEASE_EVIDENCE_INVALID_SHA: '{sha_field}' must be a 40-hex commit SHA (got '{val}')"
+                f"RELEASE_EVIDENCE_INVALID_SHA: '{sha_field}' must be a non-zero 40-hex commit SHA (got '{val}')"
             )
 
     if "old_tag_deleted" in data and not isinstance(data.get("old_tag_deleted"), bool):
@@ -247,10 +411,10 @@ def load_release_evidence(
 
         tag_obj = str(data.get("tag_object_sha", ""))
         peeled = str(data.get("peeled_commit", ""))
-        if not re.match(r"^[0-9a-f]{40}$", tag_obj):
-            errors.append(f"RELEASE_EVIDENCE_INVALID_SHA: 'tag_object_sha' must be 40-hex SHA (got '{tag_obj}')")
-        if not re.match(r"^[0-9a-f]{40}$", peeled):
-            errors.append(f"RELEASE_EVIDENCE_INVALID_SHA: 'peeled_commit' must be 40-hex SHA (got '{peeled}')")
+        if not re.match(r"^[0-9a-f]{40}$", tag_obj) or tag_obj == "0" * 40:
+            errors.append(f"RELEASE_EVIDENCE_INVALID_SHA: 'tag_object_sha' must be a non-zero 40-hex SHA (got '{tag_obj}')")
+        if not re.match(r"^[0-9a-f]{40}$", peeled) or peeled == "0" * 40:
+            errors.append(f"RELEASE_EVIDENCE_INVALID_SHA: 'peeled_commit' must be a non-zero 40-hex SHA (got '{peeled}')")
         if tag_obj and peeled and tag_obj == peeled:
             errors.append("RELEASE_EVIDENCE_LIGHTWEIGHT_TAG: 'tag_object_sha' must differ from 'peeled_commit' (annotated tag required)")
         if peeled and data.get("main_head") and peeled != data.get("main_head"):
@@ -263,8 +427,10 @@ def load_release_evidence(
         if not data.get("pr_merged_by"):
             errors.append("RELEASE_EVIDENCE_MISSING_FIELD: 'pr_merged_by' is required for RELEASED evidence")
 
-    # Validate against JSON schema if present
+    # Validate against JSON schema (prefer project_root, fallback to bundled Standards schema)
     schema_path = project_root / "schemas" / "release-evidence.schema.json"
+    if not schema_path.exists():
+        schema_path = Path(__file__).resolve().parent.parent / "schemas" / "release-evidence.schema.json"
     if schema_path.exists() and jsonschema is not None:
         try:
             schema_data = json.loads(schema_path.read_text(encoding="utf-8"))

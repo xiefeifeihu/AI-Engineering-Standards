@@ -700,8 +700,13 @@ def build_handoff_payload(
     pr_head_override: Optional[str] = None,
     old_tag_deleted: bool = True,
     release_flow_status: str = "IN_PROGRESS",
-    pr_status: str = "DRAFT",
-    pr_number: int = 9,
+    pr_status: Optional[str] = None,
+    pr_number: Optional[int] = None,
+    candidate_pr_number: Optional[int] = None,
+    candidate_pr_status: Optional[str] = None,
+    candidate_pr_head: Optional[str] = None,
+    candidate_pr_base: Optional[str] = None,
+    candidate_pr_draft: Optional[bool] = None,
     pending_verifications: Optional[str] = None,
     release_evidence_path: Optional[str] = None,
     release_evidence: Optional[Dict[str, Any]] = None,
@@ -789,33 +794,63 @@ def build_handoff_payload(
         elif release_evidence_path:
             errors.extend([f"HANDOFF_RELEASE_EVIDENCE_INVALID: {e}" for e in ev_errors])
 
+    is_current_version_released = bool(
+        evidence_data
+        and str(evidence_data.get("version", "")).lstrip("v") == resolved_version
+        and evidence_data.get("release_flow_status") == "RELEASED"
+    )
+    current_ver_evidence: Optional[Dict[str, Any]] = evidence_data if is_current_version_released else None
+
     rc_head, git_head = run_git(project_root, ["rev-parse", "HEAD"])
     live_head = git_head if rc_head == 0 and re.match(r"^[0-9a-f]{40}$", git_head) else ""
     local_head = snapshot_commit_override or live_head or (
-        (evidence_data.get("snapshot_commit") if evidence_data else None) or ""
+        (current_ver_evidence.get("snapshot_commit") if current_ver_evidence else None) or ""
     )
     if not local_head:
         errors.append("HANDOFF_INVALID_COMMIT: Local Git HEAD is not a valid 40-character SHA")
 
-    effective_pr_status = (
-        pr_status
-        if pr_status != "DRAFT"
-        else (evidence_data.get("pr_status") if evidence_data else pr_status)
+    eff_cand_pr_number: Optional[int] = (
+        candidate_pr_number if candidate_pr_number is not None else pr_number
     )
+    raw_pr_status = candidate_pr_status if candidate_pr_status is not None else pr_status
+    effective_pr_status = str(raw_pr_status).strip().upper() if raw_pr_status is not None else "DRAFT"
+    eff_cand_pr_base = str(candidate_pr_base).strip() if candidate_pr_base is not None else "main"
+    if eff_cand_pr_base != "main":
+        errors.append(f"HANDOFF_CANDIDATE_PR_BASE_NOT_MAIN: candidate_pr_base '{eff_cand_pr_base}' must be 'main'")
 
     code_candidate_commit = (
         candidate_commit_override
-        or (evidence_data.get("candidate_commit") if evidence_data else None)
-        or existing_facts.get("candidate_commit")
+        or (current_ver_evidence.get("candidate_commit") if current_ver_evidence else None)
         or local_head
     )
+    eff_cand_pr_head = candidate_pr_head or pr_head_override or code_candidate_commit
+    if candidate_pr_head and candidate_pr_head != code_candidate_commit:
+        errors.append(
+            f"HANDOFF_CANDIDATE_PR_HEAD_MISMATCH: candidate_pr_head '{candidate_pr_head}' != candidate_commit '{code_candidate_commit}'"
+        )
     effective_ci_commit = (
         ci_commit
         or last_verified_ci_commit
-        or (evidence_data.get("last_verified_ci_commit") if evidence_data else None)
-        or existing_facts.get("last_verified_ci_commit")
+        or (current_ver_evidence.get("last_verified_ci_commit") if current_ver_evidence else None)
         or code_candidate_commit
     )
+
+    if effective_pr_status == "DRAFT":
+        pr_state_str = "OPEN"
+        pr_draft_bool = True
+        cand_release_status = "CANDIDATE"
+    elif effective_pr_status == "OPEN":
+        pr_state_str = "OPEN"
+        pr_draft_bool = bool(candidate_pr_draft) if candidate_pr_draft is not None else False
+        cand_release_status = "CANDIDATE"
+    elif effective_pr_status == "MERGED":
+        pr_state_str = "MERGED"
+        pr_draft_bool = False
+        cand_release_status = "RELEASED" if is_current_version_released else "MERGED_PENDING_TAG"
+    else:
+        pr_state_str = "CLOSED"
+        pr_draft_bool = False
+        cand_release_status = "BLOCKED"
 
     # Baseline source commit resolution
     pb_path = project_root / "docs" / "PRODUCT-BASELINE.md"
@@ -878,13 +913,13 @@ def build_handoff_payload(
             "failed_count": 0,
             "evidence_ref": ".artifacts/test_results.txt",
         }
-    elif evidence_data and evidence_data.get("ci_status") == "PASS":
+    elif current_ver_evidence and current_ver_evidence.get("ci_status") == "PASS":
         test_results = {
             "verification_status": "PASS",
             "command": "python -m unittest discover -s tests -v",
             "exit_code": 0,
-            "passed_count": evidence_data.get("test_count", 219),
-            "failed_count": evidence_data.get("test_failed", 0),
+            "passed_count": current_ver_evidence.get("test_count", 219),
+            "failed_count": current_ver_evidence.get("test_failed", 0),
             "evidence_ref": ".github/workflows/standards-ci.yml",
         }
     else:
@@ -904,22 +939,15 @@ def build_handoff_payload(
         elif not (project_root / ev_ref).exists():
             errors.append(f"HANDOFF_TEST_PASS_MISSING_EVIDENCE_FILE: evidence_ref '{ev_ref}' does not exist on disk")
 
-    # 5. Auto-associate CI Run ID
+    # 5. Auto-associate CI Run ID (strictly decoupled from historical v3.0.0 runs when on candidate version)
     active_push_run_id = (
         push_run_id
-        or (evidence_data.get("push_run_id") if evidence_data else None)
-        or existing_facts.get("push_run_id")
+        or (current_ver_evidence.get("push_run_id") if current_ver_evidence else None)
         or (ci_run_override.get("run_id") if ci_run_override else None)
-        or existing_facts.get("ci_run_id")
-        or "42843755347"
     )
     active_pr_run_id = (
         pr_run_id
-        or (evidence_data.get("pr_run_id") if evidence_data else None)
-        or existing_facts.get("pr_run_id")
-        or (ci_run_override.get("run_id") if ci_run_override else None)
-        or existing_facts.get("ci_run_id")
-        or "42843964061"
+        or (current_ver_evidence.get("pr_run_id") if current_ver_evidence else None)
     )
     active_run_id = active_push_run_id or active_pr_run_id
     ci_commit_val = effective_ci_commit or (local_head if local_head else "NOT_RUN")
@@ -934,7 +962,7 @@ def build_handoff_payload(
             "run_id": int(active_run_id) if (active_run_id and str(active_run_id).isdigit()) else active_run_id,
             "workflow": ".github/workflows/standards-ci.yml",
             "commit": ci_commit_val,
-            "verification_status": "PASS" if active_run_id else "NOT_RUN",
+            "verification_status": "PASS" if (active_run_id and is_current_version_released) else "NOT_VERIFIABLE",
             "evidence_ref": ".github/workflows/standards-ci.yml",
         }
     if ci_run.get("commit") in ("NOT_RUN", None, "") and ci_commit_val:
@@ -1053,23 +1081,25 @@ def build_handoff_payload(
     doc_status = "IN_REVIEW"
     doc_approval = "IN_REVIEW"
 
-    pr_head = pr_head_override or local_head
+    pr_head = eff_cand_pr_head
+    pr_label = f"PR #{eff_cand_pr_number}" if eff_cand_pr_number is not None else "当前候选 PR"
     if pending_verifications is not None:
         pending_text = pending_verifications
     elif ci_run.get("verification_status") == "PASS":
-        pending_text = "PR CI 已通过，等待合并及 main CI 和 Tag 重建。"
+        pending_text = f"{pr_label} CI 已通过，等待独立复核与 Owner 批准合入 main 后由 main CI 自动签发 v{resolved_version} Tag。"
     else:
         pending_text = "远端 GitHub Actions CI 双平台实测；严禁在推送前或运行完成前伪造 CI PASS"
 
     if last_verified_ci_commit and ("（" in str(last_verified_ci_commit) or "(" in str(last_verified_ci_commit)):
         verified_ci_text = str(last_verified_ci_commit)
     elif effective_ci_commit:
-        effective_passed = test_results.get("passed_count") or (evidence_data.get("test_count") if evidence_data else 216)
+        effective_passed = test_results.get("passed_count") or (current_ver_evidence.get("test_count") if current_ver_evidence else None)
+        passed_suffix = f"，{effective_passed} tests PASS" if effective_passed else ""
         if active_push_run_id and active_pr_run_id and str(active_push_run_id) != str(active_pr_run_id):
-            run_desc = f"Run {active_push_run_id} Push / Run {active_pr_run_id} PR #{pr_number} 双平台全绿，{effective_passed} tests PASS"
+            run_desc = f"Run {active_push_run_id} Push / Run {active_pr_run_id} {pr_label} 双平台全绿{passed_suffix}"
             verified_ci_text = f"`{effective_ci_commit}`（{run_desc}）"
         elif active_run_id:
-            run_desc = f"Run {active_run_id} 双平台全绿，{effective_passed} tests PASS"
+            run_desc = f"Run {active_run_id} 双平台全绿{passed_suffix}"
             verified_ci_text = f"`{effective_ci_commit}`（{run_desc}）"
         else:
             verified_ci_text = f"`{effective_ci_commit}`"
@@ -1279,14 +1309,27 @@ def build_handoff_payload(
                 "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
             ])
         else:
-            md_lines.extend([
+            cand_pr_num_disp = str(eff_cand_pr_number) if eff_cand_pr_number is not None else "NOT_ASSIGNED"
+            sec45_lines = [
                 "",
                 "### 4.5 当前发布候选状态 (v" + str(resolved_version) + " Candidate)",
                 f"- **任务编号 (`task_id`)**：`{task_id}`",
                 f"- **候选版本 (`candidate_version`)**：`{resolved_version}`",
+                f"- **当前候选 PR 编号 (`candidate_pr_number`)**：`{cand_pr_num_disp}`",
+                f"- **当前候选 PR 状态 (`candidate_pr_status`)**：`{effective_pr_status}`",
+                f"- **PR 状态标记 (`PR_STATE`)**：`{pr_state_str}`",
+                f"- **PR 草稿标记 (`PR_DRAFT`)**：`{str(pr_draft_bool).lower()}`",
+                f"- **当前候选 PR HEAD (`candidate_pr_head`)**：`{eff_cand_pr_head}`",
+                f"- **当前候选 PR Base (`candidate_pr_base`)**：`{eff_cand_pr_base}`",
+                f"- **当前候选 Commit (`candidate_commit`)**：`{code_candidate_commit}`",
                 f"- **当前最新已发布正式 Tag (`LATEST_RELEASED_TAG`)**：`{_h_019_ev['release_tag']}`",
-                "- **发布流程状态 (`candidate_release_flow_status`)**：`CANDIDATE`（待发布 PR 合入 main 并通过 main CI 自动签发新 Tag）",
-            ])
+                f"- **发布流程状态 (`RELEASE_STATUS`)**：`{cand_release_status}`（待 {pr_label} 经独立审查与 Owner 批准合入 main 后由 main CI 自动签发 v{resolved_version} Tag）",
+            ]
+            if active_push_run_id:
+                sec45_lines.append(f"- **当前候选 Push CI Run ID (`candidate_push_run_id`)**：`{active_push_run_id}`")
+            if active_pr_run_id:
+                sec45_lines.append(f"- **当前候选 PR CI Run ID (`candidate_pr_run_id`)**：`{active_pr_run_id}`")
+            md_lines.extend(sec45_lines)
     else:
         md_lines.extend([
             "### 4.2 v3.0.0 一次性重发发布与 Tag 状态追踪",
@@ -1377,7 +1420,12 @@ def write_handoff_files(
             )
         snapshot_md = md_text.replace("primary_entrypoint: true", "primary_entrypoint: false", 1)
         snap_sha = compute_canonical_document_sha256(snapshot_md)
-        snapshot_md = re.sub(r'content_sha256:\s*"?[0-9a-f]{64}"?', f'content_sha256: "{snap_sha}"', snapshot_md, count=1)
+        snapshot_md = re.sub(
+            r'content_sha256:\s*"?(?:sha256:)?[0-9a-f]{64}"?',
+            f'content_sha256: "{snap_sha}"',
+            snapshot_md,
+            count=1,
+        )
         task_snapshot_path.write_text(snapshot_md, encoding="utf-8")
         written_paths["task_snapshot"] = str(task_snapshot_path.relative_to(project_root)).replace("\\", "/")
 
@@ -1402,7 +1450,12 @@ def write_handoff_files(
             "primary_entrypoint: true", "primary_entrypoint: false", 1
         )
         temp_sha = compute_canonical_document_sha256(temp_md)
-        temp_md = re.sub(r'content_sha256:\s*"?[0-9a-f]{64}"?', f'content_sha256: "{temp_sha}"', temp_md, count=1)
+        temp_md = re.sub(
+            r'content_sha256:\s*"?(?:sha256:)?[0-9a-f]{64}"?',
+            f'content_sha256: "{temp_sha}"',
+            temp_md,
+            count=1,
+        )
         temp_path.write_text(temp_md, encoding="utf-8")
         written_paths["temporary_handoff"] = str(temp_path.relative_to(project_root)).replace("\\", "/")
 
@@ -1460,8 +1513,13 @@ def main() -> None:
     parser.add_argument("--push-run-id", default=None, help="Push CI Run ID")
     parser.add_argument("--pr-run-id", default=None, help="PR CI Run ID")
     parser.add_argument("--pr-head", default=None, help="PR HEAD commit SHA")
-    parser.add_argument("--pr-number", type=int, default=9, help="PR number")
-    parser.add_argument("--pr-status", default="DRAFT", help="PR status (DRAFT, OPEN, MERGED)")
+    parser.add_argument("--pr-number", type=int, default=None, help="Legacy alias for --candidate-pr-number")
+    parser.add_argument("--pr-status", default=None, help="Legacy alias for --candidate-pr-status (DRAFT, OPEN, MERGED)")
+    parser.add_argument("--candidate-pr-number", type=int, default=None, help="Current candidate PR number")
+    parser.add_argument("--candidate-pr-status", default=None, help="Current candidate PR status (DRAFT, OPEN, MERGED, CLOSED)")
+    parser.add_argument("--candidate-pr-head", default=None, help="Current candidate PR HEAD commit SHA")
+    parser.add_argument("--candidate-pr-base", default=None, help="Current candidate PR base branch (must be 'main')")
+    parser.add_argument("--candidate-pr-draft", choices=["true", "false"], default=None, help="Current candidate PR draft flag (true/false)")
     parser.add_argument("--release-flow-status", default="IN_PROGRESS", help="Release flow status")
     parser.add_argument("--old-tag-deleted", default=None, help="Expected old tag deleted state (true/false)")
     parser.add_argument("--pending-verifications", default=None, help="Pending verifications statement")
@@ -1515,6 +1573,9 @@ def main() -> None:
     )
 
     task_id_val = args.task_id or "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT"
+    candidate_pr_draft_val: Optional[bool] = (
+        (args.candidate_pr_draft == "true") if args.candidate_pr_draft is not None else None
+    )
     effective_captured_at = args.captured_at
     if effective_captured_at is None and not args.verify_only:
         effective_captured_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1538,6 +1599,11 @@ def main() -> None:
         release_flow_status=args.release_flow_status,
         pr_status=args.pr_status,
         pr_number=args.pr_number,
+        candidate_pr_number=args.candidate_pr_number,
+        candidate_pr_status=args.candidate_pr_status,
+        candidate_pr_head=args.candidate_pr_head,
+        candidate_pr_base=args.candidate_pr_base,
+        candidate_pr_draft=candidate_pr_draft_val,
         pending_verifications=args.pending_verifications,
         test_results_override=test_override,
         ci_run_override=ci_override,
@@ -1611,18 +1677,18 @@ def main() -> None:
             sys.exit(1)
 
         expected_pr9_facts = {
-            "candidate_commit": args.candidate_commit or release_evidence["candidate_commit"],
-            "snapshot_commit": args.snapshot_commit or release_evidence["snapshot_commit"],
-            "last_verified_ci_commit": args.last_verified_ci_commit or args.ci_commit or release_evidence["last_verified_ci_commit"],
-            "ci_commit": args.ci_commit or release_evidence["last_verified_ci_commit"],
-            "ci_run_id": args.ci_run_id or release_evidence["push_run_id"],
-            "push_run_id": args.push_run_id or release_evidence["push_run_id"],
-            "pr_run_id": args.pr_run_id or release_evidence["pr_run_id"],
-            "ci_status": args.ci_status or release_evidence["ci_status"],
-            "test_count": args.test_passed if args.test_passed is not None else release_evidence["test_count"],
-            "pr_status": args.pr_status if (args.pr_status != "DRAFT" or "pr_status" not in release_evidence) else release_evidence["pr_status"],
+            "candidate_commit": release_evidence["candidate_commit"],
+            "snapshot_commit": release_evidence["snapshot_commit"],
+            "last_verified_ci_commit": release_evidence["last_verified_ci_commit"],
+            "ci_commit": release_evidence["last_verified_ci_commit"],
+            "ci_run_id": release_evidence["push_run_id"],
+            "push_run_id": release_evidence["push_run_id"],
+            "pr_run_id": release_evidence["pr_run_id"],
+            "ci_status": release_evidence["ci_status"],
+            "test_count": release_evidence["test_count"],
+            "pr_status": release_evidence["pr_status"],
             "main_head": release_evidence.get("main_head"),
-            "release_flow_status": args.release_flow_status if (args.release_flow_status != "IN_PROGRESS" or "release_flow_status" not in release_evidence) else release_evidence["release_flow_status"],
+            "release_flow_status": release_evidence["release_flow_status"],
             "old_tag_deleted": release_evidence["old_tag_deleted"],
         }
         pr9_mismatches = verify_handoff_semantic_facts(
@@ -1763,6 +1829,11 @@ def main() -> None:
         release_flow_status=args.release_flow_status,
         pr_status=args.pr_status,
         pr_number=args.pr_number,
+        candidate_pr_number=args.candidate_pr_number,
+        candidate_pr_status=args.candidate_pr_status,
+        candidate_pr_head=args.candidate_pr_head,
+        candidate_pr_base=args.candidate_pr_base,
+        candidate_pr_draft=candidate_pr_draft_val,
         pending_verifications=args.pending_verifications,
         test_results_override=test_override,
         ci_run_override=ci_override,
