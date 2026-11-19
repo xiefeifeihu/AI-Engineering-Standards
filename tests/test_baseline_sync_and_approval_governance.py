@@ -2456,6 +2456,18 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             dst = Path(tmp)
             head = _copy_minimal_valid_project(dst)
+            # Consumer repositories do not hold Standards' internal release-evidence files;
+            # keep dst in consumer baseline scope so validate_upgrade_candidate checks
+            # consumer upgrade prerequisites and fails specifically on missing validation evidence.
+            rel_ev_dir = dst / "docs" / "release-evidence"
+            if rel_ev_dir.exists():
+                shutil.rmtree(rel_ev_dir)
+                subprocess.run(["git", "-C", str(dst), "add", "-A"], capture_output=True, check=True)
+                subprocess.run(
+                    ["git", "-C", str(dst), "commit", "-m", "consumer fixture without standards release-evidence"],
+                    capture_output=True,
+                    check=True,
+                )
             prep = prepare_upgrade_candidate(
                 project_root=dst,
                 target_tag="v3.0.0",
