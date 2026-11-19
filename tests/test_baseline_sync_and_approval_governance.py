@@ -240,6 +240,19 @@ def _copy_minimal_valid_project(dst: Path) -> str:
             "- **2. Git 快照观测时间 (" + tick + "git_snapshot_observed_at" + tick + ")**：" + tick + captured_at + tick + "（有效时效：24 小时；快照状态：" + tick + "FRESH" + tick + "）",
             "baseline capture time",
         )
+    if "(CURRENT_CANDIDATE_PR)" in baseline_text:
+        baseline_text = replace_section_line(
+            baseline_text, "## 19. 当前候选状态与消费端试点 (CURRENT_CANDIDATE_PR)", None,
+            "- **当前候选 PR HEAD",
+            "- **当前候选 PR HEAD (" + tick + "candidate_pr_head" + tick + ")**：" + tick + snapshot_head + tick,
+            "baseline candidate_pr_head",
+        )
+        baseline_text = replace_section_line(
+            baseline_text, "## 19. 当前候选状态与消费端试点 (CURRENT_CANDIDATE_PR)", None,
+            "- **当前候选 Commit",
+            "- **当前候选 Commit (" + tick + "candidate_commit" + tick + ")**：" + tick + snapshot_head + tick,
+            "baseline candidate_commit",
+        )
     baseline_text = refresh_frontmatter_digest(baseline_text)
     baseline_path.write_text(baseline_text, encoding="utf-8")
 
