@@ -2461,12 +2461,21 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
             # consumer upgrade prerequisites and fails specifically on missing validation evidence.
             rel_ev_dir = dst / "docs" / "release-evidence"
             if rel_ev_dir.exists():
+                head_epoch = int(subprocess.run(
+                    ["git", "-C", str(dst), "show", "-s", "--format=%ct", "HEAD"],
+                    capture_output=True, text=True, encoding="utf-8", check=True,
+                ).stdout.strip())
+                commit_ts = datetime.fromtimestamp(head_epoch + 2, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                commit_env = os.environ.copy()
+                commit_env["GIT_AUTHOR_DATE"] = commit_ts
+                commit_env["GIT_COMMITTER_DATE"] = commit_ts
                 shutil.rmtree(rel_ev_dir)
                 subprocess.run(["git", "-C", str(dst), "add", "-A"], capture_output=True, check=True)
                 subprocess.run(
                     ["git", "-C", str(dst), "commit", "-m", "consumer fixture without standards release-evidence"],
                     capture_output=True,
                     check=True,
+                    env=commit_env,
                 )
             prep = prepare_upgrade_candidate(
                 project_root=dst,
