@@ -1568,18 +1568,42 @@ def verify_candidate_pr_merge_event(
     repository: Optional[str] = None,
 ) -> Tuple[bool, List[str], Optional[str], Optional[str]]:
     """Verify a GitHub PR API event before allowing current candidate PR status=MERGED (Rule C).
-    Requires merged=true, merged_by==expected_owner, base.ref==expected_base ('main'),
-    head.sha valid & candidate_commit is an ancestor of head.sha, and a valid non-historical merge_commit_sha.
+    Requires number==expected_pr_number, base.repo.full_name==repository, merged=true,
+    merged_by==expected_owner, base.ref==expected_base ('main'), head.sha valid &
+    candidate_commit is an ancestor of head.sha, and a valid non-historical merge_commit_sha.
     """
     errors: List[str] = []
     if not isinstance(pr_event, dict):
         return False, ["CANDIDATE_PR_MERGE_EVENT_INVALID: PR merge event payload must be an object"], None, None
 
     ev_num = pr_event.get("number")
-    if ev_num is not None and int(ev_num) != int(expected_pr_number):
-        errors.append(
-            f"CANDIDATE_PR_NUMBER_MISMATCH: PR merge event number={ev_num} != candidate_pr_number={expected_pr_number}"
+    if ev_num is None or isinstance(ev_num, bool):
+        errors.append("CANDIDATE_PR_NUMBER_MISSING: PR merge event missing required 'number'")
+    else:
+        try:
+            if int(ev_num) != int(expected_pr_number):
+                errors.append(
+                    f"CANDIDATE_PR_NUMBER_MISMATCH: PR merge event number={ev_num} != candidate_pr_number={expected_pr_number}"
+                )
+        except Exception:
+            errors.append(f"CANDIDATE_PR_NUMBER_INVALID: PR merge event number='{ev_num}' is not a valid integer")
+
+    base_raw = pr_event.get("base")
+    if repository:
+        base_repo_obj = base_raw.get("repo") if isinstance(base_raw, dict) else None
+        base_repo_name = (
+            str(base_repo_obj.get("full_name") or "").strip()
+            if isinstance(base_repo_obj, dict)
+            else ""
         )
+        if not base_repo_name:
+            errors.append(
+                f"CANDIDATE_PR_BASE_REPO_MISSING: PR merge event missing base.repo.full_name (expected '{repository}')"
+            )
+        elif base_repo_name != repository:
+            errors.append(
+                f"CANDIDATE_PR_REPOSITORY_MISMATCH: PR merge event base.repo.full_name='{base_repo_name}' != '{repository}'"
+            )
 
     if pr_event.get("merged") is not True:
         errors.append("CANDIDATE_PR_NOT_MERGED: GitHub PR API event does not confirm merged=true")
@@ -1596,7 +1620,6 @@ def verify_candidate_pr_merge_event(
             f"CANDIDATE_PR_MERGED_BY_UNAUTHORIZED: merged_by='{merged_by_login}' != expected owner '{expected_owner}'"
         )
 
-    base_raw = pr_event.get("base")
     base_ref = str(base_raw.get("ref") if isinstance(base_raw, dict) else pr_event.get("base_ref") or "").strip()
     if base_ref != expected_base:
         errors.append(
@@ -1616,7 +1639,7 @@ def verify_candidate_pr_merge_event(
                 repository=repository,
                 allow_remote_compare=True,
             )
-            if anc_st != "PASS" and head_sha != expected_candidate_commit:
+            if anc_st != "PASS":
                 errors.extend(anc_errs or [f"CANDIDATE_PR_HEAD_MISMATCH: head.sha='{head_sha}' != candidate_commit='{expected_candidate_commit}'"])
         elif head_sha != expected_candidate_commit:
             errors.append(
@@ -1636,6 +1659,140 @@ def verify_candidate_pr_merge_event(
     if errors:
         return False, errors, None, None
     return True, [], merge_commit_sha, merged_by_login
+
+
+_ORIG_QUERY_PR_VIA_API = _query_pr_via_api
+_ORIG_QUERY_PR_VIA_GH = _query_pr_via_gh
+
+
+def _extract_merge_event_snapshot(pr_event: Dict[str, Any]) -> Dict[str, Any]:
+    base_raw = pr_event.get("base")
+    head_raw = pr_event.get("head")
+    merged_by_raw = pr_event.get("merged_by")
+    base_repo = base_raw.get("repo") if isinstance(base_raw, dict) else None
+    ev_num = pr_event.get("number")
+    try:
+        norm_num: Any = int(ev_num) if ev_num is not None and not isinstance(ev_num, bool) else None
+    except Exception:
+        norm_num = str(ev_num)
+    return {
+        "number": norm_num,
+        "base.repo.full_name": str(base_repo.get("full_name") or "").strip() if isinstance(base_repo, dict) else "",
+        "merged": pr_event.get("merged") is True,
+        "merged_by": str(merged_by_raw.get("login") or "").strip() if isinstance(merged_by_raw, dict) else str(merged_by_raw or "").strip(),
+        "base.ref": str(base_raw.get("ref") if isinstance(base_raw, dict) else pr_event.get("base_ref") or "").strip(),
+        "head.sha": str(head_raw.get("sha") if isinstance(head_raw, dict) else pr_event.get("head_sha") or "").strip(),
+        "merge_commit_sha": str(pr_event.get("merge_commit_sha") or "").strip(),
+    }
+
+
+def resolve_and_verify_candidate_pr_merge_event(
+    *,
+    repository: str,
+    candidate_pr_number: int,
+    candidate_commit: str,
+    expected_owner: str,
+    expected_base: str = "main",
+    forbidden_historical_merge_commits: Optional[set[str]] = None,
+    project_root: Optional[Path] = None,
+    candidate_pr_merge_event: Optional[Dict[str, Any]] = None,
+    allow_offline: bool = True,
+    timeout: int = 10,
+    query_api_fn: Any = None,
+    query_gh_fn: Any = None,
+) -> Tuple[bool, List[str], Optional[str], Optional[str]]:
+    """Acquire and verify PR merge provenance for MERGED status across Baseline and Handoff.
+
+    - When allow_offline=False: MUST always query live GitHub PR API. Supplied
+      candidate_pr_merge_event JSON can NEVER substitute for live API (fail-closed if
+      API unavailable) and, if supplied, MUST match live API across all provenance fields.
+    - When allow_offline=True: requires candidate_pr_merge_event and validates it strictly.
+    """
+    if not allow_offline:
+        api_fn = query_api_fn if (query_api_fn is not None and query_api_fn is not _ORIG_QUERY_PR_VIA_API) else _query_pr_via_api
+        gh_fn = query_gh_fn if (query_gh_fn is not None and query_gh_fn is not _ORIG_QUERY_PR_VIA_GH) else _query_pr_via_gh
+
+        ok_api, api_pr_data, api_err = api_fn(repository, candidate_pr_number, timeout=timeout)
+        live_pr_data: Optional[Dict[str, Any]] = api_pr_data if (ok_api and api_pr_data) else None
+        live_err = api_err
+        if live_pr_data is None:
+            ok_gh, gh_pr_data, gh_err = gh_fn(repository, candidate_pr_number, timeout=timeout)
+            if ok_gh and gh_pr_data:
+                live_pr_data = gh_pr_data
+            else:
+                live_err = f"{api_err}; gh fallback: {gh_err}" if api_err else gh_err
+
+        if live_pr_data is None:
+            clean_err = _sanitize_error_message(live_err or "GitHub PR API unavailable")
+            return (
+                False,
+                [
+                    f"CANDIDATE_PR_MERGE_NOT_VERIFIED: CANDIDATE_PR_MERGE_LIVE_API_BLOCKED: Real GitHub PR API unavailable when allow_offline=False; supplied JSON cannot replace live API ({clean_err})"
+                ],
+                None,
+                None,
+            )
+
+        live_ok, live_errs, live_sha, live_by = verify_candidate_pr_merge_event(
+            pr_event=live_pr_data,
+            expected_pr_number=candidate_pr_number,
+            expected_candidate_commit=candidate_commit,
+            expected_owner=expected_owner,
+            expected_base=expected_base,
+            forbidden_historical_merge_commits=forbidden_historical_merge_commits,
+            project_root=project_root,
+            repository=repository,
+        )
+        errors = list(live_errs)
+
+        if candidate_pr_merge_event is not None:
+            ev_ok, ev_errs, _, _ = verify_candidate_pr_merge_event(
+                pr_event=candidate_pr_merge_event,
+                expected_pr_number=candidate_pr_number,
+                expected_candidate_commit=candidate_commit,
+                expected_owner=expected_owner,
+                expected_base=expected_base,
+                forbidden_historical_merge_commits=forbidden_historical_merge_commits,
+                project_root=project_root,
+                repository=repository,
+            )
+            if not ev_ok:
+                for err in ev_errs:
+                    if err not in errors:
+                        errors.append(err)
+            if isinstance(candidate_pr_merge_event, dict):
+                ev_snap = _extract_merge_event_snapshot(candidate_pr_merge_event)
+                live_snap = _extract_merge_event_snapshot(live_pr_data)
+                for fld in ("number", "base.repo.full_name", "merged", "merged_by", "base.ref", "head.sha", "merge_commit_sha"):
+                    if ev_snap.get(fld) != live_snap.get(fld):
+                        errors.append(
+                            f"CANDIDATE_PR_MERGE_EVENT_API_MISMATCH: supplied candidate_pr_merge_event '{fld}'='{ev_snap.get(fld)}' != live GitHub PR API '{live_snap.get(fld)}'"
+                        )
+
+        if not live_ok or errors:
+            return False, errors, None, None
+        return True, [], live_sha, live_by
+
+    if candidate_pr_merge_event is None:
+        return (
+            False,
+            [
+                "CANDIDATE_PR_MERGE_NOT_VERIFIED: Cannot mark current candidate PR as MERGED without verified GitHub PR merge event (merged=true, merged_by=owner, base=main, head.sha>=candidate_commit)"
+            ],
+            None,
+            None,
+        )
+
+    return verify_candidate_pr_merge_event(
+        pr_event=candidate_pr_merge_event,
+        expected_pr_number=candidate_pr_number,
+        expected_candidate_commit=candidate_commit,
+        expected_owner=expected_owner,
+        expected_base=expected_base,
+        forbidden_historical_merge_commits=forbidden_historical_merge_commits,
+        project_root=project_root,
+        repository=repository,
+    )
 
 
 def verify_live_pr_identity(
@@ -1763,18 +1920,27 @@ def verify_live_pr_identity(
     elif actual_repo != repository:
         errors.append(f"LIVE_PR_REPOSITORY_MISMATCH: expected '{repository}', got '{actual_repo}'")
 
-    # 2. PR Number binding
+    # 2. PR Number binding & state pre-read (supports follow-up PR CI after candidate PR already merged)
     actual_num = api_pr.get("number")
     if actual_num is None:
         errors.append("LIVE_PR_NUMBER_MISSING: GitHub PR API payload missing 'number'")
     elif int(actual_num) != pr_num_int:
         errors.append(f"LIVE_PR_NUMBER_MISMATCH: expected PR #{pr_num_int}, got PR #{actual_num}")
 
+    raw_state = str(api_pr.get("state") or "").strip().lower()
+    live_merged = api_pr.get("merged") is True
+    live_draft = bool(api_pr.get("draft", False))
+    exp_status_norm = str(expected_pr_status).strip().upper() if expected_pr_status else None
+
+    event_pr_matches_candidate = True
     if event_pr is not None and event_pr.get("number") is not None:
-        if int(event_pr["number"]) != pr_num_int:
-            errors.append(
-                f"LIVE_PR_EVENT_NUMBER_MISMATCH: pull_request event number={event_pr['number']} != PR #{pr_num_int}"
-            )
+        ev_num = int(event_pr["number"])
+        if ev_num != pr_num_int:
+            event_pr_matches_candidate = False
+            if not (live_merged and exp_status_norm == "MERGED"):
+                errors.append(
+                    f"LIVE_PR_EVENT_NUMBER_MISMATCH: pull_request event number={event_pr['number']} != PR #{pr_num_int}"
+                )
 
     # 3. Base branch binding
     actual_base = str((api_pr.get("base") or {}).get("ref") or "").strip()
@@ -1792,33 +1958,33 @@ def verify_live_pr_identity(
 
     # 4. Head SHA binding (NEVER use GITHUB_SHA in pull_request workflow as PR head)
     api_head = str((api_pr.get("head") or {}).get("sha") or "").strip()
-    ev_head = str((event_pr.get("head") or {}).get("sha") or "").strip() if event_pr is not None else ""
+    ev_head = (
+        str((event_pr.get("head") or {}).get("sha") or "").strip()
+        if (event_pr is not None and event_pr_matches_candidate)
+        else ""
+    )
     effective_pr_head = ev_head or api_head
     details["pr_head_sha"] = effective_pr_head or None
     details["api_pr_head_sha"] = api_head or None
 
     if not re.fullmatch(r"[0-9a-f]{40}", api_head) or api_head == "0" * 40:
         errors.append(f"LIVE_PR_HEAD_INVALID: live PR API head.sha='{api_head}' must be a non-zero 40-hex SHA")
-    if event_pr is not None and ev_head:
+    if event_pr is not None and event_pr_matches_candidate and ev_head:
         if not re.fullmatch(r"[0-9a-f]{40}", ev_head) or ev_head == "0" * 40:
             errors.append(f"LIVE_PR_EVENT_HEAD_INVALID: event pull_request.head.sha='{ev_head}' is invalid")
 
     # 5. State, draft, and merge provenance checks
-    raw_state = str(api_pr.get("state") or "").strip().lower()
-    live_merged = api_pr.get("merged") is True
-    live_draft = bool(api_pr.get("draft", False))
     details["pr_state"] = raw_state.upper() if raw_state else None
     details["pr_draft"] = live_draft
     details["pr_merged"] = live_merged
 
-    if event_pr is not None and event_pr.get("draft") is not None:
+    if event_pr is not None and event_pr_matches_candidate and event_pr.get("draft") is not None:
         ev_draft = bool(event_pr.get("draft"))
         if ev_draft != live_draft and expected_pr_draft is not None and ev_draft != expected_pr_draft:
             errors.append(
                 f"CANDIDATE_PR_EVENT_DRAFT_MISMATCH: event pull_request.draft={ev_draft} != expected {expected_pr_draft}"
             )
 
-    exp_status_norm = str(expected_pr_status).strip().upper() if expected_pr_status else None
     is_main_push = (
         event_name == "push"
         and os.environ.get("GITHUB_REF", "").strip() == f"refs/heads/{expected_base_ref}"
@@ -1959,6 +2125,7 @@ def verify_candidate_pr_section(
     expected_facts: Optional[Dict[str, Any]] = None,
     verify_live_pr: bool = False,
     require_live_pr: bool = False,
+    is_current_version_released: bool = False,
     simulate_pr_data: Optional[Dict[str, Any]] = None,
     simulate_pr_error: Optional[str] = None,
     simulate_event_data: Optional[Dict[str, Any]] = None,
@@ -2011,6 +2178,8 @@ def verify_candidate_pr_section(
     if rec_pr_base is not None and rec_pr_base != "main":
         errors.append(f"CANDIDATE_PR_BASE_NOT_MAIN: committed candidate_pr_base='{rec_pr_base}' != 'main'")
 
+    merge_sha: Optional[str] = None
+    rec_merged_by: Optional[str] = None
     if rec_pr_status is not None:
         if rec_pr_status not in ("DRAFT", "OPEN", "MERGED", "CLOSED"):
             errors.append(f"CANDIDATE_PR_INVALID_STATUS: committed candidate_pr_status='{rec_pr_status}'")
@@ -2039,15 +2208,24 @@ def verify_candidate_pr_section(
                 "candidate_pr_merge_commit",
                 r"candidate_pr_merge_commit[^:：\n]*?[:：]\s*`([0-9a-f]{40})`",
             )
-            _extract_unique(
+            rec_merged_by = _extract_unique(
                 "candidate_pr_merged_by",
                 r"candidate_pr_merged_by[^:：\n]*?[:：]\s*`([A-Za-z0-9_-]+)`",
             )
+            eff_owner = repository.split("/")[0].strip() if "/" in repository else ""
+            if rec_merged_by is not None and eff_owner and rec_merged_by != eff_owner:
+                errors.append(
+                    f"CANDIDATE_PR_MERGED_BY_UNAUTHORIZED: committed candidate_pr_merged_by='{rec_merged_by}' != expected owner '{eff_owner}'"
+                )
+            if not is_current_version_released:
+                if rec_rel_status != "MERGED_PENDING_TAG":
+                    errors.append(
+                        f"CANDIDATE_PR_RELEASE_STATUS_MISMATCH: MERGED without verified release tag v{version_str} requires RELEASE_STATUS='MERGED_PENDING_TAG' (got '{rec_rel_status}')"
+                    )
             if merge_sha and historical_merge_commits and merge_sha in historical_merge_commits:
                 errors.append(
                     f"CANDIDATE_PR_HISTORICAL_MERGE_COMMIT_POLLUTION: committed merge commit '{merge_sha}' is from a historical release PR"
                 )
-
         if rec_pr_status in ("DRAFT", "OPEN"):
             if re.search(r"\bMERGED\b|已合入|candidate_pr_merge_commit", scope_text):
                 errors.append(
@@ -2120,6 +2298,8 @@ def verify_candidate_pr_section(
             "candidate_pr_base": rec_pr_base,
             "candidate_commit": rec_cand_commit,
             "release_status": rec_rel_status,
+            "candidate_pr_merge_commit": merge_sha,
+            "candidate_pr_merged_by": rec_merged_by,
         }
         for k, exp_v in expected_facts.items():
             if exp_v is None or k == "candidate_pr_head":
@@ -2164,6 +2344,17 @@ def verify_candidate_pr_section(
                 errors.extend(live_errs)
             elif live_status == "NOT_VERIFIABLE" and require_live_pr:
                 errors.extend(live_errs)
+            elif live_status == "PASS" and live_details and live_details.get("pr_merged") is True and rec_pr_status == "MERGED":
+                live_msha = live_details.get("merge_commit_sha")
+                live_mby = live_details.get("pr_merged_by")
+                if merge_sha and live_msha and merge_sha != live_msha:
+                    errors.append(
+                        f"CANDIDATE_PR_MERGE_COMMIT_MISMATCH: committed candidate_pr_merge_commit='{merge_sha}' != live '{live_msha}'"
+                    )
+                if rec_merged_by and live_mby and rec_merged_by != live_mby:
+                    errors.append(
+                        f"CANDIDATE_PR_MERGED_BY_MISMATCH: committed candidate_pr_merged_by='{rec_merged_by}' != live '{live_mby}'"
+                    )
 
     return errors, live_details, live_status
 

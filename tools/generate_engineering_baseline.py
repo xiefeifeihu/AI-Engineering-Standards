@@ -29,6 +29,7 @@ from tools.release_evidence import (
     _query_pr_via_api,
     _query_pr_via_gh,
     load_release_evidence,
+    resolve_and_verify_candidate_pr_merge_event,
     resolve_release_evidence_path,
     verify_candidate_pr_merge_event,
     verify_candidate_pr_section,
@@ -484,11 +485,11 @@ def verify_git_snapshot_facts(
                 )
 
         # origin/main may advance after the snapshot (for example, when this PR merges).
-        # Compare the recorded value with origin/main as it existed at captured_at.
+        # Follow first-parent mainline history so PR branch commits are never misattributed to origin/main.
         if remote_main_head != "NOT_VERIFIABLE" and captured_at:
             rc, expected_remote_at_capture = run_git(
                 project_root,
-                ["log", "-1", "--format=%H", f"--before={captured_at}", remote_main_head],
+                ["log", "-1", "--first-parent", "--format=%H", f"--before={captured_at}", remote_main_head],
                 timeout=8,
             )
             if rc != 0 or not re.fullmatch(r"[0-9a-f]{40}", expected_remote_at_capture):
@@ -776,6 +777,7 @@ def verify_current_candidate_pr_facts(
     expected_facts: Optional[Dict[str, Any]] = None,
     verify_live_pr: bool = False,
     require_live_pr: bool = False,
+    is_current_version_released: bool = False,
     simulate_pr_data: Optional[Dict[str, Any]] = None,
     simulate_pr_error: Optional[str] = None,
     simulate_event_data: Optional[Dict[str, Any]] = None,
@@ -792,6 +794,7 @@ def verify_current_candidate_pr_facts(
         expected_facts=expected_facts,
         verify_live_pr=verify_live_pr,
         require_live_pr=require_live_pr,
+        is_current_version_released=is_current_version_released,
         simulate_pr_data=simulate_pr_data,
         simulate_pr_error=simulate_pr_error,
         simulate_event_data=simulate_event_data,
@@ -1243,35 +1246,24 @@ def build_engineering_baseline(
                 "CANDIDATE_PR_NUMBER_REQUIRED_FOR_MERGED: candidate_pr_number is required to verify MERGED status"
             )
         else:
-            pr_ev_obj = candidate_pr_merge_event
-            if pr_ev_obj is None and not allow_offline:
-                ok_api, api_pr_data, _ = _query_pr_via_api(repository, eff_cand_pr_number)
-                if ok_api and api_pr_data:
-                    pr_ev_obj = api_pr_data
-                else:
-                    ok_gh, gh_pr_data, _ = _query_pr_via_gh(repository, eff_cand_pr_number)
-                    if ok_gh and gh_pr_data:
-                        pr_ev_obj = gh_pr_data
-            if pr_ev_obj is None:
-                errors.append(
-                    "CANDIDATE_PR_MERGE_NOT_VERIFIED: Cannot mark current candidate PR as MERGED without verified GitHub PR merge event (merged=true, merged_by=owner, base=main, head.sha>=candidate_commit)"
-                )
+            m_ok, m_errs, m_sha, m_by = resolve_and_verify_candidate_pr_merge_event(
+                repository=repository,
+                candidate_pr_number=eff_cand_pr_number,
+                candidate_commit=code_candidate_commit,
+                expected_owner=eff_owner,
+                expected_base="main",
+                forbidden_historical_merge_commits=historical_merge_commits,
+                project_root=project_root,
+                candidate_pr_merge_event=candidate_pr_merge_event,
+                allow_offline=allow_offline,
+                query_api_fn=_query_pr_via_api,
+                query_gh_fn=_query_pr_via_gh,
+            )
+            if not m_ok:
+                errors.extend(m_errs)
             else:
-                m_ok, m_errs, m_sha, m_by = verify_candidate_pr_merge_event(
-                    pr_event=pr_ev_obj,
-                    expected_pr_number=eff_cand_pr_number,
-                    expected_candidate_commit=code_candidate_commit,
-                    expected_owner=eff_owner,
-                    expected_base="main",
-                    forbidden_historical_merge_commits=historical_merge_commits,
-                    project_root=project_root,
-                    repository=repository,
-                )
-                if not m_ok:
-                    errors.extend(m_errs)
-                else:
-                    verified_merge_commit = m_sha
-                    verified_merged_by = m_by
+                verified_merge_commit = m_sha
+                verified_merged_by = m_by
 
     if effective_pr_status == "DRAFT":
         if candidate_pr_draft is False:
@@ -1300,6 +1292,17 @@ def build_engineering_baseline(
         pending_text = pending_verifications
     elif effective_pr_status == "MERGED" and is_current_version_released:
         pending_text = f"正式版本 v{version_str} 已发布并完成核验。"
+    elif effective_pr_status == "MERGED" and verified_merge_commit:
+        if effective_ci_status == "PASS":
+            pending_text = (
+                f"{pr_label} 已由 {verified_merged_by} 合入 main（Merge Commit: {verified_merge_commit[:8]}）；"
+                f"当前待修复 PR 合入 main 且 main CI 双平台全绿后由官方工作流自动签发 v{version_str} Annotated Tag。"
+            )
+        else:
+            pending_text = (
+                f"{pr_label} 已由 {verified_merged_by} 合入 main（Merge Commit: {verified_merge_commit[:8]}）；"
+                f"当前快照 ({code_candidate_commit[:8]}) 待推送到 GitHub Actions 远端触发双平台真实 CI 实测并合入 main 后签发 v{version_str} Tag（实测前保持 NOT_VERIFIABLE）。"
+            )
     elif effective_ci_status == "PASS":
         pending_text = f"{pr_label} CI 已通过，等待 ChatGPT 独立复核与唯一 Owner 批准合入 main，由 main CI 自动签发 v{version_str} Annotated Tag。"
     else:
@@ -2036,6 +2039,10 @@ def main() -> None:
     effective_observed_at = args.observed_at
     if effective_observed_at is None and not args.verify_only:
         effective_observed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cli_allow_offline = not bool(
+        args.require_live_pr
+        or (not args.verify_only and str(args.candidate_pr_status or args.pr_status or "").strip().upper() == "MERGED")
+    )
     ok, errors, payload, md_text = build_engineering_baseline(
         project_root=project_root,
         standards_root=standards_root,
@@ -2065,6 +2072,7 @@ def main() -> None:
         release_evidence_path=args.release_evidence,
         snapshot_evidence_path=args.snapshot_evidence,
         final_evidence_path=args.final_evidence,
+        allow_offline=cli_allow_offline,
     )
     if not ok or payload is None or md_text is None:
         print(f"[FAIL] Engineering baseline generation blocked ({len(errors)} issues):")
@@ -2279,6 +2287,17 @@ def main() -> None:
             if args.pr_run_id is not None:
                 exp_cand_pr_facts["candidate_pr_run_id"] = str(args.pr_run_id).strip()
 
+            is_cur_ver_rel = bool(
+                str(final_evidence.get("version", "")).lstrip("v") == payload["product_version"]["version"]
+                and final_evidence.get("release_flow_status") == "RELEASED"
+            )
+            if not is_cur_ver_rel and not args.final_evidence:
+                _act_p = resolve_release_evidence_path(project_root)
+                if _act_p.is_file():
+                    _ok_a2, _, _ev_a2 = load_release_evidence(project_root, _act_p)
+                    if _ok_a2 and _ev_a2 and str(_ev_a2.get("version", "")).lstrip("v") == payload["product_version"]["version"] and _ev_a2.get("release_flow_status") == "RELEASED":
+                        is_cur_ver_rel = True
+
             cand_pr_mismatches, live_pr_details, live_pr_status = verify_current_candidate_pr_facts(
                 content=actual_content,
                 version_str=payload["product_version"]["version"],
@@ -2289,6 +2308,7 @@ def main() -> None:
                 expected_facts=exp_cand_pr_facts or None,
                 verify_live_pr=True,
                 require_live_pr=bool(args.require_live_pr or os.environ.get("GITHUB_ACTIONS") == "true"),
+                is_current_version_released=is_cur_ver_rel,
                 return_details=True,
             )
             mismatches.extend([f"[CURRENT_CANDIDATE_PR] {m}" for m in cand_pr_mismatches])
