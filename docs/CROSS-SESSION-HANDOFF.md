@@ -11,7 +11,7 @@ change_summary: "自动采集生成任务 Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-RE
 history_reference: null
 primary_entrypoint: true
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:4c90c9a7cdfbd703d56deceb034c15c613a7a275dfe12f7775d3c786ac812710"
+content_sha256: "sha256:de66fb71cc345bc4b22ddef94a8de1319ea163a7f87144c4997512cc7f2e8ffd"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
@@ -23,20 +23,20 @@ TASK_ID=Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION
 VERSION=v3.0.1
 HANDOFF_TYPE=DURABLE
 STATUS=IN_PROGRESS
-COMMIT_HASH=5f767960d706d534a0e7f72a2f7f51b78c97bebf
-CAPTURED_AT=2026-11-20T02:38:53Z
-CONTENT_SHA256=sha256:b2f0c2da18052d95547c569eefb51a7a2fc4c1a4e23bd87fd28e7d0f50150e5d
+COMMIT_HASH=29dce384906278ea4074166295a8a7c2ad3ce0a1
+CAPTURED_AT=2026-11-20T08:32:50Z
+CONTENT_SHA256=sha256:4110eb252daaf6f332c759c94913cbb4f4efecb4967b5534e3a3bef4f5f2c8b8
 ```
 
 > **强制重核验约束 (`STD-020` §3)**：新会话接手时必须重新核验实时工程事实（Git、Standards 锁定、CI 与 Runtime），严禁仅凭旧聊天摘要推断当前状态。
 
 ## 1. 当前 Git 状态与分支身份 (`git_state`)
 - **当前分支 (`branch`)**：`fix/std-021-mainline-snapshot-first-parent`
-- **当前快照 Commit (`snapshot_commit`)**：`5f767960d706d534a0e7f72a2f7f51b78c97bebf`
-- **本地 HEAD (`local_head`)**：`5f767960d706d534a0e7f72a2f7f51b78c97bebf`
+- **当前快照 Commit (`snapshot_commit`)**：`29dce384906278ea4074166295a8a7c2ad3ce0a1`
+- **本地 HEAD (`local_head`)**：`29dce384906278ea4074166295a8a7c2ad3ce0a1`
 - **远端 main (`remote_head`)**：`b1a2e55a1612b5f9833d844479116c2ddb8e2d1c`
 - **工作区干净状态 (`worktree_clean`)**：`false`
-- **Git 状态摘要 (`status_summary`)**：`## fix/std-021-mainline-snapshot-first-parent...origin/main [ahead 1]`
+- **Git 状态摘要 (`status_summary`)**：`## fix/std-021-mainline-snapshot-first-parent...origin/fix/std-021-mainline-snapshot-first-parent [ahead 1]`
 
 ## 2. 当前 Standards 锁定 (`standards_lock`)
 - **规范仓库 (`repository`)**：`xiefeifeihu/AI-Engineering-Standards`
@@ -53,20 +53,20 @@ CONTENT_SHA256=sha256:b2f0c2da18052d95547c569eefb51a7a2fc4c1a4e23bd87fd28e7d0f50
 - **证据引用 (`evidence_ref`)**：`NONE`
 
 ## 4. 远端 CI 关联 (`ci_run`)
-- **Run ID (`run_id`)**：`44502018815`
-- **Push Run ID**：`44502018815`
-- **PR Run ID**：`44502034034`
+- **Run ID (`run_id`)**：`44667403675`
+- **Push Run ID**：`44667403675`
+- **PR Run ID**：`44669050881`
 - **工作流 (`workflow`)**：`.github/workflows/standards-ci.yml`
-- **关联 Commit (`commit`)**：`b373ca0d11b7a2ec6753d256db83f2ed3acf2fb0`
+- **关联 Commit (`commit`)**：`dd842204e7cb4b13002564baf845d54fbf3babf4`
 - **核验状态 (`verification_status`)**：`NOT_VERIFIABLE`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)
 - **1. 基线源 Commit**：`9687f961b22df612c4311961e06fc1c1fd508c37`
-- **2. Git 快照观测时间**：`2026-11-20T02:38:53Z`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
-- **3. 最近一次已验证 CI Commit**：`b373ca0d11b7a2ec6753d256db83f2ed3acf2fb0`（Run 44502018815 Push / Run 44502034034 PR #13 双平台全绿）
+- **2. Git 快照观测时间**：`2026-11-20T08:32:50Z`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
+- **3. 最近一次已验证 CI Commit**：`dd842204e7cb4b13002564baf845d54fbf3babf4`（Run 44667403675 Push / Run 44669050881 PR #13 双平台全绿）
 - **4. 当前候选 Commit**：`beac5acd7f3cdb86478c4eb733353dde9bf27f58`
-- **5. 当前待验证事项**：PR #13 已由 xiefeifeihu 合入 main (Merge Commit: b1a2e55a)；当前 Std-021 修复快照 (5f767960) 待推送到 GitHub Actions 远端触发双平台真实 CI 实测并合入 main 后自动签发 v3.0.1 Annotated Tag（实测前保持 NOT_VERIFIABLE）
+- **5. 当前待验证事项**：PR #13 (Std-020 候选) 已合入 main (b1a2e55a, MERGED_PENDING_TAG); Std-021 PR #14 (OPEN/DRAFT, 前 HEAD dd842204 通过 Push Run 44667403675 / PR Run 44669050881 Windows/Ubuntu PASS, 335 tests PASS) 当前 P0 整改提交 29dce384 待全量测试重跑、远端双平台 CI 与 ChatGPT 复审后合入 main 签发 v3.0.1 Tag
 - **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644, 42843755347, 42843964061（避免每次记录 CI 无限触发基线变更）
 
 ### 4.2 PR9 历史发布凭证 (PR9_HISTORICAL_RELEASE_EVIDENCE)
@@ -146,19 +146,20 @@ CONTENT_SHA256=sha256:b2f0c2da18052d95547c569eefb51a7a2fc4c1a4e23bd87fd28e7d0f50
 - **当前候选 Commit (`candidate_commit`)**：`beac5acd7f3cdb86478c4eb733353dde9bf27f58`
 - **实时 PR HEAD 核验方式 (`live_pr_head_verification`)**：`GITHUB_PR_API_REQUIRED`（实时 PR HEAD 与 PR 状态通过 GitHub PR API / Actions Event 在线核验，不自引用静态写入）
 - **实时 CI 运行记录方式 (`ci_runtime_record`)**：`GITHUB_STEP_SUMMARY`（实时 PR HEAD 与 CI Run ID 由 CI Runtime 与 Step Summary 记录）
-- **状态快照观测时间 (`candidate_observed_at`)**：`2026-11-20T02:38:53Z`
+- **状态快照观测时间 (`candidate_observed_at`)**：`2026-11-20T08:32:50Z`
 - **当前最新已发布正式 Tag (`LATEST_RELEASED_TAG`)**：`v3.0.0`
 - **当前候选 PR Merge Commit (`candidate_pr_merge_commit`)**：`b1a2e55a1612b5f9833d844479116c2ddb8e2d1c`
 - **当前候选 PR 合并者 (`candidate_pr_merged_by`)**：`xiefeifeihu`
 - **发布流程状态 (`RELEASE_STATUS`)**：`MERGED_PENDING_TAG`（PR #13 已由 `xiefeifeihu` 合入 main（Merge Commit: `b1a2e55a1612b5f9833d844479116c2ddb8e2d1c`），尚未创建正式 `v3.0.1` Tag，待 main CI 全绿后由官方工作流自动签发）
 
 ## 5. 已完成事项 (`completed_items`)
-- [x] PR #13 merged into main at b1a2e55a1612b5f9833d844479116c2ddb8e2d1c by xiefeifeihu (head b373ca0d, candidate_commit beac5acd)
-- [x] Std-021-MAINLINE-SNAPSHOT-FIRST-PARENT-FIX: fixed F17 --first-parent mainline git snapshot verification and F18 post-merge PR #13 facts across Baseline, Handoff, and release_evidence
+- [x] PR #13 (Std-020 v3.0.1 release candidate, candidate_commit beac5acd) merged into main at b1a2e55a1612b5f9833d844479116c2ddb8e2d1c by xiefeifeihu; v3.0.0 remains IMMUTABLE; v3.0.1 status MERGED_PENDING_TAG
+- [x] Std-021 fix PR #14 (OPEN/DRAFT, branch fix/std-021-mainline-snapshot-first-parent, prior HEAD dd842204e7cb4b13002564baf845d54fbf3babf4) verified via Push Run 44667403675 & PR Run 44669050881 (Windows PASS, Ubuntu PASS, prior Full Tests 335 PASS)
+- [x] Std-021 P0 remediation (commit 29dce384): enforced live PR API merge provenance when allow_offline=False, JSON-vs-API cross-check, mandatory PR number & base.repo.full_name, and fail-closed API-down blocking across release_evidence, Baseline, and Handoff
 
 ## 6. 未完成事项 (`pending_items`)
-- [ ] Verify Std-021-MAINLINE-SNAPSHOT-FIRST-PARENT-FIX Draft PR dual-platform Push CI and PR CI runs PASS and await ChatGPT independent review
-- [ ] After Owner merges Std-021 fix PR into main and v3.0.1 Annotated Tag is minted by main CI on the new main merge commit, complete Std-020 R6-R8 closeout
+- [ ] Re-run full local test suite and verification gates after P0 remediation, package complete v3.0.1 Std-021 Acceptance ZIP, push to PR #14, and verify Windows & Ubuntu CI PASS on latest HEAD
+- [ ] Await ChatGPT independent re-review and Owner merge of PR #14 to main (b1a2e55a...) before official v3.0.1 Tag minting and Std-020 R6-R8 closeout
 
 ## 7. 阻断项 (`blockers`)
 - 当前无 `BLOCK` 阻断项。
