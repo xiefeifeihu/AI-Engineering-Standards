@@ -4,13 +4,18 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 
 ## [Unreleased]
 
-## [3.0.1] - 2026-11-18
+## [3.0.1] - 2026-11-20
 
-> RELEASE_STATUS=CANDIDATE | VERSION=3.0.1 | LATEST_RELEASED_TAG=v3.0.0 | BASE_MAIN_COMMIT=18c4ced02f72198e9556b7f159169294f1c399f0 | PR12=MERGED (`c94e4f2fc8b72717f0c72f879584119a020c94e2`, Main CI Run `44259959029` Windows/Ubuntu PASS)
+> RELEASE_STATUS=CANDIDATE | VERSION=3.0.1 | LATEST_RELEASED_TAG=v3.0.0 | BASE_MAIN_COMMIT=b1a2e55a1612b5f9833d844479116c2ddb8e2d1c | PR12=MERGED (`c94e4f2fc8b72717f0c72f879584119a020c94e2`, Main CI Run `44259959029` Windows/Ubuntu PASS) | PR13=MERGED (`b1a2e55a1612b5f9833d844479116c2ddb8e2d1c`, by `xiefeifeihu`)
 >
-> **v3.0.1 发布候选说明**：本版本归档已完成合入 `main`（PR #12）的 `Std-020` 消费端试点反馈与工具链安全/事务闭环整改；在正式发布 PR 合入 `main`、双平台 Main CI 全绿并由官方工作流签发不可变 Annotated Tag `v3.0.1` 前，当前官方正式已发布 Tag 仍为 `v3.0.0`。
+> **v3.0.1 发布候选说明**：本版本归档已完成合入 `main`（PR #12、PR #13）的 `Std-020` 消费端试点反馈与工具链安全/事务闭环整改，以及 `Std-021` 主干 Merge Commit 第一父链快照核验与 PR 合并后身份一致性修复；在修复 PR 合入 `main`、双平台 Main CI 全绿并由官方工作流签发不可变 Annotated Tag `v3.0.1` 前，当前官方正式已发布 Tag 仍为 `v3.0.0`。
 
 ### Added
+- **F17 / F18 主干 Merge Commit 第一父链快照核验与 PR 合并后身份一致性修复 (Std-021 / STD-034 / STD-035)**:
+  - **Main Merge Commit 第一父链快照验证修复**：在 `tools/generate_engineering_baseline.py` 与 `tools/generate_handoff.py` 的 `verify_git_snapshot_facts()` 中对 `remote_main_head` 历史快照查询补充 `--first-parent`，避免遍历 PR 第二父链而将特性分支提交误判为历史 `origin/main`；同时保持当前功能分支 `expected_capture_head` 语义不变。
+  - **Baseline / Handoff 合并后 PR 身份一致性修复**：在 `tools/generate_handoff.py` 中补齐与 Baseline 对齐的 `MERGED` PR 身份校验与渲染逻辑，强制校验 `verify_candidate_pr_merge_event()` 并输出 `candidate_pr_merge_commit`、`candidate_pr_merged_by` 与 `RELEASE_STATUS=MERGED_PENDING_TAG`；同步更新权威基线与跨会话交接文档以真实反映 PR #13 已合并状态。
+  - **真实 Merge Event 与后续 PR 事件验证**：在 `tools/release_evidence.py` 的 `verify_live_pr_identity()` 与 `verify_candidate_pr_section()` 中完善 `MERGED` 状态下的真实 GitHub PR API Merge Event 核验（`merged=true`、`merged_by=owner`、`base.ref=main`、`head.sha>=candidate_commit`、`merge_commit_sha` 一致性），严禁未创建 `v3.0.1` Tag 前输出 `RELEASED`，并在后续 `pull_request` CI 事件中继续严格拦截仍记录为 `OPEN` 的 `LIVE_PR_STATE_MISMATCH`。
+  - **新增回归测试**：在 `tests/test_consumer_integration_contract.py` 新增基于真实临时 Git 仓库与合并提交图（`M^1=A, M^2=B`）的 F17 正负向回归测试；在 `tests/test_baseline_sync_and_approval_governance.py` 新增覆盖 Baseline 与 Handoff 合并后 PR #13 身份、真实 Merge Event、后续 `pull_request` 事件、API 不可用降级/阻断及 `RELEASED` 禁令的 10 项 F18 回归测试。
 - **F12 回滚 Commit 级内容绑定与打包器路径安全/崩溃恢复/跨进程并发锁加固**:
   - `rollback_lock`、`promote_upgrade` 与 `verify_approval_event_provenance` 对 `STANDARDS_LOCK_PROMOTION` / `LOCK_ROLLBACK` 强制基于 `commit_bindings.consumer.candidate_commit`（`prefer_git=True`，严禁静默回退工作区未提交文件）重算并双边校验 `content_bindings`，同时核验 `consumer.repository == engineering-manifest.yaml project.repository` 与消费端 Commit 可读性（缺失或不可读返回 `NOT_VERIFIABLE`）。
   - `scripts/package_acceptance.py` 强制执行 `task_id` 白名单（`^[A-Za-z0-9_-]+$`）、严格 SemVer、解析后路径边界包含校验（`.artifacts/acceptance/` 与 `.artifacts/packages/`）与全链路符号链接拒绝（预检失败零写入）；新增按 `(task_id, version)` 隔离的跨进程 OS 互斥锁（`msvcrt.locking`/`fcntl.flock`）、持久化 `flush`+`os.fsync` 备份与仅含受控相对路径的原子事务日志，以及启动/独立恢复入口 `recover_incomplete_package_transactions()`（覆盖 8 类事务状态、真实子进程崩溃恢复、`RECOVERY_FAILED`/损坏/篡改日志 fail-closed 阻断与重复恢复幂等性）。

@@ -5861,5 +5861,306 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
         self.assertTrue(any("CANDIDATE_PR_MERGED_BY_UNAUTHORIZED" in e for e in errs_m_bad), errs_m_bad)
 
 
+class PostMergePrFactsAndFirstParentTests(unittest.TestCase):
+    """F18 regression tests for post-merge PR #13 candidate facts across Baseline and Handoff."""
+
+    def test_f18_post_merge_pr13_baseline_and_handoff_positive_and_negative_suite(self) -> None:
+        cand_sha = "beac5acd7f3cdb86478c4eb733353dde9bf27f58"
+        pr13_head = "b373ca0d11b7a2ec6753d256db83f2ed3acf2fb0"
+        pr13_merge = "b1a2e55a1612b5f9833d844479116c2ddb8e2d1c"
+        pr14_head = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+        with patch("tools.generate_engineering_baseline.query_remote_main_head", return_value=pr13_merge), \
+             patch("tools.generate_handoff.query_remote_main_head", return_value=pr13_merge):
+            self._run_f18_suite(cand_sha, pr13_head, pr13_merge, pr14_head)
+
+    def _run_f18_suite(self, cand_sha: str, pr13_head: str, pr13_merge: str, pr14_head: str) -> None:
+
+        merged_pr13_api = {
+            "number": 13,
+            "state": "closed",
+            "draft": False,
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "merge_commit_sha": pr13_merge,
+            "base": {"ref": "main", "repo": {"full_name": "xiefeifeihu/AI-Engineering-Standards"}},
+            "head": {"ref": "release/std-020-v3.0.1", "sha": pr13_head},
+        }
+        pr14_draft_event = {
+            "repository": {"full_name": "xiefeifeihu/AI-Engineering-Standards"},
+            "pull_request": {
+                "number": 14,
+                "state": "open",
+                "draft": True,
+                "base": {"ref": "main"},
+                "head": {"ref": "fix/std-021-mainline-snapshot-first-parent", "sha": pr14_head},
+            },
+        }
+        pr13_event = {
+            "repository": {"full_name": "xiefeifeihu/AI-Engineering-Standards"},
+            "pull_request": {
+                "number": 13,
+                "state": "closed",
+                "draft": False,
+                "base": {"ref": "main"},
+                "head": {"ref": "release/std-020-v3.0.1", "sha": pr13_head},
+            },
+        }
+
+        # 1 & 9. Baseline MERGED with valid Owner/Base=main & RELEASE_STATUS=MERGED_PENDING_TAG -> PASS
+        ok_b, errs_b, payload_b, md_b = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-20T02:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="MERGED",
+            candidate_pr_base="main",
+            candidate_pr_merge_event=merged_pr13_api,
+        )
+        self.assertTrue(ok_b, f"Baseline MERGED build failed: {errs_b}")
+        assert payload_b is not None and md_b is not None
+        cand_b_meta = payload_b["recent_ci_facts"]["details"]["candidate_pr"]
+        self.assertEqual(cand_b_meta["candidate_pr_status"], "MERGED")
+        self.assertEqual(cand_b_meta["pr_state"], "MERGED")
+        self.assertFalse(cand_b_meta["pr_draft"])
+        self.assertEqual(cand_b_meta["merge_commit_sha"], pr13_merge)
+        self.assertEqual(cand_b_meta["merged_by"], "xiefeifeihu")
+        self.assertEqual(cand_b_meta["release_status"], "MERGED_PENDING_TAG")
+        sec19_b, _ = extract_scope_content(md_b, "CURRENT_CANDIDATE_PR")
+        self.assertIn("`MERGED_PENDING_TAG`", sec19_b)
+        self.assertNotIn("`RELEASED`", sec19_b)
+
+        # 2 & 9. Handoff MERGED outputs Merge Commit, merged_by, and MERGED_PENDING_TAG -> PASS
+        ok_h, errs_h, _, md_h = build_handoff_payload(
+            project_root=ROOT,
+            task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+            version="3.0.1",
+            captured_at="2026-11-20T02:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="MERGED",
+            candidate_pr_base="main",
+            candidate_pr_merge_event=merged_pr13_api,
+            standards_root=ROOT,
+        )
+        self.assertTrue(ok_h, f"Handoff MERGED build failed: {errs_h}")
+        assert md_h is not None
+        sec45_h, _ = extract_scope_content(md_h, "CURRENT_CANDIDATE_PR")
+        self.assertIn(f"`{pr13_merge}`", sec45_h)
+        self.assertIn("`xiefeifeihu`", sec45_h)
+        self.assertIn("`MERGED_PENDING_TAG`", sec45_h)
+        self.assertNotIn("`RELEASED`", sec45_h)
+
+        # Verify BOTH Baseline and Handoff PASS under new follow-up pull_request event (PR #14 draft) AND PR #13 event
+        for ev_name, ev_payload in (("pr14_draft_followup", pr14_draft_event), ("pr13_event", pr13_event)):
+            with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}, clear=False):
+                errs_bv, det_bv, st_bv = verify_current_candidate_pr_facts(
+                    md_b,
+                    version_str="3.0.1",
+                    project_root=ROOT,
+                    verify_live_pr=True,
+                    require_live_pr=True,
+                    is_current_version_released=False,
+                    simulate_pr_data=merged_pr13_api,
+                    simulate_event_data=ev_payload,
+                    return_details=True,
+                )
+                self.assertEqual(errs_bv, [], f"Baseline {ev_name} failed: {errs_bv}")
+                self.assertEqual(st_bv, "PASS")
+                self.assertEqual(det_bv["merge_commit_sha"], pr13_merge)
+
+                errs_hv, det_hv, st_hv = verify_handoff_candidate_pr_facts(
+                    md_h,
+                    version_str="3.0.1",
+                    project_root=ROOT,
+                    verify_live_pr=True,
+                    require_live_pr=True,
+                    is_current_version_released=False,
+                    simulate_pr_data=merged_pr13_api,
+                    simulate_event_data=ev_payload,
+                    return_details=True,
+                )
+                self.assertEqual(errs_hv, [], f"Handoff {ev_name} failed: {errs_hv}")
+                self.assertEqual(st_hv, "PASS")
+                self.assertEqual(det_hv["merge_commit_sha"], pr13_merge)
+
+        # 3. PR #13 still recorded as OPEN -> pull_request event MUST detect LIVE_PR_STATE_MISMATCH
+        _, _, _, md_b_open = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-20T02:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="OPEN",
+            candidate_pr_draft=False,
+            candidate_pr_base="main",
+        )
+        _, _, _, md_h_open = build_handoff_payload(
+            project_root=ROOT,
+            task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+            version="3.0.1",
+            captured_at="2026-11-20T02:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=13,
+            candidate_pr_status="OPEN",
+            candidate_pr_draft=False,
+            candidate_pr_base="main",
+            standards_root=ROOT,
+        )
+        assert md_b_open is not None and md_h_open is not None
+        for ev_payload in (pr13_event, pr14_draft_event):
+            with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}, clear=False):
+                errs_bo, _, st_bo = verify_current_candidate_pr_facts(
+                    md_b_open, version_str="3.0.1", project_root=ROOT,
+                    verify_live_pr=True, require_live_pr=True,
+                    simulate_pr_data=merged_pr13_api, simulate_event_data=ev_payload, return_details=True,
+                )
+                self.assertEqual(st_bo, "FAIL")
+                self.assertTrue(any("LIVE_PR_STATE_MISMATCH" in e for e in errs_bo), errs_bo)
+
+                errs_ho, _, st_ho = verify_handoff_candidate_pr_facts(
+                    md_h_open, version_str="3.0.1", project_root=ROOT,
+                    verify_live_pr=True, require_live_pr=True,
+                    simulate_pr_data=merged_pr13_api, simulate_event_data=ev_payload, return_details=True,
+                )
+                self.assertEqual(st_ho, "FAIL")
+                self.assertTrue(any("LIVE_PR_STATE_MISMATCH" in e for e in errs_ho), errs_ho)
+
+        # 4. MERGED without Merge Commit -> BLOCK (both generation & verification, Baseline & Handoff)
+        ev_no_merge = dict(merged_pr13_api, merge_commit_sha="")
+        ok_b_nm, errs_b_nm, _, _ = build_engineering_baseline(
+            project_root=ROOT, standards_root=ROOT, observed_at="2026-11-20T02:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT, candidate_commit_override=cand_sha,
+            candidate_pr_number=13, candidate_pr_status="MERGED", candidate_pr_base="main",
+            candidate_pr_merge_event=ev_no_merge,
+        )
+        self.assertFalse(ok_b_nm)
+        self.assertTrue(any("CANDIDATE_PR_INVALID_MERGE_COMMIT" in e for e in errs_b_nm), errs_b_nm)
+
+        ok_h_nm, errs_h_nm, _, _ = build_handoff_payload(
+            project_root=ROOT, task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+            version="3.0.1", captured_at="2026-11-20T02:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT, candidate_commit_override=cand_sha,
+            candidate_pr_number=13, candidate_pr_status="MERGED", candidate_pr_base="main",
+            candidate_pr_merge_event=ev_no_merge, standards_root=ROOT,
+        )
+        self.assertFalse(ok_h_nm)
+        self.assertTrue(any("CANDIDATE_PR_INVALID_MERGE_COMMIT" in e for e in errs_h_nm), errs_h_nm)
+
+        md_b_no_mc = "\n".join(line for line in md_b.splitlines() if "candidate_pr_merge_commit" not in line)
+        md_h_no_mc = "\n".join(line for line in md_h.splitlines() if "candidate_pr_merge_commit" not in line)
+        self.assertTrue(any("CANDIDATE_PR_MISSING_FIELD" in e for e in verify_current_candidate_pr_facts(md_b_no_mc, "3.0.1", project_root=ROOT)))
+        self.assertTrue(any("CANDIDATE_PR_MISSING_FIELD" in e for e in verify_handoff_candidate_pr_facts(md_h_no_mc, "3.0.1", project_root=ROOT)))
+
+        # 5. merged_by not Owner -> BLOCK (Baseline & Handoff)
+        ev_bad_owner = dict(merged_pr13_api, merged_by={"login": "not-owner"})
+        ok_b_bo, errs_b_bo, _, _ = build_engineering_baseline(
+            project_root=ROOT, standards_root=ROOT, observed_at="2026-11-20T02:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT, candidate_commit_override=cand_sha,
+            candidate_pr_number=13, candidate_pr_status="MERGED", candidate_pr_base="main",
+            candidate_pr_merge_event=ev_bad_owner,
+        )
+        self.assertFalse(ok_b_bo)
+        self.assertTrue(any("CANDIDATE_PR_MERGED_BY_UNAUTHORIZED" in e for e in errs_b_bo), errs_b_bo)
+
+        ok_h_bo, errs_h_bo, _, _ = build_handoff_payload(
+            project_root=ROOT, task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+            version="3.0.1", captured_at="2026-11-20T02:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT, candidate_commit_override=cand_sha,
+            candidate_pr_number=13, candidate_pr_status="MERGED", candidate_pr_base="main",
+            candidate_pr_merge_event=ev_bad_owner, standards_root=ROOT,
+        )
+        self.assertFalse(ok_h_bo)
+        self.assertTrue(any("CANDIDATE_PR_MERGED_BY_UNAUTHORIZED" in e for e in errs_h_bo), errs_h_bo)
+
+        # 6. Base not main -> BLOCK (Baseline & Handoff)
+        ev_bad_base = dict(merged_pr13_api, base={"ref": "develop", "repo": {"full_name": "xiefeifeihu/AI-Engineering-Standards"}})
+        ok_b_bb, errs_b_bb, _, _ = build_engineering_baseline(
+            project_root=ROOT, standards_root=ROOT, observed_at="2026-11-20T02:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT, candidate_commit_override=cand_sha,
+            candidate_pr_number=13, candidate_pr_status="MERGED", candidate_pr_base="main",
+            candidate_pr_merge_event=ev_bad_base,
+        )
+        self.assertFalse(ok_b_bb)
+        self.assertTrue(any("CANDIDATE_PR_BASE_NOT_MAIN" in e for e in errs_b_bb), errs_b_bb)
+
+        ok_h_bb, errs_h_bb, _, _ = build_handoff_payload(
+            project_root=ROOT, task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+            version="3.0.1", captured_at="2026-11-20T02:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT, candidate_commit_override=cand_sha,
+            candidate_pr_number=13, candidate_pr_status="MERGED", candidate_pr_base="main",
+            candidate_pr_merge_event=ev_bad_base, standards_root=ROOT,
+        )
+        self.assertFalse(ok_h_bb)
+        self.assertTrue(any("CANDIDATE_PR_BASE_NOT_MAIN" in e for e in errs_h_bb), errs_h_bb)
+
+        # 7. Forged Merge Event (merged=False, or tampered merge commit SHA in doc vs live PR API) -> BLOCK
+        ev_forged = dict(merged_pr13_api, merged=False)
+        ok_h_fg, errs_h_fg, _, _ = build_handoff_payload(
+            project_root=ROOT, task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+            version="3.0.1", captured_at="2026-11-20T02:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT, candidate_commit_override=cand_sha,
+            candidate_pr_number=13, candidate_pr_status="MERGED", candidate_pr_base="main",
+            candidate_pr_merge_event=ev_forged, standards_root=ROOT,
+        )
+        self.assertFalse(ok_h_fg)
+        self.assertTrue(any("CANDIDATE_PR_NOT_MERGED" in e for e in errs_h_fg), errs_h_fg)
+
+        fake_sha = "f" * 40
+        errs_b_drift = verify_current_candidate_pr_facts(
+            md_b.replace(pr13_merge, fake_sha), "3.0.1", project_root=ROOT,
+            verify_live_pr=True, require_live_pr=True, simulate_pr_data=merged_pr13_api,
+        )
+        self.assertTrue(any("CANDIDATE_PR_MERGE_COMMIT_MISMATCH" in e for e in errs_b_drift), errs_b_drift)
+        errs_h_drift = verify_handoff_candidate_pr_facts(
+            md_h.replace(pr13_merge, fake_sha), "3.0.1", project_root=ROOT,
+            verify_live_pr=True, require_live_pr=True, simulate_pr_data=merged_pr13_api,
+        )
+        self.assertTrue(any("CANDIDATE_PR_MERGE_COMMIT_MISMATCH" in e for e in errs_h_drift), errs_h_drift)
+
+        # 8. PR API unavailable -> NOT_VERIFIABLE offline (and BLOCK when require_live_pr=True or generating MERGED online)
+        errs_b_off, _, st_b_off = verify_current_candidate_pr_facts(
+            md_b, "3.0.1", project_root=ROOT, verify_live_pr=True, require_live_pr=False,
+            simulate_pr_error="API unreachable", return_details=True,
+        )
+        self.assertEqual(st_b_off, "NOT_VERIFIABLE")
+        self.assertEqual(errs_b_off, [])
+
+        errs_h_off, _, st_h_off = verify_handoff_candidate_pr_facts(
+            md_h, "3.0.1", project_root=ROOT, verify_live_pr=True, require_live_pr=False,
+            simulate_pr_error="API unreachable", return_details=True,
+        )
+        self.assertEqual(st_h_off, "NOT_VERIFIABLE")
+        self.assertEqual(errs_h_off, [])
+
+        with patch("tools.generate_handoff._query_pr_via_api", return_value=(False, None, "offline")), \
+             patch("tools.generate_handoff._query_pr_via_gh", return_value=(False, None, "offline")):
+            ok_h_api_down, errs_h_api_down, _, _ = build_handoff_payload(
+                project_root=ROOT, task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+                version="3.0.1", captured_at="2026-11-20T02:00:00Z",
+                source_commit_override=PROJECT_SOURCE_COMMIT, candidate_commit_override=cand_sha,
+                candidate_pr_number=13, candidate_pr_status="MERGED", candidate_pr_base="main",
+                standards_root=ROOT, allow_offline=False,
+            )
+            self.assertFalse(ok_h_api_down)
+            self.assertTrue(any("CANDIDATE_PR_MERGE_NOT_VERIFIED" in e for e in errs_h_api_down), errs_h_api_down)
+
+        # 10. Before v3.0.1 Tag exists, RELEASE_STATUS=RELEASED is forbidden in both Baseline & Handoff
+        md_b_fake_rel = md_b.replace("`MERGED_PENDING_TAG`", "`RELEASED`")
+        md_h_fake_rel = md_h.replace("`MERGED_PENDING_TAG`", "`RELEASED`")
+        errs_b_rel = verify_current_candidate_pr_facts(
+            md_b_fake_rel, "3.0.1", project_root=ROOT, is_current_version_released=False
+        )
+        self.assertTrue(any("CANDIDATE_PR_RELEASE_STATUS_MISMATCH" in e for e in errs_b_rel), errs_b_rel)
+        errs_h_rel = verify_handoff_candidate_pr_facts(
+            md_h_fake_rel, "3.0.1", project_root=ROOT, is_current_version_released=False
+        )
+        self.assertTrue(any("CANDIDATE_PR_RELEASE_STATUS_MISMATCH" in e for e in errs_h_rel), errs_h_rel)
+
+
 if __name__ == "__main__":
     unittest.main()

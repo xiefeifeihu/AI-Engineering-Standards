@@ -23,8 +23,11 @@ if str(ROOT_DIR) not in sys.path:
 
 from tools.validate_approval_contract import compute_canonical_document_sha256
 from tools.release_evidence import (
+    _query_pr_via_api,
+    _query_pr_via_gh,
     load_release_evidence,
     resolve_release_evidence_path,
+    verify_candidate_pr_merge_event,
     verify_candidate_pr_section,
     verify_commit_ancestry,
 )
@@ -386,11 +389,11 @@ def verify_git_snapshot_facts(
                 )
 
         # origin/main may advance after the snapshot (for example, when this PR merges).
-        # Compare the recorded value with origin/main as it existed at captured_at.
+        # Follow first-parent mainline history so PR branch commits are never misattributed to origin/main.
         if remote_main_head != "NOT_VERIFIABLE" and captured_at:
             rc, expected_remote_at_capture = run_git(
                 project_root,
-                ["log", "-1", "--format=%H", f"--before={captured_at}", remote_main_head],
+                ["log", "-1", "--first-parent", "--format=%H", f"--before={captured_at}", remote_main_head],
                 timeout=8,
             )
             if rc != 0 or not re.fullmatch(r"[0-9a-f]{40}", expected_remote_at_capture):
@@ -691,6 +694,7 @@ def verify_handoff_candidate_pr_facts(
     expected_facts: Optional[Dict[str, Any]] = None,
     verify_live_pr: bool = False,
     require_live_pr: bool = False,
+    is_current_version_released: bool = False,
     simulate_pr_data: Optional[Dict[str, Any]] = None,
     simulate_pr_error: Optional[str] = None,
     simulate_event_data: Optional[Dict[str, Any]] = None,
@@ -707,6 +711,7 @@ def verify_handoff_candidate_pr_facts(
         expected_facts=expected_facts,
         verify_live_pr=verify_live_pr,
         require_live_pr=require_live_pr,
+        is_current_version_released=is_current_version_released,
         simulate_pr_data=simulate_pr_data,
         simulate_pr_error=simulate_pr_error,
         simulate_event_data=simulate_event_data,
@@ -747,12 +752,15 @@ def build_handoff_payload(
     candidate_pr_head: Optional[str] = None,
     candidate_pr_base: Optional[str] = None,
     candidate_pr_draft: Optional[bool] = None,
+    candidate_pr_merge_event: Optional[Dict[str, Any]] = None,
+    expected_repo_owner: Optional[str] = None,
     pending_verifications: Optional[str] = None,
     release_evidence_path: Optional[str] = None,
     release_evidence: Optional[Dict[str, Any]] = None,
     snapshot_evidence_path: Optional[str] = None,
     final_evidence_path: Optional[str] = None,
     standards_root: Optional[Path] = None,
+    allow_offline: bool = True,
 ) -> Tuple[bool, List[str], Optional[Dict[str, Any]], Optional[str]]:
     errors: List[str] = []
     project_root = project_root.resolve()
@@ -855,11 +863,22 @@ def build_handoff_payload(
     eff_cand_pr_number: Optional[int] = (
         candidate_pr_number if candidate_pr_number is not None else pr_number
     )
+    if eff_cand_pr_number is not None and int(eff_cand_pr_number) < 1:
+        errors.append(
+            f"CANDIDATE_PR_INVALID_NUMBER: candidate_pr_number must be >= 1 (got '{eff_cand_pr_number}')"
+        )
     raw_pr_status = candidate_pr_status if candidate_pr_status is not None else pr_status
-    effective_pr_status = str(raw_pr_status).strip().upper() if raw_pr_status is not None else "DRAFT"
+    if raw_pr_status is not None:
+        effective_pr_status = str(raw_pr_status).strip().upper()
+        if effective_pr_status not in ("DRAFT", "OPEN", "MERGED", "CLOSED"):
+            errors.append(
+                f"CANDIDATE_PR_INVALID_STATUS: candidate_pr_status '{effective_pr_status}' must be DRAFT, OPEN, MERGED, or CLOSED"
+            )
+    else:
+        effective_pr_status = "DRAFT"
     eff_cand_pr_base = str(candidate_pr_base).strip() if candidate_pr_base is not None else "main"
     if eff_cand_pr_base != "main":
-        errors.append(f"HANDOFF_CANDIDATE_PR_BASE_NOT_MAIN: candidate_pr_base '{eff_cand_pr_base}' must be 'main'")
+        errors.append(f"CANDIDATE_PR_BASE_NOT_MAIN: candidate_pr_base '{eff_cand_pr_base}' must be 'main'")
 
     code_candidate_commit = (
         candidate_commit_override
@@ -885,10 +904,71 @@ def build_handoff_payload(
             code_candidate_commit,
             candidate_pr_head,
             repository=repository,
-            allow_remote_compare=True,
+            allow_remote_compare=not allow_offline,
         )
         if anc_st == "FAIL":
             errors.extend(anc_errs)
+        elif anc_st == "NOT_VERIFIABLE" and not allow_offline:
+            errors.extend(anc_errs)
+
+    historical_merge_commits: set[str] = set()
+    if not is_current_version_released:
+        if evidence_data:
+            for hk in ("main_head", "peeled_commit"):
+                hv = str(evidence_data.get(hk) or "").strip()
+                if re.fullmatch(r"[0-9a-f]{40}", hv):
+                    historical_merge_commits.add(hv)
+        for hist_name in ("v3.0.0-reissue.json", "std018-current-snapshot.json", "std019-final-release.json"):
+            hp = project_root / "docs" / "release-evidence" / hist_name
+            if hp.is_file():
+                try:
+                    hdata = json.loads(hp.read_text(encoding="utf-8"))
+                    for hk in ("main_head", "peeled_commit"):
+                        hv = str(hdata.get(hk) or "").strip()
+                        if re.fullmatch(r"[0-9a-f]{40}", hv):
+                            historical_merge_commits.add(hv)
+                except Exception:
+                    pass
+
+    verified_merge_commit: Optional[str] = None
+    verified_merged_by: Optional[str] = None
+    eff_owner = (expected_repo_owner or repository.split("/")[0]).strip()
+    if effective_pr_status == "MERGED":
+        if eff_cand_pr_number is None:
+            errors.append(
+                "CANDIDATE_PR_NUMBER_REQUIRED_FOR_MERGED: candidate_pr_number is required to verify MERGED status"
+            )
+        else:
+            pr_ev_obj = candidate_pr_merge_event
+            if pr_ev_obj is None and not allow_offline:
+                ok_api, api_pr_data, _ = _query_pr_via_api(repository, eff_cand_pr_number)
+                if ok_api and api_pr_data:
+                    pr_ev_obj = api_pr_data
+                else:
+                    ok_gh, gh_pr_data, _ = _query_pr_via_gh(repository, eff_cand_pr_number)
+                    if ok_gh and gh_pr_data:
+                        pr_ev_obj = gh_pr_data
+            if pr_ev_obj is None:
+                errors.append(
+                    "CANDIDATE_PR_MERGE_NOT_VERIFIED: Cannot mark current candidate PR as MERGED without verified GitHub PR merge event (merged=true, merged_by=owner, base=main, head.sha>=candidate_commit)"
+                )
+            else:
+                m_ok, m_errs, m_sha, m_by = verify_candidate_pr_merge_event(
+                    pr_event=pr_ev_obj,
+                    expected_pr_number=eff_cand_pr_number,
+                    expected_candidate_commit=code_candidate_commit,
+                    expected_owner=eff_owner,
+                    expected_base="main",
+                    forbidden_historical_merge_commits=historical_merge_commits,
+                    project_root=project_root,
+                    repository=repository,
+                )
+                if not m_ok:
+                    errors.extend(m_errs)
+                else:
+                    verified_merge_commit = m_sha
+                    verified_merged_by = m_by
+
     effective_ci_commit = (
         ci_commit
         or last_verified_ci_commit
@@ -896,6 +976,10 @@ def build_handoff_payload(
     )
 
     if effective_pr_status == "DRAFT":
+        if candidate_pr_draft is False:
+            errors.append(
+                "CANDIDATE_PR_DRAFT_CONFLICT: candidate_pr_status='DRAFT' conflicts with candidate_pr_draft=False"
+            )
         pr_state_str = "OPEN"
         pr_draft_bool = True
         cand_release_status = "CANDIDATE"
@@ -1385,8 +1469,21 @@ def build_handoff_payload(
                 "- **实时 CI 运行记录方式 (`ci_runtime_record`)**：`GITHUB_STEP_SUMMARY`（实时 PR HEAD 与 CI Run ID 由 CI Runtime 与 Step Summary 记录）",
                 f"- **状态快照观测时间 (`candidate_observed_at`)**：`{now_iso}`",
                 f"- **当前最新已发布正式 Tag (`LATEST_RELEASED_TAG`)**：`{_h_019_ev['release_tag']}`",
-                f"- **发布流程状态 (`RELEASE_STATUS`)**：`{cand_release_status}`（待 {pr_label} 经独立审查与 Owner 批准合入 main 后由 main CI 自动签发 v{resolved_version} Tag）",
             ]
+            if effective_pr_status == "MERGED" and verified_merge_commit and verified_merged_by:
+                sec45_lines.extend([
+                    f"- **当前候选 PR Merge Commit (`candidate_pr_merge_commit`)**：`{verified_merge_commit}`",
+                    f"- **当前候选 PR 合并者 (`candidate_pr_merged_by`)**：`{verified_merged_by}`",
+                ])
+                if is_current_version_released:
+                    rel_desc = f"{pr_label} 已由 `{verified_merged_by}` 合入 main（Merge Commit: `{verified_merge_commit}`），正式 Tag `v{resolved_version}` 已签发"
+                else:
+                    rel_desc = f"{pr_label} 已由 `{verified_merged_by}` 合入 main（Merge Commit: `{verified_merge_commit}`），尚未创建正式 `v{resolved_version}` Tag，待 main CI 全绿后由官方工作流自动签发"
+            else:
+                rel_desc = f"待 {pr_label} 经独立审查与 Owner 批准合入 main 后由 main CI 自动签发 v{resolved_version} Tag"
+            sec45_lines.append(
+                f"- **发布流程状态 (`RELEASE_STATUS`)**：`{cand_release_status}`（{rel_desc}）"
+            )
             md_lines.extend(sec45_lines)
     else:
         md_lines.extend([
@@ -1578,6 +1675,7 @@ def main() -> None:
     parser.add_argument("--candidate-pr-head", default=None, help="Current candidate PR HEAD commit SHA")
     parser.add_argument("--candidate-pr-base", default=None, help="Current candidate PR base branch (must be 'main')")
     parser.add_argument("--candidate-pr-draft", choices=["true", "false"], default=None, help="Current candidate PR draft flag (true/false)")
+    parser.add_argument("--candidate-pr-merge-event", default=None, help="Path to GitHub PR API JSON proving verified merge event")
     parser.add_argument("--release-flow-status", default="IN_PROGRESS", help="Release flow status")
     parser.add_argument("--old-tag-deleted", default=None, help="Expected old tag deleted state (true/false)")
     parser.add_argument("--pending-verifications", default=None, help="Pending verifications statement")
@@ -1639,6 +1737,20 @@ def main() -> None:
     candidate_pr_draft_val: Optional[bool] = (
         (args.candidate_pr_draft == "true") if args.candidate_pr_draft is not None else None
     )
+    candidate_pr_merge_event_obj: Optional[Dict[str, Any]] = None
+    if args.candidate_pr_merge_event:
+        me_path = Path(args.candidate_pr_merge_event)
+        if not me_path.is_absolute():
+            me_path = (project_root / me_path).resolve()
+        try:
+            candidate_pr_merge_event_obj = json.loads(me_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"[FAIL] Failed to load --candidate-pr-merge-event '{me_path}': {exc}")
+            sys.exit(1)
+    cli_allow_offline = not bool(
+        args.require_live_pr
+        or (not args.verify_only and str(args.candidate_pr_status or args.pr_status or "").strip().upper() == "MERGED")
+    )
     effective_captured_at = args.captured_at
     if effective_captured_at is None and not args.verify_only:
         effective_captured_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1667,6 +1779,7 @@ def main() -> None:
         candidate_pr_head=args.candidate_pr_head,
         candidate_pr_base=args.candidate_pr_base,
         candidate_pr_draft=candidate_pr_draft_val,
+        candidate_pr_merge_event=candidate_pr_merge_event_obj,
         pending_verifications=args.pending_verifications,
         test_results_override=test_override,
         ci_run_override=ci_override,
@@ -1675,6 +1788,7 @@ def main() -> None:
         snapshot_evidence_path=args.snapshot_evidence,
         final_evidence_path=args.final_evidence,
         standards_root=standards_root,
+        allow_offline=cli_allow_offline,
     )
     if not ok or payload is None or md_text is None:
         print(f"[FAIL] Cross-session handoff generation blocked ({len(errors)} issues):")
@@ -1908,6 +2022,7 @@ def main() -> None:
                 expected_facts=exp_cand_facts or None,
                 verify_live_pr=True,
                 require_live_pr=bool(args.require_live_pr or os.environ.get("GITHUB_ACTIONS") == "true"),
+                is_current_version_released=active_ev_is_current_released,
                 return_details=True,
             )
             mismatches.extend([f"[CURRENT_CANDIDATE_PR] {m}" for m in cand_errs])
@@ -1963,6 +2078,7 @@ def main() -> None:
         candidate_pr_head=args.candidate_pr_head,
         candidate_pr_base=args.candidate_pr_base,
         candidate_pr_draft=candidate_pr_draft_val,
+        candidate_pr_merge_event=candidate_pr_merge_event_obj,
         pending_verifications=args.pending_verifications,
         test_results_override=test_override,
         ci_run_override=ci_override,
@@ -1971,6 +2087,7 @@ def main() -> None:
         snapshot_evidence_path=args.snapshot_evidence,
         final_evidence_path=args.final_evidence,
         standards_root=standards_root,
+        allow_offline=cli_allow_offline,
     )
     if not ok:
         print(f"[FAIL] Failed to write handoff files ({len(errors)} issues):")
