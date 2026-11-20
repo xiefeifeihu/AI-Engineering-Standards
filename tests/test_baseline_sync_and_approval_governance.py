@@ -5284,7 +5284,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             "number": 13,
             "merged": True,
             "merged_by": {"login": "coding-agent-bot"},
-            "base": {"ref": "main"},
+            "base": {"ref": "main", "repo": {"full_name": "xiefeifeihu/AI-Engineering-Standards"}},
             "head": {"sha": head_sha},
             "merge_commit_sha": merge_sha,
         }
@@ -5325,7 +5325,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             "number": 13,
             "merged": True,
             "merged_by": {"login": "xiefeifeihu"},
-            "base": {"ref": "main"},
+            "base": {"ref": "main", "repo": {"full_name": "xiefeifeihu/AI-Engineering-Standards"}},
             "head": {"sha": head_sha},
             "merge_commit_sha": merge_sha,
         }
@@ -6160,6 +6160,120 @@ class PostMergePrFactsAndFirstParentTests(unittest.TestCase):
             md_h_fake_rel, "3.0.1", project_root=ROOT, is_current_version_released=False
         )
         self.assertTrue(any("CANDIDATE_PR_RELEASE_STATUS_MISMATCH" in e for e in errs_h_rel), errs_h_rel)
+
+    def test_p0_merge_event_security_chain_and_all_negative_cases(self) -> None:
+        """P0: Enforce strict live PR API merge provenance & JSON cross-check across Baseline and Handoff."""
+        cand_sha = "beac5acd7f3cdb86478c4eb733353dde9bf27f58"
+        pr13_head = "b373ca0d11b7a2ec6753d256db83f2ed3acf2fb0"
+        pr13_merge = "b1a2e55a1612b5f9833d844479116c2ddb8e2d1c"
+        valid_api_pr13 = {
+            "number": 13,
+            "state": "closed",
+            "draft": False,
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "merge_commit_sha": pr13_merge,
+            "base": {"ref": "main", "repo": {"full_name": "xiefeifeihu/AI-Engineering-Standards"}},
+            "head": {"ref": "release/std-020-v3.0.1", "sha": pr13_head},
+        }
+
+        def call_both(
+            *,
+            pr_event=None,
+            allow_offline: bool = True,
+        ):
+            ok_b, errs_b, _, _ = build_engineering_baseline(
+                project_root=ROOT,
+                standards_root=ROOT,
+                observed_at="2026-11-20T08:00:00Z",
+                source_commit_override=PROJECT_SOURCE_COMMIT,
+                candidate_commit_override=cand_sha,
+                candidate_pr_number=13,
+                candidate_pr_status="MERGED",
+                candidate_pr_base="main",
+                candidate_pr_merge_event=pr_event,
+                allow_offline=allow_offline,
+            )
+            ok_h, errs_h, _, _ = build_handoff_payload(
+                project_root=ROOT,
+                task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+                version="3.0.1",
+                captured_at="2026-11-20T08:00:00Z",
+                source_commit_override=PROJECT_SOURCE_COMMIT,
+                candidate_commit_override=cand_sha,
+                candidate_pr_number=13,
+                candidate_pr_status="MERGED",
+                candidate_pr_base="main",
+                candidate_pr_merge_event=pr_event,
+                standards_root=ROOT,
+                allow_offline=allow_offline,
+            )
+            return (ok_b, errs_b), (ok_h, errs_h)
+
+        with patch("tools.generate_engineering_baseline.query_remote_main_head", return_value=pr13_merge), \
+             patch("tools.generate_handoff.query_remote_main_head", return_value=pr13_merge):
+
+            # Negative cases 1-6 (both offline JSON validation and online live API payload validation)
+            ev_missing_num = dict(valid_api_pr13)
+            del ev_missing_num["number"]
+            ev_wrong_num = dict(valid_api_pr13, number=99)
+            ev_wrong_repo = dict(valid_api_pr13, base={"ref": "main", "repo": {"full_name": "attacker/AI-Engineering-Standards"}})
+            ev_missing_repo = dict(valid_api_pr13, base={"ref": "main"})
+            ev_not_merged = dict(valid_api_pr13, merged=False)
+            ev_wrong_owner = dict(valid_api_pr13, merged_by={"login": "someone-else"})
+            ev_missing_merge_sha = dict(valid_api_pr13)
+            del ev_missing_merge_sha["merge_commit_sha"]
+
+            negative_cases = [
+                ("number_missing", ev_missing_num, "CANDIDATE_PR_NUMBER_MISSING"),
+                ("number_mismatch", ev_wrong_num, "CANDIDATE_PR_NUMBER_MISMATCH"),
+                ("base_repo_mismatch", ev_wrong_repo, "CANDIDATE_PR_REPOSITORY_MISMATCH"),
+                ("base_repo_missing", ev_missing_repo, "CANDIDATE_PR_BASE_REPO_MISSING"),
+                ("merged_false", ev_not_merged, "CANDIDATE_PR_NOT_MERGED"),
+                ("merged_by_non_owner", ev_wrong_owner, "CANDIDATE_PR_MERGED_BY_UNAUTHORIZED"),
+                ("merge_commit_sha_missing", ev_missing_merge_sha, "CANDIDATE_PR_INVALID_MERGE_COMMIT"),
+            ]
+            for label, bad_ev, expected_code in negative_cases:
+                with self.subTest(case=label):
+                    (ok_b, errs_b), (ok_h, errs_h) = call_both(pr_event=bad_ev, allow_offline=True)
+                    self.assertFalse(ok_b, f"Baseline {label} should block")
+                    self.assertTrue(any(expected_code in e for e in errs_b), f"Baseline {label}: {errs_b}")
+                    self.assertFalse(ok_h, f"Handoff {label} should block")
+                    self.assertTrue(any(expected_code in e for e in errs_h), f"Handoff {label}: {errs_h}")
+
+            # Negative case 7: allow_offline=False & API unavailable, even with forged/valid JSON -> MUST FAIL-CLOSED
+            with patch("tools.generate_engineering_baseline._query_pr_via_api", return_value=(False, None, "offline")), \
+                 patch("tools.generate_engineering_baseline._query_pr_via_gh", return_value=(False, None, "offline")), \
+                 patch("tools.generate_handoff._query_pr_via_api", return_value=(False, None, "offline")), \
+                 patch("tools.generate_handoff._query_pr_via_gh", return_value=(False, None, "offline")):
+                (ok_b_down, errs_b_down), (ok_h_down, errs_h_down) = call_both(
+                    pr_event=valid_api_pr13, allow_offline=False
+                )
+                self.assertFalse(ok_b_down)
+                self.assertTrue(any("CANDIDATE_PR_MERGE_LIVE_API_BLOCKED" in e for e in errs_b_down), errs_b_down)
+                self.assertFalse(ok_h_down)
+                self.assertTrue(any("CANDIDATE_PR_MERGE_LIVE_API_BLOCKED" in e for e in errs_h_down), errs_h_down)
+
+            # Negative case 8: allow_offline=False, live API returns PR #13, but supplied JSON diverges -> MUST BLOCK
+            mismatched_json = dict(valid_api_pr13, merge_commit_sha="f" * 40)
+            with patch("tools.generate_engineering_baseline._query_pr_via_api", return_value=(True, valid_api_pr13, "")), \
+                 patch("tools.generate_handoff._query_pr_via_api", return_value=(True, valid_api_pr13, "")):
+                (ok_b_mm, errs_b_mm), (ok_h_mm, errs_h_mm) = call_both(
+                    pr_event=mismatched_json, allow_offline=False
+                )
+                self.assertFalse(ok_b_mm)
+                self.assertTrue(any("CANDIDATE_PR_MERGE_EVENT_API_MISMATCH" in e for e in errs_b_mm), errs_b_mm)
+                self.assertFalse(ok_h_mm)
+                self.assertTrue(any("CANDIDATE_PR_MERGE_EVENT_API_MISMATCH" in e for e in errs_h_mm), errs_h_mm)
+
+            # Positive: allow_offline=False, live API returns PR #13 and supplied JSON matches -> PASS
+            with patch("tools.generate_engineering_baseline._query_pr_via_api", return_value=(True, valid_api_pr13, "")), \
+                 patch("tools.generate_handoff._query_pr_via_api", return_value=(True, valid_api_pr13, "")):
+                (ok_b_ok, errs_b_ok), (ok_h_ok, errs_h_ok) = call_both(
+                    pr_event=valid_api_pr13, allow_offline=False
+                )
+                self.assertTrue(ok_b_ok, errs_b_ok)
+                self.assertTrue(ok_h_ok, errs_h_ok)
 
 
 if __name__ == "__main__":

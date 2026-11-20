@@ -26,6 +26,7 @@ from tools.release_evidence import (
     _query_pr_via_api,
     _query_pr_via_gh,
     load_release_evidence,
+    resolve_and_verify_candidate_pr_merge_event,
     resolve_release_evidence_path,
     verify_candidate_pr_merge_event,
     verify_candidate_pr_section,
@@ -939,35 +940,24 @@ def build_handoff_payload(
                 "CANDIDATE_PR_NUMBER_REQUIRED_FOR_MERGED: candidate_pr_number is required to verify MERGED status"
             )
         else:
-            pr_ev_obj = candidate_pr_merge_event
-            if pr_ev_obj is None and not allow_offline:
-                ok_api, api_pr_data, _ = _query_pr_via_api(repository, eff_cand_pr_number)
-                if ok_api and api_pr_data:
-                    pr_ev_obj = api_pr_data
-                else:
-                    ok_gh, gh_pr_data, _ = _query_pr_via_gh(repository, eff_cand_pr_number)
-                    if ok_gh and gh_pr_data:
-                        pr_ev_obj = gh_pr_data
-            if pr_ev_obj is None:
-                errors.append(
-                    "CANDIDATE_PR_MERGE_NOT_VERIFIED: Cannot mark current candidate PR as MERGED without verified GitHub PR merge event (merged=true, merged_by=owner, base=main, head.sha>=candidate_commit)"
-                )
+            m_ok, m_errs, m_sha, m_by = resolve_and_verify_candidate_pr_merge_event(
+                repository=repository,
+                candidate_pr_number=eff_cand_pr_number,
+                candidate_commit=code_candidate_commit,
+                expected_owner=eff_owner,
+                expected_base="main",
+                forbidden_historical_merge_commits=historical_merge_commits,
+                project_root=project_root,
+                candidate_pr_merge_event=candidate_pr_merge_event,
+                allow_offline=allow_offline,
+                query_api_fn=_query_pr_via_api,
+                query_gh_fn=_query_pr_via_gh,
+            )
+            if not m_ok:
+                errors.extend(m_errs)
             else:
-                m_ok, m_errs, m_sha, m_by = verify_candidate_pr_merge_event(
-                    pr_event=pr_ev_obj,
-                    expected_pr_number=eff_cand_pr_number,
-                    expected_candidate_commit=code_candidate_commit,
-                    expected_owner=eff_owner,
-                    expected_base="main",
-                    forbidden_historical_merge_commits=historical_merge_commits,
-                    project_root=project_root,
-                    repository=repository,
-                )
-                if not m_ok:
-                    errors.extend(m_errs)
-                else:
-                    verified_merge_commit = m_sha
-                    verified_merged_by = m_by
+                verified_merge_commit = m_sha
+                verified_merged_by = m_by
 
     effective_ci_commit = (
         ci_commit
