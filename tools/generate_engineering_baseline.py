@@ -25,7 +25,16 @@ from tools.validate_approval_contract import (
     compute_canonical_document_sha256,
     compute_markdown_body_sha256,
 )
-from tools.release_evidence import load_release_evidence, resolve_release_evidence_path
+from tools.release_evidence import (
+    _query_pr_via_api,
+    _query_pr_via_gh,
+    load_release_evidence,
+    resolve_release_evidence_path,
+    verify_candidate_pr_merge_event,
+    verify_candidate_pr_section,
+    verify_commit_ancestry,
+    verify_live_pr_identity,
+)
 
 REQUIRED_SOURCE_TYPES: Tuple[str, ...] = (
     "PROJECT_BLUEPRINT",
@@ -291,15 +300,27 @@ def verify_git_snapshot_facts(
         identity_text = identity_match.group(0)
 
         if project_id == "ai-engineering-standards":
-            scope_text, scope_errors = extract_scope_content(
-                content, "Std-019 正式发布收口事实与治理追踪"
+            sec9_match = re.search(
+                r"## 9\. 最近 CI 事实.*?(?=\n### |\n## 10\.|\Z)",
+                content,
+                re.S,
             )
-            if scope_errors:
-                return [f"BASELINE_GIT_SNAPSHOT_CAPTURE_SCOPE_INVALID: {e}" for e in scope_errors]
+            sec9_head = sec9_match.group(0) if sec9_match else ""
+            scope_text = sec9_head
             captured_matches = re.findall(
                 r"Git 快照观测时间.*?\x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
-                scope_text,
+                sec9_head,
             )
+            if not captured_matches:
+                scope_text, scope_errors = extract_scope_content(
+                    content, "Std-019 正式发布收口事实与治理追踪"
+                )
+                if scope_errors:
+                    return [f"BASELINE_GIT_SNAPSHOT_CAPTURE_SCOPE_INVALID: {e}" for e in scope_errors]
+                captured_matches = re.findall(
+                    r"Git 快照观测时间.*?\x60(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\x60",
+                    scope_text,
+                )
             remote_pattern = r"远端 main \(\x60remote_main_head\x60\)\*\*：\x60([0-9a-f]{40})\x60"
         else:
             scope_text = ""
@@ -745,6 +766,41 @@ def verify_baseline_semantic_facts(
     return mismatches
 
 
+def verify_current_candidate_pr_facts(
+    content: str,
+    version_str: str,
+    repository: str = "xiefeifeihu/AI-Engineering-Standards",
+    project_root: Optional[Path] = None,
+    historical_merge_commits: Optional[set[str]] = None,
+    historical_candidate_commits: Optional[set[str]] = None,
+    expected_facts: Optional[Dict[str, Any]] = None,
+    verify_live_pr: bool = False,
+    require_live_pr: bool = False,
+    simulate_pr_data: Optional[Dict[str, Any]] = None,
+    simulate_pr_error: Optional[str] = None,
+    simulate_event_data: Optional[Dict[str, Any]] = None,
+    return_details: bool = False,
+):
+    """Delegate CURRENT_CANDIDATE_PR verification to the shared F13+F14 contract in release_evidence."""
+    errs, live_details, live_status = verify_candidate_pr_section(
+        content=content,
+        version_str=version_str,
+        repository=repository,
+        project_root=project_root,
+        historical_merge_commits=historical_merge_commits,
+        historical_candidate_commits=historical_candidate_commits,
+        expected_facts=expected_facts,
+        verify_live_pr=verify_live_pr,
+        require_live_pr=require_live_pr,
+        simulate_pr_data=simulate_pr_data,
+        simulate_pr_error=simulate_pr_error,
+        simulate_event_data=simulate_event_data,
+    )
+    if return_details:
+        return errs, live_details, live_status
+    return errs
+
+
 def build_engineering_baseline(
     project_root: Path,
     standards_root: Optional[Path] = None,
@@ -759,8 +815,15 @@ def build_engineering_baseline(
     push_run_id: Optional[str] = None,
     pr_run_id: Optional[str] = None,
     test_count: Optional[int] = None,
-    pr_status: str = "DRAFT",
-    pr_number: int = 9,
+    pr_status: Optional[str] = None,
+    pr_number: Optional[int] = None,
+    candidate_pr_number: Optional[int] = None,
+    candidate_pr_status: Optional[str] = None,
+    candidate_pr_head: Optional[str] = None,
+    candidate_pr_base: Optional[str] = None,
+    candidate_pr_draft: Optional[bool] = None,
+    candidate_pr_merge_event: Optional[Dict[str, Any]] = None,
+    expected_repo_owner: Optional[str] = None,
     old_tag_deleted: bool = True,
     ci_evidence_ref: Optional[str] = None,
     ci_summary: Optional[str] = None,
@@ -1047,60 +1110,200 @@ def build_engineering_baseline(
     ]
     adr_items = extract_adrs_from_decision_record(source_docs["DECISION_RECORD"][2], rel_doc("DECISION_RECORD"))
 
-    # Dynamic facts with mandatory 6 provenance fields
+    # Separate historical release evidence from current candidate PR facts (STD-034 / STD-035).
+    # Historical evidence for an older released version (e.g. v3.0.0 std019) MUST NEVER overwrite
+    # current candidate PR metadata (candidate_pr_number, candidate_pr_status, candidate_commit, merge_commit).
+    is_current_version_released = bool(
+        evidence_data
+        and str(evidence_data.get("version", "")).lstrip("v") == version_str
+        and evidence_data.get("release_flow_status") == "RELEASED"
+    )
+    current_ver_evidence: Optional[Dict[str, Any]] = evidence_data if is_current_version_released else None
+
+    # Collect known historical merge commits so they can NEVER pollute the current candidate PR
+    historical_merge_commits: set[str] = set()
+    if not is_current_version_released:
+        if evidence_data:
+            for hk in ("main_head", "peeled_commit"):
+                hv = str(evidence_data.get(hk) or "").strip()
+                if re.fullmatch(r"[0-9a-f]{40}", hv):
+                    historical_merge_commits.add(hv)
+        for hist_name in ("v3.0.0-reissue.json", "std018-current-snapshot.json", "std019-final-release.json"):
+            hp = project_root / "docs" / "release-evidence" / hist_name
+            if hp.is_file():
+                try:
+                    hdata = json.loads(hp.read_text(encoding="utf-8"))
+                    for hk in ("main_head", "peeled_commit"):
+                        hv = str(hdata.get(hk) or "").strip()
+                        if re.fullmatch(r"[0-9a-f]{40}", hv):
+                            historical_merge_commits.add(hv)
+                except Exception:
+                    pass
+
+    # Dynamic facts with mandatory 6 provenance fields (decoupled from historical v3.0.0 evidence)
     code_candidate_commit = (
         candidate_commit_override
-        or (evidence_data.get("candidate_commit") if evidence_data else None)
-        or existing_facts.get("candidate_commit")
+        or (current_ver_evidence.get("candidate_commit") if current_ver_evidence else None)
         or (local_head if local_head != "NOT_VERIFIABLE" else source_commit)
     )
     snapshot_commit = (
         snapshot_commit_override
         or (local_head if local_head != "NOT_VERIFIABLE" else None)
-        or (evidence_data.get("snapshot_commit") if evidence_data else None)
-        or existing_facts.get("snapshot_commit")
+        or (current_ver_evidence.get("snapshot_commit") if current_ver_evidence else None)
         or source_commit
     )
     verified_ci = (
         last_verified_ci_commit
         or ci_commit
-        or (evidence_data.get("last_verified_ci_commit") if evidence_data else None)
-        or existing_facts.get("last_verified_ci_commit")
+        or (current_ver_evidence.get("last_verified_ci_commit") if current_ver_evidence else None)
         or code_candidate_commit
     )
     effective_ci_status = (
         ci_status
-        or (evidence_data.get("ci_status") if evidence_data else None)
-        or existing_facts.get("ci_status")
+        or (current_ver_evidence.get("ci_status") if current_ver_evidence else None)
         or "NOT_VERIFIABLE"
     )
     effective_push_run = (
         push_run_id
-        or (evidence_data.get("push_run_id") if evidence_data else None)
-        or existing_facts.get("push_run_id")
+        or (current_ver_evidence.get("push_run_id") if current_ver_evidence else None)
     )
     effective_pr_run = (
         pr_run_id
-        or (evidence_data.get("pr_run_id") if evidence_data else None)
-        or existing_facts.get("pr_run_id")
+        or (current_ver_evidence.get("pr_run_id") if current_ver_evidence else None)
     )
     effective_run_id = (
         ci_run_id
         or effective_push_run
-        or existing_facts.get("ci_run_id")
     )
-    effective_pr_status = (
-        pr_status
-        if pr_status != "DRAFT"
-        else (evidence_data.get("pr_status") if evidence_data else pr_status)
+
+    # Current Candidate PR Identity (strictly decoupled from historical PR #9 / PR #10 / std019)
+    eff_cand_pr_number: Optional[int] = (
+        candidate_pr_number if candidate_pr_number is not None else pr_number
     )
+    if eff_cand_pr_number is not None and int(eff_cand_pr_number) < 1:
+        errors.append(
+            f"CANDIDATE_PR_INVALID_NUMBER: candidate_pr_number must be >= 1 (got '{eff_cand_pr_number}')"
+        )
+
+    raw_cand_pr_status = (
+        candidate_pr_status if candidate_pr_status is not None else pr_status
+    )
+    if raw_cand_pr_status is not None:
+        effective_pr_status = str(raw_cand_pr_status).strip().upper()
+        if effective_pr_status not in ("DRAFT", "OPEN", "MERGED", "CLOSED"):
+            errors.append(
+                f"CANDIDATE_PR_INVALID_STATUS: candidate_pr_status '{effective_pr_status}' must be DRAFT, OPEN, MERGED, or CLOSED"
+            )
+    else:
+        effective_pr_status = "DRAFT"
+
+    # Validate candidate_commit is a real Git commit (F13 Rule 2)
+    if (project_root / ".git").exists():
+        if not re.fullmatch(r"[0-9a-f]{40}", str(code_candidate_commit or "")) or code_candidate_commit == "0" * 40:
+            errors.append(
+                f"CANDIDATE_COMMIT_INVALID: candidate_commit '{code_candidate_commit}' must be a non-zero 40-hex SHA"
+            )
+        else:
+            rc_cand_obj, _ = run_git(project_root, ["cat-file", "-e", f"{code_candidate_commit}^{{commit}}"])
+            if rc_cand_obj != 0:
+                errors.append(
+                    f"CANDIDATE_COMMIT_NOT_FOUND: candidate_commit '{code_candidate_commit}' does not exist in Git repository"
+                )
+
+    # Candidate PR Head validation (F13): when explicitly supplied, verify candidate_commit is an ancestor
+    # of candidate_pr_head via `git merge-base --is-ancestor` (NEVER require static equality with PR HEAD).
+    if candidate_pr_head is not None:
+        eff_cand_pr_head = str(candidate_pr_head).strip()
+        anc_st, anc_errs = verify_commit_ancestry(
+            project_root,
+            code_candidate_commit,
+            eff_cand_pr_head,
+            repository=repository,
+            allow_remote_compare=not allow_offline,
+        )
+        if anc_st == "FAIL":
+            errors.extend(anc_errs)
+        elif anc_st == "NOT_VERIFIABLE" and not allow_offline:
+            errors.extend(anc_errs)
+
+    # Candidate PR Base validation: must target official 'main'
+    eff_cand_pr_base = str(candidate_pr_base).strip() if candidate_pr_base is not None else "main"
+    if eff_cand_pr_base != "main":
+        errors.append(
+            f"CANDIDATE_PR_BASE_NOT_MAIN: candidate_pr_base '{eff_cand_pr_base}' must be 'main'"
+        )
+
+    # Candidate PR Merge Provenance Gate: MERGED is ONLY allowed when backed by a verified GitHub PR merge event
+    verified_merge_commit: Optional[str] = None
+    verified_merged_by: Optional[str] = None
+    eff_owner = (expected_repo_owner or repository.split("/")[0]).strip()
+    if effective_pr_status == "MERGED":
+        if eff_cand_pr_number is None:
+            errors.append(
+                "CANDIDATE_PR_NUMBER_REQUIRED_FOR_MERGED: candidate_pr_number is required to verify MERGED status"
+            )
+        else:
+            pr_ev_obj = candidate_pr_merge_event
+            if pr_ev_obj is None and not allow_offline:
+                ok_api, api_pr_data, _ = _query_pr_via_api(repository, eff_cand_pr_number)
+                if ok_api and api_pr_data:
+                    pr_ev_obj = api_pr_data
+                else:
+                    ok_gh, gh_pr_data, _ = _query_pr_via_gh(repository, eff_cand_pr_number)
+                    if ok_gh and gh_pr_data:
+                        pr_ev_obj = gh_pr_data
+            if pr_ev_obj is None:
+                errors.append(
+                    "CANDIDATE_PR_MERGE_NOT_VERIFIED: Cannot mark current candidate PR as MERGED without verified GitHub PR merge event (merged=true, merged_by=owner, base=main, head.sha>=candidate_commit)"
+                )
+            else:
+                m_ok, m_errs, m_sha, m_by = verify_candidate_pr_merge_event(
+                    pr_event=pr_ev_obj,
+                    expected_pr_number=eff_cand_pr_number,
+                    expected_candidate_commit=code_candidate_commit,
+                    expected_owner=eff_owner,
+                    expected_base="main",
+                    forbidden_historical_merge_commits=historical_merge_commits,
+                    project_root=project_root,
+                    repository=repository,
+                )
+                if not m_ok:
+                    errors.extend(m_errs)
+                else:
+                    verified_merge_commit = m_sha
+                    verified_merged_by = m_by
+
+    if effective_pr_status == "DRAFT":
+        if candidate_pr_draft is False:
+            errors.append(
+                "CANDIDATE_PR_DRAFT_CONFLICT: candidate_pr_status='DRAFT' conflicts with candidate_pr_draft=False"
+            )
+        pr_state_str = "OPEN"
+        pr_draft_bool = True
+        release_status_str = "CANDIDATE"
+    elif effective_pr_status == "OPEN":
+        pr_state_str = "OPEN"
+        pr_draft_bool = bool(candidate_pr_draft) if candidate_pr_draft is not None else False
+        release_status_str = "CANDIDATE"
+    elif effective_pr_status == "MERGED":
+        pr_state_str = "MERGED"
+        pr_draft_bool = False
+        release_status_str = "RELEASED" if is_current_version_released else "MERGED_PENDING_TAG"
+    else:
+        pr_state_str = "CLOSED"
+        pr_draft_bool = False
+        release_status_str = "BLOCKED"
+
+    pr_label = f"PR #{eff_cand_pr_number}" if eff_cand_pr_number is not None else "当前候选 PR"
 
     if pending_verifications is not None:
         pending_text = pending_verifications
+    elif effective_pr_status == "MERGED" and is_current_version_released:
+        pending_text = f"正式版本 v{version_str} 已发布并完成核验。"
     elif effective_ci_status == "PASS":
-        pending_text = "PR CI 已通过，等待合并及 main CI 和 Tag 重建。"
+        pending_text = f"{pr_label} CI 已通过，等待 ChatGPT 独立复核与唯一 Owner 批准合入 main，由 main CI 自动签发 v{version_str} Annotated Tag。"
     else:
-        pending_text = "当前整改候选 Commit 待推送到 GitHub Actions 远端触发 Windows/Ubuntu 双平台真实 CI 完整运行；实测完成前严格保持 NOT_VERIFIABLE，严禁本地伪造 PASS"
+        pending_text = f"当前候选 Commit ({code_candidate_commit[:8]}) 待推送到 GitHub Actions 远端触发 Windows/Ubuntu 双平台真实 CI 完整运行；实测完成前严格保持 NOT_VERIFIABLE，严禁本地伪造 PASS"
 
     default_historical_runs = [
         "Run 42169418901 (Push @ 4041b1d, conclusion: success, Windows/Ubuntu PASS)",
@@ -1130,6 +1333,24 @@ def build_engineering_baseline(
     ]
     hist_runs = historical_ci_runs or default_historical_runs
 
+    candidate_pr_meta: Dict[str, Any] = {
+        "candidate_version": version_str,
+        "candidate_pr_number": eff_cand_pr_number,
+        "candidate_pr_status": effective_pr_status,
+        "pr_state": pr_state_str,
+        "pr_draft": pr_draft_bool,
+        "candidate_pr_base": eff_cand_pr_base,
+        "candidate_commit": code_candidate_commit,
+        "live_pr_head_source": "GITHUB_PR_API_REQUIRED",
+        "ci_runtime_record": "GITHUB_STEP_SUMMARY",
+        "observed_at": now_iso,
+        "release_status": release_status_str,
+    }
+    if verified_merge_commit:
+        candidate_pr_meta["merge_commit_sha"] = verified_merge_commit
+    if verified_merged_by:
+        candidate_pr_meta["merged_by"] = verified_merged_by
+
     ci_details: Dict[str, Any] = {
         "source_commit": source_commit,
         "git_snapshot_observed_at": now_iso,
@@ -1141,6 +1362,7 @@ def build_engineering_baseline(
         "snapshot_status": "FRESH",
         "snapshot_validity_hours": 24,
         "workflow": "standards-ci.yml",
+        "candidate_pr": candidate_pr_meta,
     }
     if effective_run_id:
         ci_details["run_id"] = int(effective_run_id) if str(effective_run_id).isdigit() else effective_run_id
@@ -1151,22 +1373,35 @@ def build_engineering_baseline(
     if ci_commit:
         ci_details["ci_commit"] = ci_commit
 
-    effective_test_count = test_count if test_count is not None else (evidence_data.get("test_count") if evidence_data else 216)
+    effective_test_count = test_count if test_count is not None else (current_ver_evidence.get("test_count") if current_ver_evidence else None)
+    test_count_clause = f", {effective_test_count} tests" if effective_test_count is not None else ""
     if ci_summary:
         summary_text = ci_summary
     elif effective_ci_status == "PASS":
         if effective_push_run and effective_pr_run:
-            run_lbl = f"{effective_push_run} Push / {effective_pr_run} PR #9"
+            run_lbl = f"{effective_push_run} Push / {effective_pr_run} {pr_label}"
         elif effective_run_id:
             run_lbl = str(effective_run_id)
         else:
-            run_lbl = "42783497089 Push / 42783504258 PR #9"
-        if effective_pr_status == "MERGED":
-            summary_text = f"PR CI 已通过 (Run: {run_lbl} 双平台 PASS, {effective_test_count} tests)，PR #9 已合入 main，等待修复 main CI 后重建 Tag"
+            run_lbl = pr_label
+        if effective_pr_status == "MERGED" and verified_merge_commit and verified_merged_by:
+            summary_text = (
+                f"{pr_label} CI 已通过 (Run: {run_lbl} 双平台 PASS{test_count_clause})，"
+                f"{pr_label} 已由 {verified_merged_by} 合入 main (Merge Commit: {verified_merge_commit})"
+            )
         else:
-            summary_text = f"PR CI 已通过 (Run: {run_lbl} 双平台 PASS, {effective_test_count} tests)，等待合并及 main CI 和 Tag 重建"
+            summary_text = (
+                f"{pr_label} CI 已通过 (Run: {run_lbl} 双平台 PASS{test_count_clause})，"
+                f"当前处于 {pr_state_str} / {release_status_str} 状态，等待 ChatGPT 独立复核与 Owner 批准合入 main"
+            )
     else:
-        summary_text = "当前分支远端 GitHub Actions CI 待推送后由远端 Runner 实测（执行前保持 NOT_VERIFIABLE；历史已通过 Run: 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644, 42843755347, 42843964061）"
+        ci_ref_note = ""
+        if effective_push_run and effective_pr_run:
+            ci_ref_note = f"；最近已验证 {pr_label} CI: Push Run {effective_push_run} / PR Run {effective_pr_run} @ {verified_ci[:8]}"
+        summary_text = (
+            f"当前候选 {pr_label} (Commit {code_candidate_commit[:8]}) 远端 GitHub Actions CI 待推送后由远端 Runner 实测"
+            f"（执行前保持 NOT_VERIFIABLE{ci_ref_note}）"
+        )
 
     ci_fact: Dict[str, Any] = ci_fact_override or {
         "repository": repository,
@@ -1446,8 +1681,55 @@ def build_engineering_baseline(
         "",
         "## 2. 当前产品版本 (`product_version`)",
         f"- **当前版本 (`VERSION`)**：`{version_str}`",
-        f"- **候选目标标签 (`release_tag`)**：`v{version_str}`",
-        "- **正式发布状态**：候选分支上的 VERSION 不等于正式发布；正式版本以官方 main 上的 Annotated Tag 和 main CI 为准。",
+    ]
+    std_active_ev: Optional[Dict[str, Any]] = None
+    std_pr9_ev: Optional[Dict[str, Any]] = None
+    std_snap_ev: Optional[Dict[str, Any]] = None
+    std_019_ev: Optional[Dict[str, Any]] = None
+    if project_id == "ai-engineering-standards" and (project_root / "docs" / "release-evidence").exists():
+        _ok_a, _, _ev_a = load_release_evidence(
+            project_root, resolve_release_evidence_path(project_root)
+        )
+        if _ok_a and _ev_a:
+            std_active_ev = _ev_a
+        _p_pr9 = project_root / "docs" / "release-evidence" / "v3.0.0-reissue.json"
+        if _p_pr9.exists():
+            _ok_p, _, _ev_p = load_release_evidence(project_root, _p_pr9)
+            if _ok_p:
+                std_pr9_ev = _ev_p
+        _p_snap = project_root / "docs" / "release-evidence" / "std018-current-snapshot.json"
+        if _p_snap.exists():
+            _ok_s, _, _ev_s = load_release_evidence(project_root, _p_snap)
+            if _ok_s:
+                std_snap_ev = _ev_s
+        _p_019 = project_root / "docs" / "release-evidence" / "std019-final-release.json"
+        if _p_019.exists():
+            _ok_19, _, _ev_19 = load_release_evidence(project_root, _p_019)
+            if _ok_19:
+                std_019_ev = _ev_19
+
+    if (
+        std_active_ev
+        and str(std_active_ev.get("version", "")).lstrip("v") == version_str
+        and std_active_ev.get("release_flow_status") == "RELEASED"
+    ):
+        md_lines.extend([
+            f"- **正式发布标签 (`release_tag`)**：`{std_active_ev['release_tag']}`",
+            f"- **正式发布状态**：`RELEASED`（官方 main 上的 Annotated Tag `{std_active_ev['release_tag']}`，Tag Object SHA: `{std_active_ev['tag_object_sha']}`，Peeled Commit: `{std_active_ev['peeled_commit']}`，main CI Run {std_active_ev.get('main_ci_run_id') or std_active_ev['push_run_id']} 双平台全绿，{std_active_ev['test_count']} tests PASS）。",
+        ])
+    elif std_active_ev and std_active_ev.get("release_flow_status") == "RELEASED":
+        md_lines.extend([
+            f"- **当前已发布最新正式标签 (`LATEST_RELEASED_TAG`)**：`{std_active_ev.get('release_tag', lock_data.get('tag', 'v3.0.0'))}`（Tag Object SHA: `{std_active_ev.get('tag_object_sha', lock_data.get('tag_object_sha'))}`，Peeled Commit: `{std_active_ev.get('peeled_commit', lock_data.get('peeled_commit'))}`）",
+            f"- **候选目标标签 (`candidate_release_tag`)**：`v{version_str}`",
+            f"- **正式发布状态**：`CANDIDATE`（当前工作区 `VERSION={version_str}` 尚未合入 main 并由官方工作流签发 `v{version_str}` Tag；正式版本以官方 `main` 上的 Annotated Tag 和 main CI 为准）。",
+        ])
+    else:
+        md_lines.extend([
+            f"- **候选目标标签 (`release_tag`)**：`v{version_str}`",
+            "- **正式发布状态**：候选分支上的 VERSION 不等于正式发布；正式版本以官方 main 上的 Annotated Tag 和 main CI 为准。",
+        ])
+
+    md_lines.extend([
         f"- **版本事实来源**：`VERSION` @ `{source_commit}`",
         "",
         "## 3. 正式产品功能及职责 (`product_capabilities`)",
@@ -1497,13 +1779,96 @@ def build_engineering_baseline(
         f"- **5. 文档快照 Commit (`snapshot_commit`)**：`{ci_fact['details'].get('snapshot_commit', snapshot_commit)}`",
         f"- **6. 当前待验证事项 (`pending_verifications`)**：{ci_fact['details'].get('pending_verifications')}",
         "- **7. 历史 CI 记录 (`historical_ci_runs`)**：",
-    ]
+    ])
     for hr in ci_fact["details"].get("historical_ci_runs", []):
         md_lines.append(f"  - {hr}")
     md_lines.extend([
         f"- **证据引用 (`evidence_ref`)**：`{ci_fact['evidence_ref']}`",
         f"- **观测时间 (`observed_at`)**：`{ci_fact['observed_at']}`",
         f"- **事实说明**：{ci_fact['summary']}",
+    ])
+    if project_id == "ai-engineering-standards" and std_pr9_ev and std_snap_ev and std_019_ev:
+        md_lines.extend([
+            "",
+            "### 9.1 PR9 历史发布证据 (PR9_HISTORICAL_RELEASE_EVIDENCE)",
+            "- **核验状态 (`verification_status`)**：`PASS`",
+            f"- **代码候选 Commit (`candidate_commit`)**：`{std_pr9_ev['candidate_commit']}`",
+            f"- **文档快照 Commit (`snapshot_commit`)**：`{std_pr9_ev['snapshot_commit']}`",
+            f"- **最近一次已验证 CI Commit (`last_verified_ci_commit`)**：`{std_pr9_ev['last_verified_ci_commit']}`",
+            f"- **Push Run ID**：`{std_pr9_ev['push_run_id']}`",
+            f"- **PR Run ID**：`{std_pr9_ev['pr_run_id']}`",
+            f"- **PR 编号与状态**：PR #{std_pr9_ev['pr_number']}（状态：`{std_pr9_ev['pr_status']}`）",
+            f"- **主干 HEAD (`main_head`)**：`{std_pr9_ev['main_head']}`",
+            f"- **测试用例数**：`{std_pr9_ev['test_count']} tests PASS`（Run {std_pr9_ev['push_run_id']} Push / Run {std_pr9_ev['pr_run_id']} PR #{std_pr9_ev['pr_number']} 双平台全绿，{std_pr9_ev['test_count']} tests PASS）",
+            f"- **发布流程状态 (`release_flow_status`)**：`{std_pr9_ev['release_flow_status']}`",
+            f"- **旧 Tag 删除状态**：`OLD_TAG_DELETED={str(std_pr9_ev.get('old_tag_deleted', True)).lower()}`",
+            "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
+            f"- **事实说明**：PR CI 已通过 (Run: {std_pr9_ev['push_run_id']} Push / {std_pr9_ev['pr_run_id']} PR #{std_pr9_ev['pr_number']} 双平台全绿，{std_pr9_ev['test_count']} tests PASS)，PR #{std_pr9_ev['pr_number']} 已合入 main，等待修复 main CI 后重建 Tag",
+            "",
+            "### 9.2 Std-018 历史工程快照 (STD018_CURRENT_SNAPSHOT)",
+            "- **核验状态 (`verification_status`)**：`PASS`",
+            f"- **任务编号 (`task_id`)**：`{std_snap_ev.get('task_id', 'Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT')}`",
+            f"- **当前工程候选 Commit (`candidate_commit`)**：`{std_snap_ev['candidate_commit']}`",
+            f"- **当前文档快照 Commit (`snapshot_commit`)**：`{std_snap_ev['snapshot_commit']}`",
+            f"- **最新已验证 CI Commit (`last_verified_ci_commit`)**：`{std_snap_ev['last_verified_ci_commit']}`",
+            f"- **Push Run ID**：`{std_snap_ev['push_run_id']}`",
+            f"- **PR Run ID**：`{std_snap_ev['pr_run_id']}`",
+            f"- **PR 编号与状态**：PR #{std_snap_ev['pr_number']}（状态：`{std_snap_ev['pr_status']}`）",
+            f"- **主干 HEAD (`main_head`)**：`{std_snap_ev['main_head']}`",
+            f"- **测试用例数**：`{std_snap_ev['test_count']} tests PASS`（Run {std_snap_ev['push_run_id']} Push / Run {std_snap_ev['pr_run_id']} PR #{std_snap_ev['pr_number']} 双平台全绿，{std_snap_ev['test_count']} tests PASS）",
+            f"- **发布流程状态 (`release_flow_status`)**：`{std_snap_ev['release_flow_status']}`",
+            f"- **旧 Tag 删除状态**：`OLD_TAG_DELETED={str(std_snap_ev.get('old_tag_deleted', True)).lower()}`",
+            "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
+            "- **当前待验证事项 (`pending_verifications`)**：PR CI 已通过，等待合并及 main CI 和 Tag 重建。",
+            "- **历史 CI 记录 (`historical_ci_runs`)**：",
+            "  - Run 42983601133 (Push @ 21939da, conclusion: success, Windows/Ubuntu PASS, 221 tests)",
+            "  - Run 42983609802 (PR #10 @ 21939da, conclusion: success, Windows/Ubuntu PASS, 221 tests)",
+            f"- **事实说明**：PR CI 已通过 (Run: {std_snap_ev['push_run_id']} Push / {std_snap_ev['pr_run_id']} PR #{std_snap_ev['pr_number']} 双平台全绿，{std_snap_ev['test_count']} tests PASS)，PR #{std_snap_ev['pr_number']} 待 ChatGPT 独立复核及 Owner 批准合入 main 后重建 Tag",
+            "",
+            "### 9.3 Std-019 最终发布证据 (STD019_FINAL_RELEASE)",
+            "- **核验状态 (`verification_status`)**：`PASS`",
+            f"- **任务编号 (`task_id`)**：`{std_019_ev.get('task_id', 'Std-019-V3-0-0-POST-RELEASE-CLOSEOUT')}`",
+            f"- **正式发布 Tag (`release_tag`)**：`{std_019_ev['release_tag']}`",
+            f"- **Tag Object SHA (`tag_object_sha`)**：`{std_019_ev['tag_object_sha']}`",
+            f"- **Peeled Commit (`peeled_commit`)**：`{std_019_ev['peeled_commit']}`",
+            f"- **代码候选 Commit (`candidate_commit`)**：`{std_019_ev['candidate_commit']}`",
+            f"- **文档快照 Commit (`snapshot_commit`)**：`{std_019_ev['snapshot_commit']}`",
+            f"- **最新已验证 CI Commit (`last_verified_ci_commit`)**：`{std_019_ev['last_verified_ci_commit']}`",
+            f"- **Push Run ID**：`{std_019_ev.get('main_ci_run_id') or std_019_ev['push_run_id']}`",
+            f"- **PR Run ID**：`{std_019_ev['pr_run_id']}`",
+            f"- **PR 编号与状态**：PR #{std_019_ev['pr_number']}（状态：`{std_019_ev['pr_status']}`）",
+            f"- **PR 合并者 (`pr_merged_by`)**：`{std_019_ev['pr_merged_by']}`",
+            f"- **发布时 main HEAD (`main_head`)**：`{std_019_ev['main_head']}`",
+            f"- **测试用例数**：`{std_019_ev['test_count']} tests PASS`（Run {std_019_ev.get('main_ci_run_id') or std_019_ev['push_run_id']} main CI 双平台全绿，Tag Publish Job 成功）",
+            f"- **Tag 发布状态 (`tag_publish_status`)**：`{std_019_ev['tag_publish_status']}`",
+            f"- **发布流程状态 (`release_flow_status`)**：`{std_019_ev['release_flow_status']}`",
+            f"- **旧 Tag 删除状态**：`OLD_TAG_DELETED={str(std_019_ev.get('old_tag_deleted', True)).lower()}`",
+            "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
+            f"- **事实说明**：PR #{std_019_ev['pr_number']} 已由 {std_019_ev['pr_merged_by']} 合入 main，main CI Run {std_019_ev.get('main_ci_run_id') or std_019_ev['push_run_id']} 双平台全绿（{std_019_ev['test_count']} tests PASS），Tag Publish Job 成功发布正式 Annotated Tag {std_019_ev['release_tag']}",
+        ])
+        if std_active_ev and str(std_active_ev.get("version", "")).lstrip("v") != str(std_019_ev.get("version", "")).lstrip("v"):
+            md_lines.extend([
+                "",
+                "### 9.4 Std-020 最终发布证据 (STD020_FINAL_RELEASE)",
+                "- **核验状态 (`verification_status`)**：`PASS`",
+                f"- **任务编号 (`task_id`)**：`{std_active_ev.get('task_id', 'Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION')}`",
+                f"- **正式发布 Tag (`release_tag`)**：`{std_active_ev.get('release_tag', 'v' + str(std_active_ev.get('version', '')))}`",
+                f"- **Tag Object SHA (`tag_object_sha`)**：`{std_active_ev.get('tag_object_sha')}`",
+                f"- **Peeled Commit (`peeled_commit`)**：`{std_active_ev.get('peeled_commit')}`",
+                f"- **代码候选 Commit (`candidate_commit`)**：`{std_active_ev['candidate_commit']}`",
+                f"- **文档快照 Commit (`snapshot_commit`)**：`{std_active_ev['snapshot_commit']}`",
+                f"- **最新已验证 CI Commit (`last_verified_ci_commit`)**：`{std_active_ev['last_verified_ci_commit']}`",
+                f"- **Push Run ID**：`{std_active_ev.get('main_ci_run_id') or std_active_ev['push_run_id']}`",
+                f"- **PR Run ID**：`{std_active_ev['pr_run_id']}`",
+                f"- **PR 编号与状态**：PR #{std_active_ev['pr_number']}（状态：`{std_active_ev['pr_status']}`）",
+                f"- **PR 合并者 (`pr_merged_by`)**：`{std_active_ev.get('pr_merged_by')}`",
+                f"- **发布时 main HEAD (`main_head`)**：`{std_active_ev['main_head']}`",
+                f"- **测试用例数**：`{std_active_ev['test_count']} tests PASS`",
+                f"- **Tag 发布状态 (`tag_publish_status`)**：`{std_active_ev.get('tag_publish_status')}`",
+                f"- **发布流程状态 (`release_flow_status`)**：`{std_active_ev['release_flow_status']}`",
+                "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
+            ])
+    md_lines.extend([
         "",
         "## 10. 最近 Build 事实 (`recent_build_facts`)",
         f"- **核验状态 (`verification_status`)**：`{build_fact['verification_status']}`",
@@ -1557,62 +1922,39 @@ def build_engineering_baseline(
         "- 机器可读结构化摘要见 `.artifacts/baseline/engineering_baseline.json`；本 Markdown 文档的规范摘要记录在 Frontmatter `content_sha256`。",
         "",
     ])
-    active_push_run_id = (
-        push_run_id
-        or (evidence_data.get("push_run_id") if evidence_data else None)
-        or existing_facts.get("push_run_id")
-        or effective_run_id
-    )
-    active_pr_run_id = (
-        pr_run_id
-        or (evidence_data.get("pr_run_id") if evidence_data else None)
-        or existing_facts.get("pr_run_id")
-    )
-    effective_tcount = test_count if test_count is not None else (evidence_data.get("test_count") if evidence_data else 216)
-    if active_push_run_id and active_pr_run_id and str(active_push_run_id) != str(active_pr_run_id):
-        run_desc = f"Run {active_push_run_id} Push / Run {active_pr_run_id} PR #9 双平台全绿，{effective_tcount} tests PASS"
-    elif effective_run_id:
-        run_desc = f"Run {effective_run_id} 双平台全绿，{effective_tcount} tests PASS"
-    else:
-        run_desc = f"Run 42783497089 Push / Run 42783504258 PR #9 双平台全绿，{effective_tcount} tests PASS"
-
-    hist_run_ids = []
-    for hr in ci_fact["details"].get("historical_ci_runs", []):
-        m = re.search(r'Run\s+(\d+)', hr)
-        if m:
-            hist_run_ids.append(m.group(1))
-    hist_ci_inline = "Run " + ", ".join(hist_run_ids) if hist_run_ids else "Run 42169418901"
-
-    if effective_pr_status == "MERGED":
-        cand_status_line = f"- 当前候选版本：`{version_str}`；PR #{pr_number}（状态：`{effective_pr_status}`）已合入官方 main（Merge Commit: `{remote_main_head[:8] if remote_main_head else '3cd42b69'}`），但因 main CI 历史 PR Run 关联信息为空失败，尚未创建正式 v{version_str} Tag。"
-        flow_line = f"  - 待执行发布流程：PR #{pr_number} 已合入 main 但 main CI 失败；经 Std-016 增加 PR REST API fallback 修复后，通过 PR #10 合入重新触发 main CI 自动重建同名 Annotated Tag `v{version_str}`。"
-    else:
-        cand_status_line = f"- 当前候选版本：`{version_str}`；PR #{pr_number}（状态：`{effective_pr_status}`）尚未合入官方 main，尚未创建正式 v{version_str} Tag。"
-        flow_line = f"  - 待执行发布流程：PR #{pr_number} 经 ChatGPT 独立审查与唯一 Owner 最终合入 main，触发 main CI 自动重建同名 Annotated Tag `v{version_str}`。"
-
-    md_lines.extend([
+    cand_pr_num_display = str(eff_cand_pr_number) if eff_cand_pr_number is not None else "NOT_ASSIGNED"
+    section19_lines = [
         "",
-        "## 19. 当前候选状态与消费端试点",
+        "## 19. 当前候选状态与消费端试点 (CURRENT_CANDIDATE_PR)",
         "",
-        cand_status_line,
+        f"- **候选版本 (`candidate_version`)**：`{version_str}`",
+        f"- **当前候选 PR 编号 (`candidate_pr_number`)**：`{cand_pr_num_display}`",
+        f"- **当前候选 PR 状态 (`candidate_pr_status`)**：`{effective_pr_status}`",
+        f"- **PR 状态标记 (`PR_STATE`)**：`{pr_state_str}`",
+        f"- **PR 草稿标记 (`PR_DRAFT`)**：`{str(pr_draft_bool).lower()}`",
+        f"- **当前候选 PR Base (`candidate_pr_base`)**：`{eff_cand_pr_base}`",
+        f"- **当前候选 Commit (`candidate_commit`)**：`{code_candidate_commit}`",
+        "- **实时 PR HEAD 核验方式 (`live_pr_head_verification`)**：`GITHUB_PR_API_REQUIRED`（通过 GitHub PR API / Actions Event 在线核验 `candidate_commit` 为实时 PR HEAD 祖先，不自引用静态写入）",
+        "- **实时 CI 运行记录方式 (`ci_runtime_record`)**：`GITHUB_STEP_SUMMARY`（实时 PR HEAD 与 CI Run ID 由 CI Runtime 与 Step Summary 记录）",
+        f"- **状态快照观测时间 (`candidate_observed_at`)**：`{now_iso}`",
+        f"- **当前发布状态 (`RELEASE_STATUS`)**：`{release_status_str}`",
+    ]
+    if effective_pr_status == "MERGED" and verified_merge_commit and verified_merged_by:
+        section19_lines.extend([
+            f"- **当前候选 PR Merge Commit (`candidate_pr_merge_commit`)**：`{verified_merge_commit}`",
+            f"- **当前候选 PR 合并者 (`candidate_pr_merged_by`)**：`{verified_merged_by}`",
+            f"- 当前候选版本：`{version_str}`；{pr_label}（状态：`MERGED`）已由 `{verified_merged_by}` 合入官方 `{eff_cand_pr_base}`（Merge Commit: `{verified_merge_commit}`）。",
+        ])
+    else:
+        section19_lines.append(
+            f"- 当前候选版本：`{version_str}`；{pr_label}（状态：`{effective_pr_status}`，`PR_STATE={pr_state_str}`，`PR_DRAFT={str(pr_draft_bool).lower()}`）尚未合入官方 `{eff_cand_pr_base}`，尚未创建正式 `v{version_str}` Tag。"
+        )
+    section19_lines.extend([
         "- 正式发布版本必须以官方 main 上的 Annotated Tag、Tag Object SHA、Peeled Commit 与 main CI 为准；严禁依赖 GitHub /releases/latest REST API 对象。",
-        "- 当前旧 Tag 删除状态与回滚证据：",
-        f"  - 远端旧 Tag `v{version_str}` 已删除 (`OLD_TAG_DELETED={str(old_tag_deleted).lower()}`)，新 Tag 尚未创建。",
-        "  - 原 Tag Object SHA: `325008af90a1e6dcc88ff714c9ec4e7ecee86ec6`",
-        "  - 原 Peeled Commit: `1d5cbbd6710bef749c8f79e9c1fd21dd14223b1b`",
-        "  - 旧 Tag 本地 Bundle 备份 SHA256: `45bc3e455fc06b96a669ba9d7c44195f5dfb4e42e55397d795200942e434ebfc`",
-        flow_line,
-        "- 区分 CI 与快照核心概念（STD-034 / STD-035）：",
-        f"  1. **基线生成时的源 Commit (`source_commit`)**：`{ci_fact['source_commit']}`（基准比对基线）。",
-        f"  2. **Git 快照观测时间**：`{ci_fact['observed_at']}`（快照有效时间 24 小时；过期事实标记 STALE 或 NOT_VERIFIABLE）。",
-        f"  3. **最近一次已经验证的 CI Commit (`last_verified_ci_commit`)**：`{ci_fact['details'].get('last_verified_ci_commit', verified_ci)}`（{run_desc}）。",
-        f"  4. **代码候选 Commit (`code_candidate_commit`)**：`{ci_fact['details'].get('candidate_commit', code_candidate_commit)}`（整改与测试候选 HEAD，包含 {effective_test_count} 项全量测试与符号链接路径安全加固）。",
-        f"  5. **当前 PR / 文档快照 Commit (`snapshot_commit`)**：`{ci_fact['details'].get('snapshot_commit', snapshot_commit)}`。",
-        f"  6. **当前待验证事项 (`pending_verifications`)**：{ci_fact['details'].get('pending_verifications')}",
-        f"  7. **历史 CI 记录**：{hist_ci_inline}（避免每次记录 CI 又无限触发基线提交的循环）。",
-        "- 首个消费端试点为 AI-Engineering-Hub；AI-KB、VTIP、SideCar 不在本轮试点范围，是否接入由各工程 Owner 后续决定。",
-        "- 审批状态：保持 `IN_REVIEW`，严禁智能体自批或伪造 `OWNER_APPROVED`。",
+        "- **消费端首个试点**：AI-Engineering-Hub；AI-KB、VTIP、SideCar 不在本轮试点范围，是否接入由各工程 Owner 后续决定。",
+        "- **审批状态**：保持 `IN_REVIEW`，严禁智能体自批或伪造 `OWNER_APPROVED`。",
     ])
+    md_lines.extend(section19_lines)
     markdown_text = "\n".join(md_lines)
     # Also update frontmatter content_sha256 using compute_canonical_document_sha256
     canonical_doc_sha = compute_canonical_document_sha256(markdown_text)
@@ -1644,8 +1986,14 @@ def main() -> None:
     parser.add_argument("--ci-summary", default=None, help="CI fact summary")
     parser.add_argument("--pending-verifications", default=None, help="Pending verifications statement")
     parser.add_argument("--test-count", type=int, default=None, help="Expected test count for verification")
-    parser.add_argument("--pr-status", default="DRAFT", help="PR status (DRAFT, OPEN, MERGED)")
-    parser.add_argument("--pr-number", type=int, default=9, help="PR number")
+    parser.add_argument("--pr-status", default=None, help="Legacy alias for --candidate-pr-status (DRAFT, OPEN, MERGED, CLOSED)")
+    parser.add_argument("--pr-number", type=int, default=None, help="Legacy alias for --candidate-pr-number")
+    parser.add_argument("--candidate-pr-number", type=int, default=None, help="Current candidate PR number (decoupled from historical evidence)")
+    parser.add_argument("--candidate-pr-status", default=None, help="Current candidate PR status (DRAFT, OPEN, MERGED, CLOSED)")
+    parser.add_argument("--candidate-pr-head", default=None, help="Current candidate PR HEAD commit SHA")
+    parser.add_argument("--candidate-pr-base", default=None, help="Current candidate PR base branch (must be 'main')")
+    parser.add_argument("--candidate-pr-draft", choices=["true", "false"], default=None, help="Current candidate PR draft flag (true/false)")
+    parser.add_argument("--candidate-pr-merge-event", default=None, help="Path to GitHub PR API JSON proving verified merge event")
     parser.add_argument("--old-tag-deleted", default=None, help="Expected old tag deleted state (true/false)")
     parser.add_argument("--release-evidence", default=None, help="Path to PR9 release evidence JSON file")
     parser.add_argument("--snapshot-evidence", default=None, help="Path to snapshot evidence JSON file")
@@ -1657,6 +2005,11 @@ def main() -> None:
         help="Validation scope: 'consumer' verifies project baseline facts without Standards PR release evidence; 'standards-release' verifies Standards release evidence.",
     )
     parser.add_argument("--verify-only", action="store_true", help="Verify generation succeeds against committed baseline")
+    parser.add_argument(
+        "--require-live-pr",
+        action="store_true",
+        help="Require real GitHub PR API verification to succeed (blocks if API unavailable)",
+    )
     args = parser.parse_args()
 
     project_root = Path(args.project_root).resolve()
@@ -1666,10 +2019,27 @@ def main() -> None:
         if args.old_tag_deleted is not None
         else True
     )
+    candidate_pr_draft_val: Optional[bool] = (
+        (args.candidate_pr_draft == "true") if args.candidate_pr_draft is not None else None
+    )
+    candidate_pr_merge_event_obj: Optional[Dict[str, Any]] = None
+    if args.candidate_pr_merge_event:
+        me_path = Path(args.candidate_pr_merge_event)
+        if not me_path.is_absolute():
+            me_path = (project_root / me_path).resolve()
+        try:
+            candidate_pr_merge_event_obj = json.loads(me_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"[FAIL] Failed to load --candidate-pr-merge-event '{me_path}': {exc}")
+            sys.exit(1)
+
+    effective_observed_at = args.observed_at
+    if effective_observed_at is None and not args.verify_only:
+        effective_observed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     ok, errors, payload, md_text = build_engineering_baseline(
         project_root=project_root,
         standards_root=standards_root,
-        observed_at=args.observed_at,
+        observed_at=effective_observed_at,
         source_commit_override=args.source_commit,
         candidate_commit_override=args.candidate_commit,
         snapshot_commit_override=args.snapshot_commit,
@@ -1682,6 +2052,12 @@ def main() -> None:
         test_count=args.test_count,
         pr_status=args.pr_status,
         pr_number=args.pr_number,
+        candidate_pr_number=args.candidate_pr_number,
+        candidate_pr_status=args.candidate_pr_status,
+        candidate_pr_head=args.candidate_pr_head,
+        candidate_pr_base=args.candidate_pr_base,
+        candidate_pr_draft=candidate_pr_draft_val,
+        candidate_pr_merge_event=candidate_pr_merge_event_obj,
         old_tag_deleted=old_tag_deleted_val,
         ci_evidence_ref=args.ci_evidence_ref,
         ci_summary=args.ci_summary,
@@ -1772,16 +2148,16 @@ def main() -> None:
                 sys.exit(1)
 
             expected_pr9_facts = {
-                "candidate_commit": args.candidate_commit or release_evidence["candidate_commit"],
-                "snapshot_commit": args.snapshot_commit or release_evidence["snapshot_commit"],
-                "last_verified_ci_commit": args.last_verified_ci_commit or args.ci_commit or release_evidence["last_verified_ci_commit"],
-                "ci_run_id": args.ci_run_id or release_evidence["push_run_id"],
-                "push_run_id": args.push_run_id or release_evidence["push_run_id"],
-                "pr_run_id": args.pr_run_id or release_evidence["pr_run_id"],
-                "ci_commit": args.ci_commit or release_evidence["last_verified_ci_commit"],
-                "ci_status": args.ci_status or release_evidence["ci_status"],
-                "test_count": args.test_count if args.test_count is not None else release_evidence["test_count"],
-                "pr_status": args.pr_status if (args.pr_status != "DRAFT" or "pr_status" not in release_evidence) else release_evidence["pr_status"],
+                "candidate_commit": release_evidence["candidate_commit"],
+                "snapshot_commit": release_evidence["snapshot_commit"],
+                "last_verified_ci_commit": release_evidence["last_verified_ci_commit"],
+                "ci_run_id": release_evidence["push_run_id"],
+                "push_run_id": release_evidence["push_run_id"],
+                "pr_run_id": release_evidence["pr_run_id"],
+                "ci_commit": release_evidence["last_verified_ci_commit"],
+                "ci_status": release_evidence["ci_status"],
+                "test_count": release_evidence["test_count"],
+                "pr_status": release_evidence["pr_status"],
                 "main_head": release_evidence.get("main_head"),
                 "release_flow_status": release_evidence["release_flow_status"],
                 "old_tag_deleted": release_evidence["old_tag_deleted"],
@@ -1836,6 +2212,128 @@ def main() -> None:
                 actual_content, expected_final_facts, scope="STD019_FINAL_RELEASE"
             )
             mismatches.extend([f"[STD019_SCOPE] {m}" for m in final_mismatches])
+
+            if not args.final_evidence:
+                active_ev_path = resolve_release_evidence_path(project_root)
+                if active_ev_path.resolve() != final_ev_path.resolve():
+                    ok_act, act_errors, act_ev = load_release_evidence(project_root, active_ev_path)
+                    if not ok_act or act_ev is None:
+                        print(f"[FAIL] Baseline verification blocked: active release evidence error ({len(act_errors)} issues):")
+                        for e in act_errors:
+                            print(f"  - {e}")
+                        sys.exit(1)
+                    expected_active_facts = {
+                        "task_id": act_ev.get("task_id", "Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION"),
+                        "candidate_commit": act_ev["candidate_commit"],
+                        "snapshot_commit": act_ev["snapshot_commit"],
+                        "last_verified_ci_commit": act_ev["last_verified_ci_commit"],
+                        "push_run_id": act_ev.get("main_ci_run_id") or act_ev["push_run_id"],
+                        "pr_run_id": act_ev["pr_run_id"],
+                        "ci_status": act_ev["ci_status"],
+                        "test_count": act_ev["test_count"],
+                        "pr_number": act_ev["pr_number"],
+                        "pr_status": act_ev["pr_status"],
+                        "main_head": act_ev["main_head"],
+                        "release_flow_status": act_ev["release_flow_status"],
+                        "release_tag": act_ev.get("release_tag"),
+                        "tag_object_sha": act_ev.get("tag_object_sha"),
+                        "peeled_commit": act_ev.get("peeled_commit"),
+                        "tag_publish_status": act_ev.get("tag_publish_status"),
+                        "pr_merged_by": act_ev.get("pr_merged_by"),
+                    }
+                    act_mismatches = verify_baseline_semantic_facts(
+                        actual_content, expected_active_facts, scope="STD020_FINAL_RELEASE"
+                    )
+                    mismatches.extend([f"[STD020_SCOPE] {m}" for m in act_mismatches])
+
+            # Verify current candidate PR identity independently from historical PR9/STD018/STD019 scopes
+            hist_merge_shas: set[str] = set()
+            hist_cand_shas: set[str] = set()
+            for hev in (release_evidence, snapshot_evidence, final_evidence):
+                if isinstance(hev, dict):
+                    for k in ("main_head", "peeled_commit"):
+                        v = str(hev.get(k) or "").strip()
+                        if re.fullmatch(r"[0-9a-f]{40}", v):
+                            hist_merge_shas.add(v)
+                    cv = str(hev.get("candidate_commit") or "").strip()
+                    if re.fullmatch(r"[0-9a-f]{40}", cv):
+                        hist_cand_shas.add(cv)
+
+            exp_cand_pr_facts: Dict[str, Any] = {}
+            exp_pr_num_cli = args.candidate_pr_number if args.candidate_pr_number is not None else args.pr_number
+            exp_pr_st_cli = args.candidate_pr_status if args.candidate_pr_status is not None else args.pr_status
+            if exp_pr_num_cli is not None:
+                exp_cand_pr_facts["candidate_pr_number"] = exp_pr_num_cli
+            if exp_pr_st_cli is not None:
+                exp_cand_pr_facts["candidate_pr_status"] = str(exp_pr_st_cli).strip().upper()
+            if args.candidate_pr_head is not None:
+                exp_cand_pr_facts["candidate_pr_head"] = args.candidate_pr_head.strip()
+            if args.candidate_pr_base is not None:
+                exp_cand_pr_facts["candidate_pr_base"] = args.candidate_pr_base.strip()
+            if candidate_pr_draft_val is not None:
+                exp_cand_pr_facts["pr_draft"] = candidate_pr_draft_val
+            if args.candidate_commit is not None:
+                exp_cand_pr_facts["candidate_commit"] = args.candidate_commit.strip()
+            if args.push_run_id is not None:
+                exp_cand_pr_facts["candidate_push_run_id"] = str(args.push_run_id).strip()
+            if args.pr_run_id is not None:
+                exp_cand_pr_facts["candidate_pr_run_id"] = str(args.pr_run_id).strip()
+
+            cand_pr_mismatches, live_pr_details, live_pr_status = verify_current_candidate_pr_facts(
+                content=actual_content,
+                version_str=payload["product_version"]["version"],
+                repository=payload["project_identity"]["repository"],
+                project_root=project_root,
+                historical_merge_commits=hist_merge_shas,
+                historical_candidate_commits=hist_cand_shas,
+                expected_facts=exp_cand_pr_facts or None,
+                verify_live_pr=True,
+                require_live_pr=bool(args.require_live_pr or os.environ.get("GITHUB_ACTIONS") == "true"),
+                return_details=True,
+            )
+            mismatches.extend([f"[CURRENT_CANDIDATE_PR] {m}" for m in cand_pr_mismatches])
+            if live_pr_status:
+                print(
+                    f"[INFO] Live PR Identity Status: {live_pr_status}"
+                    + (
+                        f" (PR #{live_pr_details.get('candidate_pr_number')}, head={live_pr_details.get('pr_head_sha')}, state={live_pr_details.get('pr_state')}, draft={live_pr_details.get('pr_draft')}, ancestry={live_pr_details.get('ancestry_status')})"
+                        if live_pr_details
+                        else ""
+                    )
+                )
+
+        elif any(
+            x is not None
+            for x in (
+                args.candidate_pr_number,
+                args.candidate_pr_status,
+                args.candidate_pr_head,
+                args.candidate_pr_base,
+                candidate_pr_draft_val,
+                args.pr_number,
+                args.pr_status,
+            )
+        ):
+            exp_cand_pr_facts = {
+                "candidate_pr_number": args.candidate_pr_number if args.candidate_pr_number is not None else args.pr_number,
+                "candidate_pr_status": (
+                    str(args.candidate_pr_status).strip().upper()
+                    if args.candidate_pr_status is not None
+                    else (str(args.pr_status).strip().upper() if args.pr_status is not None else None)
+                ),
+                "candidate_pr_head": args.candidate_pr_head,
+                "candidate_pr_base": args.candidate_pr_base,
+                "pr_draft": candidate_pr_draft_val,
+                "candidate_commit": args.candidate_commit,
+            }
+            cand_pr_mismatches = verify_current_candidate_pr_facts(
+                content=actual_content,
+                version_str=payload["product_version"]["version"],
+                repository=payload["project_identity"]["repository"],
+                project_root=project_root,
+                expected_facts=exp_cand_pr_facts,
+            )
+            mismatches.extend([f"[CURRENT_CANDIDATE_PR] {m}" for m in cand_pr_mismatches])
 
         mismatches.extend(
             [f"[GIT_SNAPSHOT] {m}" for m in verify_git_snapshot_facts(project_root, actual_content, "baseline")]

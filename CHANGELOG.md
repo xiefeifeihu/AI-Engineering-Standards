@@ -4,6 +4,12 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-11-18
+
+> RELEASE_STATUS=CANDIDATE | VERSION=3.0.1 | LATEST_RELEASED_TAG=v3.0.0 | BASE_MAIN_COMMIT=18c4ced02f72198e9556b7f159169294f1c399f0 | PR12=MERGED (`c94e4f2fc8b72717f0c72f879584119a020c94e2`, Main CI Run `44259959029` Windows/Ubuntu PASS)
+>
+> **v3.0.1 发布候选说明**：本版本归档已完成合入 `main`（PR #12）的 `Std-020` 消费端试点反馈与工具链安全/事务闭环整改；在正式发布 PR 合入 `main`、双平台 Main CI 全绿并由官方工作流签发不可变 Annotated Tag `v3.0.1` 前，当前官方正式已发布 Tag 仍为 `v3.0.0`。
+
 ### Added
 - **F12 回滚 Commit 级内容绑定与打包器路径安全/崩溃恢复/跨进程并发锁加固**:
   - `rollback_lock`、`promote_upgrade` 与 `verify_approval_event_provenance` 对 `STANDARDS_LOCK_PROMOTION` / `LOCK_ROLLBACK` 强制基于 `commit_bindings.consumer.candidate_commit`（`prefer_git=True`，严禁静默回退工作区未提交文件）重算并双边校验 `content_bindings`，同时核验 `consumer.repository == engineering-manifest.yaml project.repository` 与消费端 Commit 可读性（缺失或不可读返回 `NOT_VERIFIABLE`）。
@@ -29,6 +35,7 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 ### Changed
 - Historical baseline/handoff snapshots only bypass the 24-hour freshness window after Git ancestry is proven; unknown or non-ancestor history remains non-verifiable or blocked.
 - Consumer guidance scanning now handles multiline HTML comments and Windows/UNC absolute paths without suppressing non-historical current pins.
+- Fixed Windows CI 8.3 short-path (`RUNNER~1` vs `runneradmin`) vs resolved boundary equivalence inside `scripts/package_acceptance.py` without relaxing symlink rejection across `.artifacts/acceptance/` and `.artifacts/packages/`.
 
 ## [3.0.0] - 2026-11-11
 

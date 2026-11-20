@@ -6,6 +6,7 @@ on:
       - "feature/**"
       - "feat/**"
       - "fix/**"
+      - "release/**"
       - "main"
       - "codex/**"
       - "docs/**"
@@ -36,6 +37,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -63,12 +65,34 @@ jobs:
           python tools/release_evidence.py --project-root . --check-ci
 
       - name: Verify Deterministic Engineering Baseline (STD-035)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python tools/generate_engineering_baseline.py --project-root . --scope standards-release --verify-only
+          python tools/generate_engineering_baseline.py --project-root . --scope standards-release --verify-only --require-live-pr
 
       - name: Verify Automated Cross-Session Handoff Contract (STD-020)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python tools/generate_handoff.py --project-root . --task-id Std-019-V3-0-0-POST-RELEASE-CLOSEOUT --verify-only
+          python tools/generate_handoff.py --project-root . --task-id Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION --verify-only --require-live-pr
+
+      - name: Record Live Runtime PR & CI Facts to Step Summary (F13 / F14)
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Runtime CI & Live PR Verification Summary (STD-034 / STD-035)"
+            echo "- Event: \`${{ github.event_name }}\`"
+            echo "- Workflow Run ID: \`${{ github.run_id }}\`"
+            echo "- GitHub Ref: \`${{ github.ref }}\`"
+            echo "- GitHub SHA: \`${{ github.sha }}\`"
+            echo "- Pull Request Number: \`${{ github.event.pull_request.number || 'N/A' }}\`"
+            echo "- Pull Request Base Ref: \`${{ github.event.pull_request.base.ref || 'N/A' }}\`"
+            echo "- Pull Request Head SHA: \`${{ github.event.pull_request.head.sha || 'N/A' }}\`"
+            echo "- Pull Request Draft: \`${{ github.event.pull_request.draft }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify Official Standards Sync Tool & Lock Contract (STD-034)
         run: |

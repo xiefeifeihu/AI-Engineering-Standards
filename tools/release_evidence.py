@@ -42,18 +42,297 @@ REQUIRED_EVIDENCE_FIELDS: Tuple[str, ...] = (
     "test_skipped",
     "windows_status",
     "ubuntu_status",
-    "old_tag_deleted",
-    "old_tag_object",
-    "old_tag_peeled_commit",
-    "old_tag_bundle_sha256",
     "release_flow_status",
 )
+
+
+def _parse_semver_tuple(ver: str) -> Optional[Tuple[int, int, int]]:
+    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)$", str(ver).strip())
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+def _infer_expected_version_from_filename(ev_path: Path) -> Optional[Tuple[str, Tuple[int, int, int], int]]:
+    """Return (version_str, semver_tuple, priority) for official release evidence filenames, or None."""
+    name = ev_path.name
+    m = re.match(r"^v(\d+\.\d+\.\d+)\.json$", name)
+    if m:
+        ver = m.group(1)
+        vt = _parse_semver_tuple(ver)
+        if vt is not None:
+            return ver, vt, 3
+        return None
+    if name == "std019-final-release.json":
+        return "3.0.0", (3, 0, 0), 2
+    mr = re.match(r"^v(\d+\.\d+\.\d+)-reissue\.json$", name)
+    if mr:
+        ver = mr.group(1)
+        vt = _parse_semver_tuple(ver)
+        if vt is not None:
+            return ver, vt, 1
+        return None
+    return None
+
+
+def _verify_local_git_tag_consistency(
+    project_root: Path,
+    release_tag: str,
+    expected_tag_object_sha: str,
+    expected_peeled_commit: str,
+) -> Tuple[str, List[str]]:
+    """Fail-closed verification of local Git annotated tag consistency.
+    Returns (status, errors) where status is 'PASS', 'FAIL', or 'NOT_VERIFIABLE':
+      - Missing .git directory -> NOT_VERIFIABLE
+      - Missing local tag ref -> NOT_VERIFIABLE
+      - Git timeout or command exception -> NOT_VERIFIABLE
+      - Lightweight tag (object type != 'tag') -> FAIL
+      - Tag Object SHA mismatch -> FAIL
+      - Peeled Commit mismatch -> FAIL
+      - Exact annotated tag match -> PASS
+    """
+    git_marker = project_root / ".git"
+    if not git_marker.exists():
+        return (
+            "NOT_VERIFIABLE",
+            [f"RELEASE_EVIDENCE_NO_GIT_REPO: '{project_root}' has no .git directory to verify tag '{release_tag}'"],
+        )
+
+    try:
+        res_obj = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "--verify", "--quiet", f"refs/tags/{release_tag}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return (
+            "NOT_VERIFIABLE",
+            [f"RELEASE_EVIDENCE_GIT_TIMEOUT: git rev-parse timed out for tag '{release_tag}': {exc}"],
+        )
+    except Exception as exc:
+        return (
+            "NOT_VERIFIABLE",
+            [f"RELEASE_EVIDENCE_GIT_ERROR: git rev-parse failed for tag '{release_tag}': {exc}"],
+        )
+
+    if res_obj.returncode != 0 or not (res_obj.stdout or "").strip():
+        stderr_txt = (res_obj.stderr or "").strip()
+        if stderr_txt:
+            return (
+                "NOT_VERIFIABLE",
+                [f"RELEASE_EVIDENCE_GIT_ERROR: git rev-parse failed for tag '{release_tag}': {stderr_txt}"],
+            )
+        return (
+            "NOT_VERIFIABLE",
+            [f"RELEASE_EVIDENCE_LOCAL_TAG_NOT_FOUND: Local git tag 'refs/tags/{release_tag}' does not exist"],
+        )
+    found_obj = res_obj.stdout.strip()
+
+    try:
+        res_type = subprocess.run(
+            ["git", "-C", str(project_root), "cat-file", "-t", f"refs/tags/{release_tag}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return (
+            "NOT_VERIFIABLE",
+            [f"RELEASE_EVIDENCE_GIT_TIMEOUT: git cat-file timed out for tag '{release_tag}': {exc}"],
+        )
+    except Exception as exc:
+        return (
+            "NOT_VERIFIABLE",
+            [f"RELEASE_EVIDENCE_GIT_ERROR: git cat-file failed for tag '{release_tag}': {exc}"],
+        )
+
+    if res_type.returncode != 0:
+        return (
+            "NOT_VERIFIABLE",
+            [f"RELEASE_EVIDENCE_GIT_ERROR: git cat-file failed for tag '{release_tag}': {(res_type.stderr or '').strip()}"],
+        )
+    obj_type = (res_type.stdout or "").strip()
+    if obj_type != "tag":
+        return (
+            "FAIL",
+            [
+                f"RELEASE_EVIDENCE_LOCAL_TAG_NOT_ANNOTATED: Local git tag '{release_tag}' has object type '{obj_type}' (annotated 'tag' required)"
+            ],
+        )
+
+    try:
+        res_peeled = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "--verify", "--quiet", f"refs/tags/{release_tag}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return (
+            "NOT_VERIFIABLE",
+            [f"RELEASE_EVIDENCE_GIT_TIMEOUT: git peeled rev-parse timed out for tag '{release_tag}': {exc}"],
+        )
+    except Exception as exc:
+        return (
+            "NOT_VERIFIABLE",
+            [f"RELEASE_EVIDENCE_GIT_ERROR: git peeled rev-parse failed for tag '{release_tag}': {exc}"],
+        )
+
+    if res_peeled.returncode != 0:
+        stderr_p = (res_peeled.stderr or "").strip()
+        if stderr_p:
+            return (
+                "NOT_VERIFIABLE",
+                [f"RELEASE_EVIDENCE_GIT_ERROR: git peeled rev-parse failed for tag '{release_tag}': {stderr_p}"],
+            )
+
+    found_peeled = (res_peeled.stdout or "").strip() if res_peeled.returncode == 0 else ""
+    errors: List[str] = []
+    if found_obj != expected_tag_object_sha:
+        errors.append(
+            f"RELEASE_EVIDENCE_LOCAL_TAG_OBJECT_MISMATCH: Local git tag '{release_tag}' object '{found_obj}' != evidence '{expected_tag_object_sha}'"
+        )
+    if not found_peeled or found_peeled != expected_peeled_commit:
+        errors.append(
+            f"RELEASE_EVIDENCE_LOCAL_TAG_PEELED_MISMATCH: Local git tag '{release_tag}' peeled commit '{found_peeled}' != evidence '{expected_peeled_commit}'"
+        )
+
+    if errors:
+        return "FAIL", errors
+    return "PASS", []
+
+
+def is_verified_released_evidence(
+    project_root: Path,
+    ev_path: Path,
+    expected_version: Optional[str] = None,
+    verify_local_git_tag: bool = True,
+) -> Tuple[bool, List[str], Optional[Dict[str, Any]]]:
+    """Validate that ev_path is a fully verified official RELEASED evidence file.
+    Rejects CANDIDATE, IN_PROGRESS, BLOCKED, corrupt JSON, schema violations,
+    filename/version mismatches, invalid/zero/lightweight tag SHAs, or FAIL/NOT_VERIFIABLE local Git tags.
+    """
+    project_root = Path(project_root).resolve()
+    ev_path = Path(ev_path).resolve()
+    if not ev_path.is_file():
+        return False, [f"RELEASE_EVIDENCE_NOT_FOUND: '{ev_path}' does not exist"], None
+
+    inferred = _infer_expected_version_from_filename(ev_path)
+    if expected_version is None and inferred is not None:
+        expected_version = inferred[0]
+
+    ok, errs, data = load_release_evidence(project_root, evidence_path=ev_path)
+    if not ok or data is None:
+        return False, errs or ["RELEASE_EVIDENCE_INVALID"], None
+
+    check_errors: List[str] = []
+    flow_status = str(data.get("release_flow_status") or "").strip()
+    if flow_status != "RELEASED":
+        check_errors.append(
+            f"RELEASE_EVIDENCE_NOT_RELEASED: release_flow_status='{flow_status}' (must be 'RELEASED')"
+        )
+
+    data_ver = str(data.get("version") or "").strip().lstrip("v")
+    if _parse_semver_tuple(data_ver) is None:
+        check_errors.append(f"RELEASE_EVIDENCE_INVALID_VERSION: '{data_ver}' is not valid SemVer")
+    elif expected_version is not None and data_ver != str(expected_version).strip().lstrip("v"):
+        check_errors.append(
+            f"RELEASE_EVIDENCE_VERSION_FILENAME_MISMATCH: version='{data_ver}' != expected='{expected_version}' for '{ev_path.name}'"
+        )
+
+    rel_tag = str(data.get("release_tag") or "").strip()
+    if rel_tag != f"v{data_ver}":
+        check_errors.append(
+            f"RELEASE_EVIDENCE_TAG_MISMATCH: release_tag='{rel_tag}' != 'v{data_ver}'"
+        )
+
+    tag_obj = str(data.get("tag_object_sha") or "").strip()
+    peeled = str(data.get("peeled_commit") or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", tag_obj) or tag_obj == "0" * 40:
+        check_errors.append(f"RELEASE_EVIDENCE_INVALID_TAG_OBJECT_SHA: '{tag_obj}'")
+    if not re.fullmatch(r"[0-9a-f]{40}", peeled) or peeled == "0" * 40:
+        check_errors.append(f"RELEASE_EVIDENCE_INVALID_PEELED_COMMIT: '{peeled}'")
+    if tag_obj and peeled and tag_obj == peeled:
+        check_errors.append("RELEASE_EVIDENCE_LIGHTWEIGHT_TAG: tag_object_sha must differ from peeled_commit")
+    if peeled and data.get("main_head") and peeled != data.get("main_head"):
+        check_errors.append(
+            f"RELEASE_EVIDENCE_PEELED_MISMATCH: peeled_commit='{peeled}' != main_head='{data.get('main_head')}'"
+        )
+
+    if data.get("tag_publish_status") != "PASS":
+        check_errors.append(
+            f"RELEASE_EVIDENCE_TAG_PUBLISH_NOT_PASS: tag_publish_status='{data.get('tag_publish_status')}'"
+        )
+    if data.get("ci_status") != "PASS":
+        check_errors.append(f"RELEASE_EVIDENCE_CI_NOT_PASS: ci_status='{data.get('ci_status')}'")
+    if data.get("windows_status") != "PASS" or data.get("ubuntu_status") != "PASS":
+        check_errors.append(
+            f"RELEASE_EVIDENCE_PLATFORM_CI_NOT_PASS: windows='{data.get('windows_status')}', ubuntu='{data.get('ubuntu_status')}'"
+        )
+    if data.get("pr_merged") is not True or not str(data.get("pr_merged_by") or "").strip():
+        check_errors.append("RELEASE_EVIDENCE_PR_MERGE_UNVERIFIED: pr_merged=true and pr_merged_by required")
+
+    if not check_errors and verify_local_git_tag:
+        tag_st, git_errs = _verify_local_git_tag_consistency(project_root, rel_tag, tag_obj, peeled)
+        if tag_st != "PASS":
+            check_errors.extend(git_errs or [f"RELEASE_EVIDENCE_LOCAL_TAG_{tag_st}"])
+
+    if check_errors:
+        return False, check_errors, None
+    return True, [], data
+
+
+def _find_latest_official_fallback(
+    rev_dir: Path,
+    max_version: Optional[str] = None,
+    project_root: Optional[Path] = None,
+    verify_local_git_tag: bool = True,
+) -> Optional[Path]:
+    """Select the highest SemVer verified RELEASED official evidence file <= max_version safely.
+    Never selects CANDIDATE, IN_PROGRESS, BLOCKED, corrupt JSON, schema-invalid, or FAIL/NOT_VERIFIABLE
+    tag-checked files, and never mutates historical evidence files.
+    """
+    if not rev_dir.exists():
+        return None
+    eff_root = Path(project_root).resolve() if project_root is not None else rev_dir.parent.parent.resolve()
+    max_tuple = _parse_semver_tuple(max_version) if max_version else None
+    candidates: List[Tuple[Tuple[int, int, int], int, Path]] = []
+
+    for p in sorted(rev_dir.glob("*.json")):
+        inferred = _infer_expected_version_from_filename(p)
+        if inferred is None:
+            continue
+        expected_ver, vt, priority = inferred
+        if max_tuple is not None and vt > max_tuple:
+            continue
+        ok, _, _ = is_verified_released_evidence(
+            eff_root,
+            p,
+            expected_version=expected_ver,
+            verify_local_git_tag=verify_local_git_tag,
+        )
+        if not ok:
+            continue
+        candidates.append((vt, priority, p))
+
+    if candidates:
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return candidates[0][2]
+    return None
 
 
 def resolve_release_evidence_path(
     project_root: Path,
     explicit_path: Optional[str | Path] = None,
     version: Optional[str] = None,
+    verify_local_git_tag: bool = True,
 ) -> Path:
     project_root = Path(project_root).resolve()
     if explicit_path:
@@ -63,35 +342,68 @@ def resolve_release_evidence_path(
     rev_dir = project_root / "docs" / "release-evidence"
     if version is not None:
         ver_str = str(version).lstrip("v")
-        # Explicit version requested: do NOT let std019-final-release.json silently mask historical versions
-        reissue_candidate = rev_dir / f"v{ver_str}-reissue.json"
-        if reissue_candidate.exists():
-            return reissue_candidate
+        # Explicit version requested: check current-version plain file, reissue file, and v3.0.0 std019 file
         plain_candidate = rev_dir / f"v{ver_str}.json"
         if plain_candidate.exists():
             return plain_candidate
+        reissue_candidate = rev_dir / f"v{ver_str}-reissue.json"
+        if reissue_candidate.exists():
+            return reissue_candidate
         if ver_str == "3.0.0":
             final_candidate = rev_dir / "std019-final-release.json"
             if final_candidate.exists():
                 return final_candidate
         return reissue_candidate
 
-    # Default path when neither explicit_path nor version is specified:
-    # Current official release defaults to std019-final-release.json
-    final_candidate = rev_dir / "std019-final-release.json"
-    if final_candidate.exists():
-        return final_candidate
+    # Default selection reads VERSION first; only a fully verified RELEASED evidence file may be selected.
+    # On a candidate release branch prior to formal Tag publish, safely fall back to the highest verified
+    # RELEASED evidence file <= VERSION (never selecting CANDIDATE, IN_PROGRESS, BLOCKED, or corrupt files).
+    version_file = project_root / "VERSION"
+    cur_ver: Optional[str] = None
+    if version_file.exists():
+        raw_ver = version_file.read_text(encoding="utf-8-sig").strip().lstrip("v")
+        if _parse_semver_tuple(raw_ver) is not None:
+            cur_ver = raw_ver
 
-    fallback = rev_dir / "v3.0.0-reissue.json"
-    if fallback.exists():
-        return fallback
+    if cur_ver:
+        cur_plain = rev_dir / f"v{cur_ver}.json"
+        if cur_plain.exists() and is_verified_released_evidence(
+            project_root, cur_plain, expected_version=cur_ver, verify_local_git_tag=verify_local_git_tag
+        )[0]:
+            return cur_plain
+        if cur_ver == "3.0.0":
+            std019 = rev_dir / "std019-final-release.json"
+            if std019.exists() and is_verified_released_evidence(
+                project_root, std019, expected_version="3.0.0", verify_local_git_tag=verify_local_git_tag
+            )[0]:
+                return std019
+        cur_reissue = rev_dir / f"v{cur_ver}-reissue.json"
+        if cur_reissue.exists() and is_verified_released_evidence(
+            project_root, cur_reissue, expected_version=cur_ver, verify_local_git_tag=verify_local_git_tag
+        )[0]:
+            return cur_reissue
 
-    if rev_dir.exists():
-        json_files = sorted(rev_dir.glob("*.json"))
-        if json_files:
-            return json_files[0]
+        prev_fallback = _find_latest_official_fallback(
+            rev_dir,
+            max_version=cur_ver,
+            project_root=project_root,
+            verify_local_git_tag=verify_local_git_tag,
+        )
+        if prev_fallback is not None:
+            return prev_fallback
 
-    return fallback
+        return rev_dir / f"v{cur_ver}-no-verified-released-evidence.json"
+
+    any_fallback = _find_latest_official_fallback(
+        rev_dir,
+        max_version=None,
+        project_root=project_root,
+        verify_local_git_tag=verify_local_git_tag,
+    )
+    if any_fallback is not None:
+        return any_fallback
+
+    return rev_dir / "no-verified-released-evidence.json"
 
 
 def load_release_evidence(
@@ -133,31 +445,41 @@ def load_release_evidence(
         elif data[field] is None:
             errors.append(f"RELEASE_EVIDENCE_NULL_FIELD: '{field}' cannot be null")
 
-    # Validate commit hashes
+    # Validate commit hashes (reject malformed or all-zero placeholder SHAs)
     for sha_field in (
         "main_head",
         "candidate_commit",
         "snapshot_commit",
         "last_verified_ci_commit",
-        "old_tag_object",
-        "old_tag_peeled_commit",
     ):
         val = str(data.get(sha_field, ""))
-        if not re.match(r"^[0-9a-f]{40}$", val):
+        if not re.match(r"^[0-9a-f]{40}$", val) or val == "0" * 40:
             errors.append(
-                f"RELEASE_EVIDENCE_INVALID_SHA: '{sha_field}' must be a 40-hex commit SHA (got '{val}')"
+                f"RELEASE_EVIDENCE_INVALID_SHA: '{sha_field}' must be a non-zero 40-hex commit SHA (got '{val}')"
             )
 
-    bundle_sha = str(data.get("old_tag_bundle_sha256", ""))
-    if not re.match(r"^[0-9a-f]{64}$", bundle_sha):
-        errors.append(
-            f"RELEASE_EVIDENCE_INVALID_BUNDLE_SHA: 'old_tag_bundle_sha256' must be a 64-hex SHA (got '{bundle_sha}')"
-        )
-
-    if not isinstance(data.get("old_tag_deleted"), bool):
+    if "old_tag_deleted" in data and not isinstance(data.get("old_tag_deleted"), bool):
         errors.append(
             f"RELEASE_EVIDENCE_INVALID_TYPE: 'old_tag_deleted' must be a boolean (got {type(data.get('old_tag_deleted')).__name__})"
         )
+
+    old_tag_deleted_flag = data.get("old_tag_deleted") is True
+    for sha_field in ("old_tag_object", "old_tag_peeled_commit"):
+        raw_val = data.get(sha_field)
+        if old_tag_deleted_flag or raw_val is not None:
+            val = str(raw_val or "")
+            if not re.match(r"^[0-9a-f]{40}$", val) or val == "0" * 40:
+                errors.append(
+                    f"RELEASE_EVIDENCE_INVALID_SHA: '{sha_field}' must be a non-zero 40-hex commit SHA (got '{val}')"
+                )
+
+    raw_bundle = data.get("old_tag_bundle_sha256")
+    if old_tag_deleted_flag or raw_bundle is not None:
+        bundle_sha = str(raw_bundle or "")
+        if not re.match(r"^[0-9a-f]{64}$", bundle_sha) or bundle_sha == "0" * 64:
+            errors.append(
+                f"RELEASE_EVIDENCE_INVALID_BUNDLE_SHA: 'old_tag_bundle_sha256' must be a non-zero 64-hex SHA (got '{bundle_sha}')"
+            )
 
     push_id = str(data.get("push_run_id", "")).strip()
     if not push_id.isdigit():
@@ -180,10 +502,10 @@ def load_release_evidence(
 
         tag_obj = str(data.get("tag_object_sha", ""))
         peeled = str(data.get("peeled_commit", ""))
-        if not re.match(r"^[0-9a-f]{40}$", tag_obj):
-            errors.append(f"RELEASE_EVIDENCE_INVALID_SHA: 'tag_object_sha' must be 40-hex SHA (got '{tag_obj}')")
-        if not re.match(r"^[0-9a-f]{40}$", peeled):
-            errors.append(f"RELEASE_EVIDENCE_INVALID_SHA: 'peeled_commit' must be 40-hex SHA (got '{peeled}')")
+        if not re.match(r"^[0-9a-f]{40}$", tag_obj) or tag_obj == "0" * 40:
+            errors.append(f"RELEASE_EVIDENCE_INVALID_SHA: 'tag_object_sha' must be a non-zero 40-hex SHA (got '{tag_obj}')")
+        if not re.match(r"^[0-9a-f]{40}$", peeled) or peeled == "0" * 40:
+            errors.append(f"RELEASE_EVIDENCE_INVALID_SHA: 'peeled_commit' must be a non-zero 40-hex SHA (got '{peeled}')")
         if tag_obj and peeled and tag_obj == peeled:
             errors.append("RELEASE_EVIDENCE_LIGHTWEIGHT_TAG: 'tag_object_sha' must differ from 'peeled_commit' (annotated tag required)")
         if peeled and data.get("main_head") and peeled != data.get("main_head"):
@@ -196,8 +518,10 @@ def load_release_evidence(
         if not data.get("pr_merged_by"):
             errors.append("RELEASE_EVIDENCE_MISSING_FIELD: 'pr_merged_by' is required for RELEASED evidence")
 
-    # Validate against JSON schema if present
+    # Validate against JSON schema (prefer project_root, fallback to bundled Standards schema)
     schema_path = project_root / "schemas" / "release-evidence.schema.json"
+    if not schema_path.exists():
+        schema_path = Path(__file__).resolve().parent.parent / "schemas" / "release-evidence.schema.json"
     if schema_path.exists() and jsonschema is not None:
         try:
             schema_data = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -1065,6 +1389,783 @@ def verify_github_ci_runs(
         return "NOT_VERIFIABLE", all_errors, details
 
     return "PASS", [], details
+
+
+def _extract_repo_from_pr_payload(pr_data: Dict[str, Any]) -> Optional[str]:
+    """Extract 'owner/repo' full_name from a GitHub PR API payload."""
+    base = pr_data.get("base")
+    if isinstance(base, dict):
+        repo_obj = base.get("repo")
+        if isinstance(repo_obj, dict) and repo_obj.get("full_name"):
+            return str(repo_obj["full_name"]).strip()
+    head = pr_data.get("head")
+    if isinstance(head, dict):
+        repo_obj = head.get("repo")
+        if isinstance(repo_obj, dict) and repo_obj.get("full_name"):
+            return str(repo_obj["full_name"]).strip()
+    for url_key in ("url", "html_url"):
+        raw_url = str(pr_data.get(url_key) or "").strip()
+        m = re.search(r"github\.com/(?:repos/)?([^/]+/[^/]+)/pulls?/\d+", raw_url)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def _query_compare_via_api_or_gh(
+    repo: str,
+    base_sha: str,
+    head_sha: str,
+    timeout: int = 10,
+) -> Tuple[bool, Optional[str], str]:
+    """Query GitHub Compare API to check commit ancestry when remote head commit is not fetched locally."""
+    tok = _get_github_token()
+    if tok:
+        url = f"https://api.github.com/repos/{repo}/compare/{base_sha}...{head_sha}"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {tok}",
+            "User-Agent": "AI-Engineering-Standards-Verifier",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            return True, str(data.get("status") or "").strip(), ""
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return True, "diverged", "compare 404 (unrelated history)"
+        except Exception:
+            pass
+    try:
+        res = subprocess.run(
+            ["gh", "api", f"repos/{repo}/compare/{base_sha}...{head_sha}", "--jq", ".status"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        if res.returncode == 0 and (res.stdout or "").strip():
+            return True, res.stdout.strip(), ""
+    except Exception as exc:
+        return False, None, _sanitize_error_message(str(exc), tok)
+    return False, None, "compare API unavailable"
+
+
+def verify_commit_ancestry(
+    project_root: Path,
+    ancestor_commit: str,
+    descendant_commit: str,
+    repository: Optional[str] = None,
+    allow_remote_compare: bool = False,
+) -> Tuple[str, List[str]]:
+    """Verify via Git that ancestor_commit is a real commit and is an ancestor of descendant_commit.
+    Uses `git merge-base --is-ancestor <ancestor_commit> <descendant_commit>`.
+    Returns ('PASS' | 'FAIL' | 'NOT_VERIFIABLE', errors).
+    """
+    project_root = Path(project_root).resolve()
+    anc = str(ancestor_commit or "").strip()
+    desc = str(descendant_commit or "").strip()
+
+    if not re.fullmatch(r"[0-9a-f]{40}", anc) or anc == "0" * 40:
+        return "FAIL", [f"CANDIDATE_COMMIT_INVALID: '{anc}' must be a non-zero 40-hex commit SHA"]
+    if not re.fullmatch(r"[0-9a-f]{40}", desc) or desc == "0" * 40:
+        return "FAIL", [f"CANDIDATE_PR_INVALID_HEAD: '{desc}' must be a non-zero 40-hex commit SHA"]
+
+    if not (project_root / ".git").exists():
+        return "NOT_VERIFIABLE", [f"GIT_REPO_NOT_FOUND: '{project_root}' has no .git directory to verify commit ancestry"]
+
+    try:
+        rc_anc_obj = subprocess.run(
+            ["git", "-C", str(project_root), "cat-file", "-e", f"{anc}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except Exception as exc:
+        return "NOT_VERIFIABLE", [f"GIT_ANCESTRY_ERROR: failed inspecting candidate commit '{anc}': {exc}"]
+
+    if rc_anc_obj.returncode != 0:
+        return "FAIL", [f"CANDIDATE_COMMIT_NOT_FOUND: candidate_commit '{anc}' does not exist in Git repository"]
+
+    try:
+        rc_desc_obj = subprocess.run(
+            ["git", "-C", str(project_root), "cat-file", "-e", f"{desc}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except Exception as exc:
+        return "NOT_VERIFIABLE", [f"GIT_ANCESTRY_ERROR: failed inspecting PR head '{desc}': {exc}"]
+
+    if rc_desc_obj.returncode != 0:
+        if allow_remote_compare and repository:
+            cmp_ok, cmp_status, cmp_err = _query_compare_via_api_or_gh(repository, anc, desc)
+            if cmp_ok and cmp_status is not None:
+                if cmp_status in ("identical", "ahead"):
+                    return "PASS", []
+                return "FAIL", [
+                    f"CANDIDATE_COMMIT_NOT_ANCESTOR_OF_PR_HEAD: remote compare '{anc}...{desc}' returned status='{cmp_status}'"
+                ]
+            return "NOT_VERIFIABLE", [
+                f"PR_HEAD_COMMIT_NOT_LOCAL_AND_COMPARE_FAILED: PR head '{desc}' is not in local git objects and compare API failed ({cmp_err})"
+            ]
+        return "NOT_VERIFIABLE", [
+            f"PR_HEAD_COMMIT_NOT_IN_LOCAL_GIT: actual PR head '{desc}' does not exist in local Git repository"
+        ]
+
+    try:
+        rc_merge = subprocess.run(
+            ["git", "-C", str(project_root), "merge-base", "--is-ancestor", anc, desc],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except Exception as exc:
+        return "NOT_VERIFIABLE", [f"GIT_ANCESTRY_ERROR: merge-base check failed: {exc}"]
+
+    if rc_merge.returncode == 0:
+        return "PASS", []
+    if rc_merge.returncode == 1:
+        return "FAIL", [
+            f"CANDIDATE_COMMIT_NOT_ANCESTOR_OF_PR_HEAD: candidate_commit '{anc}' is NOT an ancestor of PR HEAD '{desc}'"
+        ]
+    return "NOT_VERIFIABLE", [
+        f"GIT_ANCESTRY_ERROR: merge-base returned exit_code={rc_merge.returncode}: {(rc_merge.stderr or '').strip()}"
+    ]
+
+
+def load_trusted_github_pr_event(event_path: Optional[str | Path] = None) -> Optional[Dict[str, Any]]:
+    """Load GitHub Actions event JSON from GITHUB_EVENT_PATH if available."""
+    raw_path = str(event_path or os.environ.get("GITHUB_EVENT_PATH", "")).strip()
+    if not raw_path:
+        return None
+    p = Path(raw_path)
+    if not p.is_file():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def verify_candidate_pr_merge_event(
+    pr_event: Dict[str, Any],
+    expected_pr_number: int,
+    expected_candidate_commit: str,
+    expected_owner: str,
+    expected_base: str = "main",
+    forbidden_historical_merge_commits: Optional[set[str]] = None,
+    project_root: Optional[Path] = None,
+    repository: Optional[str] = None,
+) -> Tuple[bool, List[str], Optional[str], Optional[str]]:
+    """Verify a GitHub PR API event before allowing current candidate PR status=MERGED (Rule C).
+    Requires merged=true, merged_by==expected_owner, base.ref==expected_base ('main'),
+    head.sha valid & candidate_commit is an ancestor of head.sha, and a valid non-historical merge_commit_sha.
+    """
+    errors: List[str] = []
+    if not isinstance(pr_event, dict):
+        return False, ["CANDIDATE_PR_MERGE_EVENT_INVALID: PR merge event payload must be an object"], None, None
+
+    ev_num = pr_event.get("number")
+    if ev_num is not None and int(ev_num) != int(expected_pr_number):
+        errors.append(
+            f"CANDIDATE_PR_NUMBER_MISMATCH: PR merge event number={ev_num} != candidate_pr_number={expected_pr_number}"
+        )
+
+    if pr_event.get("merged") is not True:
+        errors.append("CANDIDATE_PR_NOT_MERGED: GitHub PR API event does not confirm merged=true")
+
+    merged_by_raw = pr_event.get("merged_by")
+    if isinstance(merged_by_raw, dict):
+        merged_by_login = str(merged_by_raw.get("login") or "").strip()
+    else:
+        merged_by_login = str(merged_by_raw or "").strip()
+    if not merged_by_login:
+        errors.append("CANDIDATE_PR_MERGED_BY_MISSING: GitHub PR API event missing merged_by")
+    elif merged_by_login != expected_owner:
+        errors.append(
+            f"CANDIDATE_PR_MERGED_BY_UNAUTHORIZED: merged_by='{merged_by_login}' != expected owner '{expected_owner}'"
+        )
+
+    base_raw = pr_event.get("base")
+    base_ref = str(base_raw.get("ref") if isinstance(base_raw, dict) else pr_event.get("base_ref") or "").strip()
+    if base_ref != expected_base:
+        errors.append(
+            f"CANDIDATE_PR_BASE_NOT_MAIN: PR merge event base.ref='{base_ref}' != '{expected_base}'"
+        )
+
+    head_raw = pr_event.get("head")
+    head_sha = str(head_raw.get("sha") if isinstance(head_raw, dict) else pr_event.get("head_sha") or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", head_sha) or head_sha == "0" * 40:
+        errors.append(f"CANDIDATE_PR_INVALID_HEAD: PR merge event head.sha='{head_sha}' is not a non-zero 40-hex SHA")
+    elif expected_candidate_commit:
+        if project_root is not None and (Path(project_root) / ".git").exists():
+            anc_st, anc_errs = verify_commit_ancestry(
+                Path(project_root),
+                expected_candidate_commit,
+                head_sha,
+                repository=repository,
+                allow_remote_compare=True,
+            )
+            if anc_st != "PASS" and head_sha != expected_candidate_commit:
+                errors.extend(anc_errs or [f"CANDIDATE_PR_HEAD_MISMATCH: head.sha='{head_sha}' != candidate_commit='{expected_candidate_commit}'"])
+        elif head_sha != expected_candidate_commit:
+            errors.append(
+                f"CANDIDATE_PR_HEAD_MISMATCH: PR merge event head.sha='{head_sha}' != candidate_commit='{expected_candidate_commit}'"
+            )
+
+    merge_commit_sha = str(pr_event.get("merge_commit_sha") or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", merge_commit_sha) or merge_commit_sha == "0" * 40:
+        errors.append(
+            f"CANDIDATE_PR_INVALID_MERGE_COMMIT: merge_commit_sha='{merge_commit_sha}' must be a non-zero 40-hex SHA"
+        )
+    elif forbidden_historical_merge_commits and merge_commit_sha in forbidden_historical_merge_commits:
+        errors.append(
+            f"CANDIDATE_PR_HISTORICAL_MERGE_COMMIT_POLLUTION: merge_commit_sha='{merge_commit_sha}' belongs to a historical release PR"
+        )
+
+    if errors:
+        return False, errors, None, None
+    return True, [], merge_commit_sha, merged_by_login
+
+
+def verify_live_pr_identity(
+    project_root: Path,
+    repository: str,
+    candidate_pr_number: int,
+    candidate_commit: str,
+    expected_pr_status: Optional[str] = None,
+    expected_pr_draft: Optional[bool] = None,
+    expected_base_ref: str = "main",
+    expected_owner: Optional[str] = None,
+    forbidden_historical_merge_commits: Optional[set[str]] = None,
+    require_live: bool = False,
+    allow_merged_on_main: bool = True,
+    simulate_pr_data: Optional[Dict[str, Any]] = None,
+    simulate_pr_error: Optional[str] = None,
+    simulate_event_data: Optional[Dict[str, Any]] = None,
+    timeout: int = 10,
+) -> Tuple[str, List[str], Dict[str, Any]]:
+    """Shared live PR identity & commit ancestry verifier for BOTH Baseline and Handoff (F13 + F14).
+
+    Verifies:
+      1. candidate_commit exists in Git.
+      2. Real GitHub PR API (or simulated API response in unit tests) for repository, number, state,
+         draft, base.ref, and head.sha; NEVER trusts static self-references when API is unavailable.
+      3. On pull_request CI events, reads event pull_request.head.sha (NEVER GITHUB_SHA merge ref).
+      4. On push CI events, checks GITHUB_SHA + GitHub PR API.
+      5. Verifies `git merge-base --is-ancestor <candidate_commit> <actual_pr_head>`.
+      6. If GitHub API unavailable: returns NOT_VERIFIABLE offline, or FAIL (BLOCK) when require_live=True.
+    """
+    project_root = Path(project_root).resolve()
+    eff_owner = (expected_owner or repository.split("/")[0]).strip()
+    details: Dict[str, Any] = {
+        "repository": repository,
+        "candidate_pr_number": candidate_pr_number,
+        "candidate_commit": candidate_commit,
+        "source": None,
+        "pr_head_sha": None,
+        "pr_state": None,
+        "pr_draft": None,
+        "pr_base": None,
+        "pr_merged": None,
+        "pr_merged_by": None,
+        "merge_commit_sha": None,
+        "ancestry_status": None,
+        "verification_status": "NOT_VERIFIABLE",
+    }
+
+    try:
+        pr_num_int = int(candidate_pr_number)
+    except Exception:
+        return "FAIL", [f"CANDIDATE_PR_INVALID_NUMBER: '{candidate_pr_number}' is not an integer"], details
+    if pr_num_int < 1:
+        return "FAIL", [f"CANDIDATE_PR_INVALID_NUMBER: candidate_pr_number must be >= 1 (got {pr_num_int})"], details
+
+    if not re.fullmatch(r"[0-9a-f]{40}", str(candidate_commit or "")) or candidate_commit == "0" * 40:
+        return "FAIL", [f"CANDIDATE_COMMIT_INVALID: '{candidate_commit}' must be a non-zero 40-hex commit SHA"], details
+
+    if (project_root / ".git").exists():
+        rc_cand = subprocess.run(
+            ["git", "-C", str(project_root), "cat-file", "-e", f"{candidate_commit}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if rc_cand.returncode != 0:
+            return "FAIL", [
+                f"CANDIDATE_COMMIT_NOT_FOUND: candidate_commit '{candidate_commit}' does not exist in Git repository"
+            ], details
+
+    event_name = os.environ.get("GITHUB_EVENT_NAME", "").strip()
+    event_data = simulate_event_data if simulate_event_data is not None else load_trusted_github_pr_event()
+    event_pr: Optional[Dict[str, Any]] = None
+    if isinstance(event_data, dict) and isinstance(event_data.get("pull_request"), dict):
+        if simulate_event_data is not None or event_name.startswith("pull_request"):
+            event_pr = event_data["pull_request"]
+            ev_repo = (event_data.get("repository") or {}).get("full_name") if isinstance(event_data.get("repository"), dict) else None
+            if ev_repo and str(ev_repo).strip() != repository:
+                return "FAIL", [
+                    f"LIVE_PR_EVENT_REPOSITORY_MISMATCH: event repo='{ev_repo}' != '{repository}'"
+                ], details
+
+    # Acquire PR API object (fail closed if unavailable in online/strict mode; never fall back to static cache)
+    if simulate_pr_error is not None:
+        api_ok = False
+        api_pr = None
+        api_err = simulate_pr_error
+    elif simulate_pr_data is not None:
+        api_ok = True
+        api_pr = simulate_pr_data
+        api_err = ""
+        details["source"] = "github_pr_api_simulated"
+    else:
+        api_ok, api_pr, api_err = _query_pr_via_api(repository, pr_num_int, timeout=timeout)
+        if api_ok and api_pr is not None:
+            details["source"] = "github_rest_api"
+        else:
+            api_ok, api_pr, gh_err = _query_pr_via_gh(repository, pr_num_int, timeout=timeout)
+            if api_ok and api_pr is not None:
+                details["source"] = "gh_cli_api"
+            else:
+                api_err = f"{api_err}; gh fallback: {gh_err}" if api_err else gh_err
+
+    if not api_ok or api_pr is None:
+        clean_err = _sanitize_error_message(api_err or "GitHub PR API unavailable")
+        details["verification_status"] = "NOT_VERIFIABLE"
+        details["reason"] = f"LIVE_PR_API_UNAVAILABLE: {clean_err}"
+        if require_live:
+            return "FAIL", [
+                f"LIVE_PR_API_BLOCKED: Real GitHub PR API unavailable in online/strict CI mode: {clean_err}"
+            ], details
+        return "NOT_VERIFIABLE", [
+            f"LIVE_PR_API_NOT_VERIFIABLE: GitHub PR API unavailable offline: {clean_err}"
+        ], details
+
+    errors: List[str] = []
+
+    # 1. Repository binding (Rule F14 requires verifying repository)
+    actual_repo = _extract_repo_from_pr_payload(api_pr)
+    details["actual_repository"] = actual_repo
+    if not actual_repo:
+        errors.append("LIVE_PR_REPOSITORY_MISSING: GitHub PR API payload missing repository full_name")
+    elif actual_repo != repository:
+        errors.append(f"LIVE_PR_REPOSITORY_MISMATCH: expected '{repository}', got '{actual_repo}'")
+
+    # 2. PR Number binding
+    actual_num = api_pr.get("number")
+    if actual_num is None:
+        errors.append("LIVE_PR_NUMBER_MISSING: GitHub PR API payload missing 'number'")
+    elif int(actual_num) != pr_num_int:
+        errors.append(f"LIVE_PR_NUMBER_MISMATCH: expected PR #{pr_num_int}, got PR #{actual_num}")
+
+    if event_pr is not None and event_pr.get("number") is not None:
+        if int(event_pr["number"]) != pr_num_int:
+            errors.append(
+                f"LIVE_PR_EVENT_NUMBER_MISMATCH: pull_request event number={event_pr['number']} != PR #{pr_num_int}"
+            )
+
+    # 3. Base branch binding
+    actual_base = str((api_pr.get("base") or {}).get("ref") or "").strip()
+    details["pr_base"] = actual_base or None
+    if actual_base != expected_base_ref:
+        errors.append(
+            f"CANDIDATE_PR_BASE_NOT_MAIN: live PR #{pr_num_int} base.ref='{actual_base}' != '{expected_base_ref}'"
+        )
+    if event_pr is not None:
+        ev_base = str((event_pr.get("base") or {}).get("ref") or "").strip()
+        if ev_base and ev_base != expected_base_ref:
+            errors.append(
+                f"CANDIDATE_PR_EVENT_BASE_NOT_MAIN: event pull_request.base.ref='{ev_base}' != '{expected_base_ref}'"
+            )
+
+    # 4. Head SHA binding (NEVER use GITHUB_SHA in pull_request workflow as PR head)
+    api_head = str((api_pr.get("head") or {}).get("sha") or "").strip()
+    ev_head = str((event_pr.get("head") or {}).get("sha") or "").strip() if event_pr is not None else ""
+    effective_pr_head = ev_head or api_head
+    details["pr_head_sha"] = effective_pr_head or None
+    details["api_pr_head_sha"] = api_head or None
+
+    if not re.fullmatch(r"[0-9a-f]{40}", api_head) or api_head == "0" * 40:
+        errors.append(f"LIVE_PR_HEAD_INVALID: live PR API head.sha='{api_head}' must be a non-zero 40-hex SHA")
+    if event_pr is not None and ev_head:
+        if not re.fullmatch(r"[0-9a-f]{40}", ev_head) or ev_head == "0" * 40:
+            errors.append(f"LIVE_PR_EVENT_HEAD_INVALID: event pull_request.head.sha='{ev_head}' is invalid")
+
+    # 5. State, draft, and merge provenance checks
+    raw_state = str(api_pr.get("state") or "").strip().lower()
+    live_merged = api_pr.get("merged") is True
+    live_draft = bool(api_pr.get("draft", False))
+    details["pr_state"] = raw_state.upper() if raw_state else None
+    details["pr_draft"] = live_draft
+    details["pr_merged"] = live_merged
+
+    if event_pr is not None and event_pr.get("draft") is not None:
+        ev_draft = bool(event_pr.get("draft"))
+        if ev_draft != live_draft and expected_pr_draft is not None and ev_draft != expected_pr_draft:
+            errors.append(
+                f"CANDIDATE_PR_EVENT_DRAFT_MISMATCH: event pull_request.draft={ev_draft} != expected {expected_pr_draft}"
+            )
+
+    exp_status_norm = str(expected_pr_status).strip().upper() if expected_pr_status else None
+    is_main_push = (
+        event_name == "push"
+        and os.environ.get("GITHUB_REF", "").strip() == f"refs/heads/{expected_base_ref}"
+    )
+
+    if live_merged:
+        m_ok, m_errs, m_sha, m_by = verify_candidate_pr_merge_event(
+            pr_event=api_pr,
+            expected_pr_number=pr_num_int,
+            expected_candidate_commit=candidate_commit,
+            expected_owner=eff_owner,
+            expected_base=expected_base_ref,
+            forbidden_historical_merge_commits=forbidden_historical_merge_commits,
+            project_root=project_root,
+            repository=repository,
+        )
+        details["merge_commit_sha"] = m_sha
+        details["pr_merged_by"] = m_by
+        if not m_ok:
+            errors.extend(m_errs)
+        if exp_status_norm in ("OPEN", "DRAFT") and not (is_main_push and allow_merged_on_main):
+            errors.append(
+                f"LIVE_PR_STATE_MISMATCH: expected '{exp_status_norm}', but live PR #{pr_num_int} is already MERGED"
+            )
+    else:
+        if exp_status_norm == "MERGED":
+            errors.append(
+                f"CANDIDATE_PR_NOT_MERGED: static expectation is MERGED, but live PR #{pr_num_int} has merged={live_merged}, state='{raw_state}'"
+            )
+        if raw_state != "open":
+            errors.append(
+                f"LIVE_PR_NOT_OPEN: live PR #{pr_num_int} state='{raw_state}' (expected 'open')"
+            )
+        if exp_status_norm == "DRAFT" and not live_draft:
+            errors.append(
+                f"CANDIDATE_PR_DRAFT_MISMATCH: expected PR status DRAFT (draft=true), live PR #{pr_num_int} has draft=false"
+            )
+        if expected_pr_draft is not None and live_draft != expected_pr_draft:
+            errors.append(
+                f"CANDIDATE_PR_DRAFT_MISMATCH: expected draft={expected_pr_draft}, live PR #{pr_num_int} has draft={live_draft}"
+            )
+
+    # 6. Verify candidate_commit is an ancestor of effective PR head (and push GITHUB_SHA on branch push)
+    if re.fullmatch(r"[0-9a-f]{40}", effective_pr_head):
+        anc_st, anc_errs = verify_commit_ancestry(
+            project_root,
+            candidate_commit,
+            effective_pr_head,
+            repository=repository,
+            allow_remote_compare=True,
+        )
+        details["ancestry_status"] = anc_st
+        if anc_st == "FAIL":
+            errors.extend(anc_errs)
+        elif anc_st == "NOT_VERIFIABLE":
+            if require_live:
+                errors.extend(anc_errs)
+            else:
+                details["verification_status"] = "NOT_VERIFIABLE"
+                return "NOT_VERIFIABLE", errors + anc_errs, details
+
+    if event_name == "push":
+        push_sha = os.environ.get("GITHUB_SHA", "").strip()
+        push_ref = os.environ.get("GITHUB_REF", "").strip()
+        pr_head_ref = str((api_pr.get("head") or {}).get("ref") or "").strip()
+        if (
+            re.fullmatch(r"[0-9a-f]{40}", push_sha)
+            and pr_head_ref
+            and push_ref == f"refs/heads/{pr_head_ref}"
+        ):
+            p_anc_st, p_anc_errs = verify_commit_ancestry(
+                project_root,
+                candidate_commit,
+                push_sha,
+                repository=repository,
+                allow_remote_compare=False,
+            )
+            if p_anc_st != "PASS":
+                errors.extend(p_anc_errs)
+
+    if errors:
+        details["verification_status"] = "FAIL"
+        return "FAIL", errors, details
+
+    details["verification_status"] = "PASS"
+    return "PASS", [], details
+
+
+def extract_scoped_markdown(content: str, scope_tag: str) -> Tuple[str, List[str]]:
+    """Extract content under the unique markdown heading containing scope_tag."""
+    lines = content.splitlines()
+    matches = []
+    for idx, line in enumerate(lines):
+        m = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if m and scope_tag in m.group(2):
+            matches.append((idx, len(m.group(1)), line))
+
+    if len(matches) == 0:
+        return "", [f"SCOPE_SECTION_MISSING: Scope section '{scope_tag}' not found"]
+    if len(matches) > 1:
+        return "", [f"DUPLICATE_SCOPE_SECTION: Duplicate scope section '{scope_tag}' found ({len(matches)} occurrences)"]
+
+    start_idx, start_lvl, _ = matches[0]
+    scoped_lines: List[str] = []
+    for i in range(start_idx, len(lines)):
+        m = re.match(r"^(#{1,6})\s+(.*)$", lines[i])
+        if m and i > start_idx and len(m.group(1)) <= start_lvl:
+            break
+        scoped_lines.append(lines[i])
+    return "\n".join(scoped_lines), []
+
+
+def _extract_bullet_line_matches(target_text: str, patterns: List[str]) -> List[str]:
+    matches: List[str] = []
+    seen_spans: set[Tuple[int, int, int]] = set()
+    for line_index, raw_line in enumerate(target_text.splitlines()):
+        line = raw_line.strip()
+        if not (line.startswith("- **") or line.startswith("**") or line.startswith("- ")):
+            continue
+        for pat in patterns:
+            for match in re.finditer(pat, line):
+                s, e = match.span(1)
+                key = (line_index, s, e)
+                if key in seen_spans:
+                    continue
+                seen_spans.add(key)
+                matches.append(match.group(1))
+    return matches
+
+
+def verify_candidate_pr_section(
+    content: str,
+    version_str: str,
+    repository: str = "xiefeifeihu/AI-Engineering-Standards",
+    project_root: Optional[Path] = None,
+    historical_merge_commits: Optional[set[str]] = None,
+    historical_candidate_commits: Optional[set[str]] = None,
+    expected_facts: Optional[Dict[str, Any]] = None,
+    verify_live_pr: bool = False,
+    require_live_pr: bool = False,
+    simulate_pr_data: Optional[Dict[str, Any]] = None,
+    simulate_pr_error: Optional[str] = None,
+    simulate_event_data: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[str], Optional[Dict[str, Any]], Optional[str]]:
+    """Shared verifier for the CURRENT_CANDIDATE_PR section in both Baseline and Handoff (F13 + F14).
+
+    Returns (errors, live_pr_details, live_pr_status).
+      - Static document does NOT require self-referencing `candidate_pr_head`.
+      - When `candidate_pr_head` is explicitly provided (in doc or expected_facts), verifies
+        `candidate_commit` is an ancestor of `candidate_pr_head` via Git ancestry (NOT equality).
+      - When `verify_live_pr=True` and `candidate_pr_number` is present, executes real GitHub PR API
+        + ancestry verification via verify_live_pr_identity().
+    """
+    scope_text, scope_errs = extract_scoped_markdown(content, "CURRENT_CANDIDATE_PR")
+    if scope_errs:
+        return scope_errs, None, None
+
+    errors: List[str] = []
+
+    def _extract_unique(field_label: str, pattern: str, required: bool = True) -> Optional[str]:
+        matches = _extract_bullet_line_matches(scope_text, [pattern])
+        if len(matches) == 0:
+            if required:
+                errors.append(f"CANDIDATE_PR_MISSING_FIELD: '{field_label}' missing from CURRENT_CANDIDATE_PR")
+            return None
+        if len(matches) > 1:
+            errors.append(
+                f"CANDIDATE_PR_DUPLICATE_FIELD: '{field_label}' appears {len(matches)} times in CURRENT_CANDIDATE_PR"
+            )
+            return None
+        return matches[0].strip()
+
+    rec_ver = _extract_unique("candidate_version", r"candidate_version[^:：\n]*?[:：]\s*`([^`]+)`")
+    rec_pr_num = _extract_unique("candidate_pr_number", r"candidate_pr_number[^:：\n]*?[:：]\s*`([^`]+)`")
+    rec_pr_status = _extract_unique("candidate_pr_status", r"candidate_pr_status[^:：\n]*?[:：]\s*`([A-Z_]+)`")
+    rec_pr_state = _extract_unique("PR_STATE", r"PR_STATE[^:：\n]*?[:：]\s*`([A-Z_]+)`")
+    rec_pr_draft = _extract_unique("PR_DRAFT", r"PR_DRAFT[^:：\n]*?[:：]\s*`(true|false)`")
+    rec_pr_head = _extract_unique(
+        "candidate_pr_head", r"candidate_pr_head[^:：\n]*?[:：]\s*`([0-9a-f]{40})`", required=False
+    )
+    rec_pr_base = _extract_unique("candidate_pr_base", r"candidate_pr_base[^:：\n]*?[:：]\s*`([^`]+)`")
+    rec_cand_commit = _extract_unique("candidate_commit", r"candidate_commit[^:：\n]*?[:：]\s*`([0-9a-f]{40})`")
+    rec_rel_status = _extract_unique("RELEASE_STATUS", r"RELEASE_STATUS[^:：\n]*?[:：]\s*`([A-Z_]+)`")
+
+    if rec_ver is not None and rec_ver != version_str:
+        errors.append(
+            f"CANDIDATE_PR_VERSION_MISMATCH: committed candidate_version='{rec_ver}' != VERSION='{version_str}'"
+        )
+
+    if rec_pr_base is not None and rec_pr_base != "main":
+        errors.append(f"CANDIDATE_PR_BASE_NOT_MAIN: committed candidate_pr_base='{rec_pr_base}' != 'main'")
+
+    if rec_pr_status is not None:
+        if rec_pr_status not in ("DRAFT", "OPEN", "MERGED", "CLOSED"):
+            errors.append(f"CANDIDATE_PR_INVALID_STATUS: committed candidate_pr_status='{rec_pr_status}'")
+        elif rec_pr_status == "DRAFT":
+            if rec_pr_state != "OPEN":
+                errors.append(f"CANDIDATE_PR_STATE_MISMATCH: DRAFT requires PR_STATE='OPEN' (got '{rec_pr_state}')")
+            if rec_pr_draft != "true":
+                errors.append(f"CANDIDATE_PR_DRAFT_MISMATCH: DRAFT requires PR_DRAFT='true' (got '{rec_pr_draft}')")
+            if rec_rel_status != "CANDIDATE":
+                errors.append(
+                    f"CANDIDATE_PR_RELEASE_STATUS_MISMATCH: DRAFT requires RELEASE_STATUS='CANDIDATE' (got '{rec_rel_status}')"
+                )
+        elif rec_pr_status == "OPEN":
+            if rec_pr_state != "OPEN":
+                errors.append(f"CANDIDATE_PR_STATE_MISMATCH: OPEN requires PR_STATE='OPEN' (got '{rec_pr_state}')")
+            if rec_rel_status != "CANDIDATE":
+                errors.append(
+                    f"CANDIDATE_PR_RELEASE_STATUS_MISMATCH: OPEN requires RELEASE_STATUS='CANDIDATE' (got '{rec_rel_status}')"
+                )
+        elif rec_pr_status == "MERGED":
+            if rec_pr_state != "MERGED":
+                errors.append(f"CANDIDATE_PR_STATE_MISMATCH: MERGED requires PR_STATE='MERGED' (got '{rec_pr_state}')")
+            if rec_pr_draft != "false":
+                errors.append(f"CANDIDATE_PR_DRAFT_MISMATCH: MERGED requires PR_DRAFT='false' (got '{rec_pr_draft}')")
+            merge_sha = _extract_unique(
+                "candidate_pr_merge_commit",
+                r"candidate_pr_merge_commit[^:：\n]*?[:：]\s*`([0-9a-f]{40})`",
+            )
+            _extract_unique(
+                "candidate_pr_merged_by",
+                r"candidate_pr_merged_by[^:：\n]*?[:：]\s*`([A-Za-z0-9_-]+)`",
+            )
+            if merge_sha and historical_merge_commits and merge_sha in historical_merge_commits:
+                errors.append(
+                    f"CANDIDATE_PR_HISTORICAL_MERGE_COMMIT_POLLUTION: committed merge commit '{merge_sha}' is from a historical release PR"
+                )
+
+        if rec_pr_status in ("DRAFT", "OPEN"):
+            if re.search(r"\bMERGED\b|已合入|candidate_pr_merge_commit", scope_text):
+                errors.append(
+                    "CANDIDATE_PR_UNMERGED_HAS_MERGED_TEXT: unmerged candidate PR section must not contain MERGED / 已合入 wording"
+                )
+
+    if version_str != "3.0.0":
+        if rec_pr_num in ("9", "10"):
+            errors.append(
+                f"CANDIDATE_PR_HISTORICAL_NUMBER_POLLUTION: candidate_pr_number='{rec_pr_num}' is a historical v3.0.0 PR"
+            )
+        if re.search(r"PR\s*#(9|10)\b", scope_text):
+            errors.append(
+                "CANDIDATE_PR_HISTORICAL_PR_POLLUTION: CURRENT_CANDIDATE_PR section must not reference historical PR #9 / PR #10"
+            )
+        if rec_cand_commit and historical_candidate_commits and rec_cand_commit in historical_candidate_commits:
+            errors.append(
+                f"CANDIDATE_PR_HISTORICAL_COMMIT_POLLUTION: candidate_commit='{rec_cand_commit}' belongs to historical v3.0.0 evidence"
+            )
+        sec9_top = re.search(r"## 9\. 最近 CI 事实.*?(?=\n### |\n## 10\.|\Z)", content, re.S)
+        if sec9_top:
+            for line in sec9_top.group(0).splitlines():
+                if line.strip().startswith("- **事实说明**"):
+                    if re.search(r"PR\s*#(9|10)\b", line):
+                        errors.append(
+                            "CANDIDATE_PR_HISTORICAL_CI_SUMMARY_POLLUTION: Section 9 summary references historical PR #9 / PR #10"
+                        )
+                    if rec_pr_status in ("DRAFT", "OPEN") and ("已合入 main" in line or "MERGED" in line):
+                        errors.append(
+                            "CANDIDATE_PR_UNMERGED_SUMMARY_HAS_MERGED_TEXT: Section 9 summary claims MERGED for unmerged candidate PR"
+                        )
+
+    # Verify candidate_commit is a real Git commit (F13 Rule 2)
+    if project_root is not None and rec_cand_commit and (project_root / ".git").exists():
+        res_obj = subprocess.run(
+            ["git", "-C", str(project_root), "cat-file", "-e", f"{rec_cand_commit}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if res_obj.returncode != 0:
+            errors.append(
+                f"CANDIDATE_PR_COMMIT_NOT_FOUND: committed candidate_commit '{rec_cand_commit}' does not exist in Git repository"
+            )
+
+    # If a PR head is explicitly supplied (in expected_facts or legacy text), validate ancestry (NOT equality)
+    explicit_head = (expected_facts or {}).get("candidate_pr_head") or rec_pr_head
+    if explicit_head and rec_cand_commit and project_root is not None and (project_root / ".git").exists():
+        anc_st, anc_errs = verify_commit_ancestry(
+            project_root,
+            rec_cand_commit,
+            str(explicit_head).strip(),
+            repository=repository,
+            allow_remote_compare=True,
+        )
+        if anc_st == "FAIL":
+            errors.extend(anc_errs)
+        elif anc_st == "NOT_VERIFIABLE" and require_live_pr:
+            errors.extend(anc_errs)
+
+    if expected_facts:
+        actual_map: Dict[str, Optional[str]] = {
+            "candidate_version": rec_ver,
+            "candidate_pr_number": rec_pr_num,
+            "candidate_pr_status": rec_pr_status,
+            "pr_state": rec_pr_state,
+            "pr_draft": rec_pr_draft,
+            "candidate_pr_base": rec_pr_base,
+            "candidate_commit": rec_cand_commit,
+            "release_status": rec_rel_status,
+        }
+        for k, exp_v in expected_facts.items():
+            if exp_v is None or k == "candidate_pr_head":
+                continue
+            exp_str = str(exp_v).lower() if isinstance(exp_v, bool) else str(exp_v).strip()
+            act_v = actual_map.get(k)
+            if act_v is None:
+                errors.append(f"CANDIDATE_PR_EXPECTED_FIELD_MISSING: '{k}' missing (expected '{exp_str}')")
+            elif str(act_v).strip() != exp_str:
+                errors.append(
+                    f"CANDIDATE_PR_EXPECTED_FIELD_MISMATCH: '{k}' committed='{act_v}' != expected='{exp_str}'"
+                )
+
+    live_details: Optional[Dict[str, Any]] = None
+    live_status: Optional[str] = None
+    if verify_live_pr:
+        eff_pr_num_str = str((expected_facts or {}).get("candidate_pr_number") or rec_pr_num or "").strip()
+        if not eff_pr_num_str.isdigit():
+            live_status = "FAIL"
+            errors.append(
+                f"CANDIDATE_PR_NUMBER_REQUIRED_FOR_LIVE_VERIFY: cannot live-verify PR without valid candidate_pr_number (got '{eff_pr_num_str}')"
+            )
+        elif rec_cand_commit:
+            exp_draft_bool: Optional[bool] = None
+            if rec_pr_draft in ("true", "false"):
+                exp_draft_bool = rec_pr_draft == "true"
+            live_status, live_errs, live_details = verify_live_pr_identity(
+                project_root=project_root or Path(".").resolve(),
+                repository=repository,
+                candidate_pr_number=int(eff_pr_num_str),
+                candidate_commit=rec_cand_commit,
+                expected_pr_status=rec_pr_status,
+                expected_pr_draft=exp_draft_bool,
+                expected_base_ref="main",
+                forbidden_historical_merge_commits=historical_merge_commits,
+                require_live=require_live_pr,
+                simulate_pr_data=simulate_pr_data,
+                simulate_pr_error=simulate_pr_error,
+                simulate_event_data=simulate_event_data,
+            )
+            if live_status == "FAIL":
+                errors.extend(live_errs)
+            elif live_status == "NOT_VERIFIABLE" and require_live_pr:
+                errors.extend(live_errs)
+
+    return errors, live_details, live_status
 
 
 if __name__ == "__main__":

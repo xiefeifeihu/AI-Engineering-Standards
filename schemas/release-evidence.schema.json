@@ -22,10 +22,6 @@
     "test_skipped",
     "windows_status",
     "ubuntu_status",
-    "old_tag_deleted",
-    "old_tag_object",
-    "old_tag_peeled_commit",
-    "old_tag_bundle_sha256",
     "release_flow_status"
   ],
   "properties": {
@@ -144,16 +140,37 @@
       "type": "boolean"
     },
     "old_tag_object": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{40}$"
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "old_tag_peeled_commit": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{40}$"
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "old_tag_bundle_sha256": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "release_flow_status": {
       "type": "string",
@@ -273,6 +290,39 @@
           "pr_merged",
           "pr_merged_by"
         ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "old_tag_deleted": {
+            "const": true
+          }
+        },
+        "required": [
+          "old_tag_deleted"
+        ]
+      },
+      "then": {
+        "required": [
+          "old_tag_object",
+          "old_tag_peeled_commit",
+          "old_tag_bundle_sha256"
+        ],
+        "properties": {
+          "old_tag_object": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "old_tag_peeled_commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "old_tag_bundle_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
       }
     }
   ]
