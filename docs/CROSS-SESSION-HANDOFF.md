@@ -5,13 +5,13 @@ project_id: "ai-engineering-standards"
 document_type: "CROSS_SESSION_HANDOFF"
 status: "IN_REVIEW"
 applies_to_release: "v3.0.1"
-last_updated: "2026-11-19"
+last_updated: "2026-11-20"
 supersedes: null
 change_summary: "自动采集生成任务 Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION 跨会话交接文档 (STD-020 v2.0.0)"
 history_reference: null
 primary_entrypoint: true
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:f3c24f804481874d0ad05793aceba22291f848da3a8fd2e44a421b5fc05b6eef"
+content_sha256: "sha256:4c90c9a7cdfbd703d56deceb034c15c613a7a275dfe12f7775d3c786ac812710"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
@@ -23,20 +23,20 @@ TASK_ID=Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION
 VERSION=v3.0.1
 HANDOFF_TYPE=DURABLE
 STATUS=IN_PROGRESS
-COMMIT_HASH=beac5acd7f3cdb86478c4eb733353dde9bf27f58
-CAPTURED_AT=2026-11-19T10:02:44Z
-CONTENT_SHA256=sha256:36a67deea25e4f0c699386ed33d7b168d9fc939e0b064fce190ae83e64cb0b15
+COMMIT_HASH=5f767960d706d534a0e7f72a2f7f51b78c97bebf
+CAPTURED_AT=2026-11-20T02:38:53Z
+CONTENT_SHA256=sha256:b2f0c2da18052d95547c569eefb51a7a2fc4c1a4e23bd87fd28e7d0f50150e5d
 ```
 
 > **强制重核验约束 (`STD-020` §3)**：新会话接手时必须重新核验实时工程事实（Git、Standards 锁定、CI 与 Runtime），严禁仅凭旧聊天摘要推断当前状态。
 
 ## 1. 当前 Git 状态与分支身份 (`git_state`)
-- **当前分支 (`branch`)**：`release/std-020-v3.0.1`
-- **当前快照 Commit (`snapshot_commit`)**：`beac5acd7f3cdb86478c4eb733353dde9bf27f58`
-- **本地 HEAD (`local_head`)**：`beac5acd7f3cdb86478c4eb733353dde9bf27f58`
-- **远端 main (`remote_head`)**：`18c4ced02f72198e9556b7f159169294f1c399f0`
-- **工作区干净状态 (`worktree_clean`)**：`true`
-- **Git 状态摘要 (`status_summary`)**：`## release/std-020-v3.0.1...origin/release/std-020-v3.0.1 [ahead 1]`
+- **当前分支 (`branch`)**：`fix/std-021-mainline-snapshot-first-parent`
+- **当前快照 Commit (`snapshot_commit`)**：`5f767960d706d534a0e7f72a2f7f51b78c97bebf`
+- **本地 HEAD (`local_head`)**：`5f767960d706d534a0e7f72a2f7f51b78c97bebf`
+- **远端 main (`remote_head`)**：`b1a2e55a1612b5f9833d844479116c2ddb8e2d1c`
+- **工作区干净状态 (`worktree_clean`)**：`false`
+- **Git 状态摘要 (`status_summary`)**：`## fix/std-021-mainline-snapshot-first-parent...origin/main [ahead 1]`
 
 ## 2. 当前 Standards 锁定 (`standards_lock`)
 - **规范仓库 (`repository`)**：`xiefeifeihu/AI-Engineering-Standards`
@@ -53,20 +53,20 @@ CONTENT_SHA256=sha256:36a67deea25e4f0c699386ed33d7b168d9fc939e0b064fce190ae83e64
 - **证据引用 (`evidence_ref`)**：`NONE`
 
 ## 4. 远端 CI 关联 (`ci_run`)
-- **Run ID (`run_id`)**：`None`
-- **Push Run ID**：`None`
-- **PR Run ID**：`None`
+- **Run ID (`run_id`)**：`44502018815`
+- **Push Run ID**：`44502018815`
+- **PR Run ID**：`44502034034`
 - **工作流 (`workflow`)**：`.github/workflows/standards-ci.yml`
-- **关联 Commit (`commit`)**：`NOT_VERIFIABLE`
+- **关联 Commit (`commit`)**：`b373ca0d11b7a2ec6753d256db83f2ed3acf2fb0`
 - **核验状态 (`verification_status`)**：`NOT_VERIFIABLE`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)
 - **1. 基线源 Commit**：`9687f961b22df612c4311961e06fc1c1fd508c37`
-- **2. Git 快照观测时间**：`2026-11-19T10:02:44Z`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
-- **3. 最近一次已验证 CI Commit**：`NOT_VERIFIABLE`
+- **2. Git 快照观测时间**：`2026-11-20T02:38:53Z`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
+- **3. 最近一次已验证 CI Commit**：`b373ca0d11b7a2ec6753d256db83f2ed3acf2fb0`（Run 44502018815 Push / Run 44502034034 PR #13 双平台全绿）
 - **4. 当前候选 Commit**：`beac5acd7f3cdb86478c4eb733353dde9bf27f58`
-- **5. 当前待验证事项**：远端 GitHub Actions CI 双平台实测；严禁在推送前或运行完成前伪造 CI PASS
+- **5. 当前待验证事项**：PR #13 已由 xiefeifeihu 合入 main (Merge Commit: b1a2e55a)；当前 Std-021 修复快照 (5f767960) 待推送到 GitHub Actions 远端触发双平台真实 CI 实测并合入 main 后自动签发 v3.0.1 Annotated Tag（实测前保持 NOT_VERIFIABLE）
 - **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644, 42843755347, 42843964061（避免每次记录 CI 无限触发基线变更）
 
 ### 4.2 PR9 历史发布凭证 (PR9_HISTORICAL_RELEASE_EVIDENCE)
@@ -139,26 +139,26 @@ CONTENT_SHA256=sha256:36a67deea25e4f0c699386ed33d7b168d9fc939e0b064fce190ae83e64
 - **任务编号 (`task_id`)**：`Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION`
 - **候选版本 (`candidate_version`)**：`3.0.1`
 - **当前候选 PR 编号 (`candidate_pr_number`)**：`13`
-- **当前候选 PR 状态 (`candidate_pr_status`)**：`OPEN`
-- **PR 状态标记 (`PR_STATE`)**：`OPEN`
+- **当前候选 PR 状态 (`candidate_pr_status`)**：`MERGED`
+- **PR 状态标记 (`PR_STATE`)**：`MERGED`
 - **PR 草稿标记 (`PR_DRAFT`)**：`false`
 - **当前候选 PR Base (`candidate_pr_base`)**：`main`
 - **当前候选 Commit (`candidate_commit`)**：`beac5acd7f3cdb86478c4eb733353dde9bf27f58`
 - **实时 PR HEAD 核验方式 (`live_pr_head_verification`)**：`GITHUB_PR_API_REQUIRED`（实时 PR HEAD 与 PR 状态通过 GitHub PR API / Actions Event 在线核验，不自引用静态写入）
 - **实时 CI 运行记录方式 (`ci_runtime_record`)**：`GITHUB_STEP_SUMMARY`（实时 PR HEAD 与 CI Run ID 由 CI Runtime 与 Step Summary 记录）
-- **状态快照观测时间 (`candidate_observed_at`)**：`2026-11-19T10:02:44Z`
+- **状态快照观测时间 (`candidate_observed_at`)**：`2026-11-20T02:38:53Z`
 - **当前最新已发布正式 Tag (`LATEST_RELEASED_TAG`)**：`v3.0.0`
-- **发布流程状态 (`RELEASE_STATUS`)**：`CANDIDATE`（待 PR #13 经独立审查与 Owner 批准合入 main 后由 main CI 自动签发 v3.0.1 Tag）
+- **当前候选 PR Merge Commit (`candidate_pr_merge_commit`)**：`b1a2e55a1612b5f9833d844479116c2ddb8e2d1c`
+- **当前候选 PR 合并者 (`candidate_pr_merged_by`)**：`xiefeifeihu`
+- **发布流程状态 (`RELEASE_STATUS`)**：`MERGED_PENDING_TAG`（PR #13 已由 `xiefeifeihu` 合入 main（Merge Commit: `b1a2e55a1612b5f9833d844479116c2ddb8e2d1c`），尚未创建正式 `v3.0.1` Tag，待 main CI 全绿后由官方工作流自动签发）
 
 ## 5. 已完成事项 (`completed_items`)
-- [x] PR #12 merged into main (18c4ced) and verified via Main CI Run 44259959029 (Windows/Ubuntu PASS)
-- [x] Implemented F13 candidate_commit ancestry PR contract (eliminating static candidate_pr_head self-reference loop)
-- [x] Implemented F14 shared live PR API & GitHub Event contract verification across Baseline, Handoff, and standards-ci.yml
-- [x] Implemented F15 fail-closed local Git annotated tag verification and RELEASED-only fallback across release_evidence.py
+- [x] PR #13 merged into main at b1a2e55a1612b5f9833d844479116c2ddb8e2d1c by xiefeifeihu (head b373ca0d, candidate_commit beac5acd)
+- [x] Std-021-MAINLINE-SNAPSHOT-FIRST-PARENT-FIX: fixed F17 --first-parent mainline git snapshot verification and F18 post-merge PR #13 facts across Baseline, Handoff, and release_evidence
 
 ## 6. 未完成事项 (`pending_items`)
-- [ ] Verify final PR #13 dual-platform Push CI and PR CI runs PASS via live GitHub Step Summary and await ChatGPT final review
-- [ ] After Owner merges PR #13 into main and v3.0.1 Annotated Tag is minted by main CI, complete R7/R8 closeout and v3.0.1 Acceptance ZIP
+- [ ] Verify Std-021-MAINLINE-SNAPSHOT-FIRST-PARENT-FIX Draft PR dual-platform Push CI and PR CI runs PASS and await ChatGPT independent review
+- [ ] After Owner merges Std-021 fix PR into main and v3.0.1 Annotated Tag is minted by main CI on the new main merge commit, complete Std-020 R6-R8 closeout
 
 ## 7. 阻断项 (`blockers`)
 - 当前无 `BLOCK` 阻断项。
