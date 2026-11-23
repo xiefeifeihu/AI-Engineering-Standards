@@ -336,6 +336,145 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
         self.assertEqual(res_h.returncode, 0, f"Handoff verify-only failed: {res_h.stdout} {res_h.stderr}")
         self.assertIn("[PASS]", res_h.stdout)
 
+    def test_f17_mainline_snapshot_first_parent_real_merge_graph_and_negative(self) -> None:
+        """F17: Real Git repo with merge commit M(first-parent=A, second-parent=B) proves
+        --first-parent recovers mainline A at captured_at while rejecting B as remote_main_head.
+        """
+        from datetime import datetime, timedelta, timezone
+        from tools import generate_engineering_baseline as baseline_gen
+        from tools import generate_handoff as handoff_gen
+
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        ts_a = (now - timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ts_b = (now - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        captured_at = (now - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ts_m = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            remote_repo = tmp_path / "origin.git"
+            local_repo = tmp_path / "local"
+            subprocess.run(["git", "init", "--bare", "-q", str(remote_repo)], check=True)
+            subprocess.run(["git", "init", "-q", "-b", "main", str(local_repo)], check=True)
+            subprocess.run(["git", "-C", str(local_repo), "config", "user.email", "test@example.com"], check=True)
+            subprocess.run(["git", "-C", str(local_repo), "config", "user.name", "Test User"], check=True)
+            subprocess.run(["git", "-C", str(local_repo), "remote", "add", "origin", str(remote_repo)], check=True)
+
+            def git_commit_at(msg: str, filename: str, content_txt: str, iso_ts: str) -> str:
+                (local_repo / filename).write_text(content_txt, encoding="utf-8")
+                subprocess.run(["git", "-C", str(local_repo), "add", filename], check=True)
+                env = dict(os.environ, GIT_AUTHOR_DATE=iso_ts, GIT_COMMITTER_DATE=iso_ts)
+                subprocess.run(["git", "-C", str(local_repo), "commit", "-q", "-m", msg], check=True, env=env)
+                return subprocess.check_output(
+                    ["git", "-C", str(local_repo), "rev-parse", "HEAD"], text=True
+                ).strip()
+
+            # Commit A on mainline
+            commit_a = git_commit_at("main A", "file.txt", "main-A\n", ts_a)
+
+            # Feature branch from A with Commit B (ts_b > ts_a and ts_b < captured_at)
+            subprocess.run(["git", "-C", str(local_repo), "checkout", "-q", "-b", "feature/std-021-f17"], check=True)
+            commit_b = git_commit_at("feature B", "feature.txt", "feature-B\n", ts_b)
+
+            # Merge feature into main as Merge Commit M (ts_m > captured_at; first-parent=A, second-parent=B)
+            subprocess.run(["git", "-C", str(local_repo), "checkout", "-q", "main"], check=True)
+            merge_env = dict(os.environ, GIT_AUTHOR_DATE=ts_m, GIT_COMMITTER_DATE=ts_m)
+            subprocess.run(
+                ["git", "-C", str(local_repo), "merge", "--no-ff", "--no-edit", "feature/std-021-f17"],
+                check=True,
+                env=merge_env,
+            )
+            commit_m = subprocess.check_output(
+                ["git", "-C", str(local_repo), "rev-parse", "HEAD"], text=True
+            ).strip()
+            self.assertEqual(
+                subprocess.check_output(["git", "-C", str(local_repo), "rev-parse", f"{commit_m}^1"], text=True).strip(),
+                commit_a,
+            )
+            self.assertEqual(
+                subprocess.check_output(["git", "-C", str(local_repo), "rev-parse", f"{commit_m}^2"], text=True).strip(),
+                commit_b,
+            )
+            subprocess.run(["git", "-C", str(local_repo), "push", "-q", "origin", "main"], check=True)
+
+            # Switch back to feature branch at B (simulating pre-merge snapshot verification after PR merged to main)
+            subprocess.run(["git", "-C", str(local_repo), "checkout", "-q", "feature/std-021-f17"], check=True)
+
+            # Raw git log check proving why --first-parent is required
+            plain_log = subprocess.check_output(
+                ["git", "-C", str(local_repo), "log", "-1", "--format=%H", f"--before={captured_at}", commit_m],
+                text=True,
+            ).strip()
+            self.assertEqual(plain_log, commit_b)
+            first_parent_log = subprocess.check_output(
+                [
+                    "git", "-C", str(local_repo),
+                    "log", "-1", "--first-parent", "--format=%H", f"--before={captured_at}", commit_m,
+                ],
+                text=True,
+            ).strip()
+            self.assertEqual(first_parent_log, commit_a)
+
+            (local_repo / "engineering-manifest.yaml").write_text(
+                "project:\n  id: ai-engineering-standards\n", encoding="utf-8"
+            )
+            tick = chr(96)
+
+            def make_baseline(remote_sha: str, local_sha: str = commit_b) -> str:
+                return (
+                    f"## 8. Git 分支及 Commit 身份 ({tick}git_identity{tick})\n"
+                    f"- **当前分支 ({tick}branch{tick})**：{tick}feature/std-021-f17{tick}\n"
+                    f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{local_sha}{tick}\n"
+                    f"- **远端 main ({tick}remote_main_head{tick})**：{tick}{remote_sha}{tick}\n"
+                    f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+                    "## 9. 最近 CI 事实\n"
+                    f"- **2. Git 快照观测时间 ({tick}git_snapshot_observed_at{tick})**：{tick}{captured_at}{tick}\n"
+                )
+
+            def make_handoff(remote_sha: str, local_sha: str = commit_b) -> str:
+                return (
+                    "TASK_ID=Std-021-MAINLINE-SNAPSHOT-FIRST-PARENT-FIX\n"
+                    "STATUS=IN_PROGRESS\n"
+                    f"CAPTURED_AT={captured_at}\n"
+                    "## 1. 当前 Git 状态与分支身份 (git_state)\n"
+                    f"- **当前分支 ({tick}branch{tick})**：{tick}feature/std-021-f17{tick}\n"
+                    f"- **本地 HEAD ({tick}local_head{tick})**：{tick}{local_sha}{tick}\n"
+                    f"- **远端 main ({tick}remote_head{tick})**：{tick}{remote_sha}{tick}\n"
+                    f"- **工作区干净状态 ({tick}worktree_clean{tick})**：{tick}true{tick}\n"
+                    "## 2. 当前 Standards 锁定\n"
+                )
+
+            # Positive: recorded remote_main_head = A passes for BOTH Baseline and Handoff
+            self.assertEqual(
+                baseline_gen.verify_git_snapshot_facts(local_repo, make_baseline(commit_a), "baseline"),
+                [],
+            )
+            self.assertEqual(
+                handoff_gen.verify_git_snapshot_facts(local_repo, make_handoff(commit_a), "handoff"),
+                [],
+            )
+
+            # Negative: recorded remote_main_head = B (second-parent feature commit) MUST FAIL
+            b_errs = baseline_gen.verify_git_snapshot_facts(local_repo, make_baseline(commit_b), "baseline")
+            self.assertTrue(
+                any("BASELINE_GIT_SNAPSHOT_REMOTE_MAIN_MISMATCH" in e for e in b_errs),
+                f"Expected BASELINE_GIT_SNAPSHOT_REMOTE_MAIN_MISMATCH, got: {b_errs}",
+            )
+            h_errs = handoff_gen.verify_git_snapshot_facts(local_repo, make_handoff(commit_b), "handoff")
+            self.assertTrue(
+                any("HANDOFF_GIT_SNAPSHOT_REMOTE_MAIN_MISMATCH" in e for e in h_errs),
+                f"Expected HANDOFF_GIT_SNAPSHOT_REMOTE_MAIN_MISMATCH, got: {h_errs}",
+            )
+
+            # Boundary: feature branch local_head check still detects wrong local_head
+            b_loc_errs = baseline_gen.verify_git_snapshot_facts(
+                local_repo, make_baseline(commit_a, local_sha=commit_a), "baseline"
+            )
+            self.assertTrue(
+                any("BASELINE_GIT_SNAPSHOT_LOCAL_HEAD_MISMATCH" in e for e in b_loc_errs),
+                f"Expected BASELINE_GIT_SNAPSHOT_LOCAL_HEAD_MISMATCH, got: {b_loc_errs}",
+            )
+
     def test_std020_impact_preserves_unknown_consumer_head_as_not_verifiable(self) -> None:
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:
