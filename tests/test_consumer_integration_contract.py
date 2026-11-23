@@ -4739,7 +4739,28 @@ class F12RollbackCommitBindingTests(unittest.TestCase):
         mf_path = promo_root / "engineering-manifest.yaml"
         mf_data = yaml.safe_load(mf_path.read_text(encoding="utf-8"))
         mf_data["project"]["repository"] = "xiefeifeihu/AI-Engineering-Hub"
+        mf_data["standards"]["version"] = "2.11.0"
+        mf_data["standards"]["tag"] = "v2.11.0"
+        mf_data["standards"]["tag_object_sha"] = "2f4b4b54348a5ac8891e5a0b33c04635a27213a0"
+        mf_data["standards"]["peeled_commit"] = "5e17c0ef560ab8abafe880b988d70f85f380a104"
         mf_path.write_text(yaml.safe_dump(mf_data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+        promo_lock = {
+            "schema_version": "1.0.0",
+            "repository": "xiefeifeihu/AI-Engineering-Standards",
+            "version": "2.11.0",
+            "tag": "v2.11.0",
+            "tag_object_sha": "2f4b4b54348a5ac8891e5a0b33c04635a27213a0",
+            "peeled_commit": "5e17c0ef560ab8abafe880b988d70f85f380a104",
+            "locked_at": "2026-11-10T00:00:00Z",
+            "lock_reason": "Bootstrap v2.11.0 for promote parity test",
+            "approval_evidence_ref": None,
+            "ci_verification_status": "NOT_VERIFIABLE",
+            "previous_locks": [],
+        }
+        (promo_root / "standards.lock.json").write_text(
+            json.dumps(promo_lock, indent=2) + "\n", encoding="utf-8"
+        )
 
         subprocess.run(["git", "-C", str(promo_root), "add", "."], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(promo_root), "commit", "-m", "promo consumer head"], capture_output=True, check=True)
@@ -4782,6 +4803,7 @@ class F12RollbackCommitBindingTests(unittest.TestCase):
                 simulate_remote_refs=real_refs,
             )
             self.assertEqual(res_fail["status"], "UPGRADE_BLOCKED", res_fail)
+            self.assertNotIn("DOWNGRADE_FORBIDDEN", str(res_fail.get("reason", "")), res_fail)
 
             # Commit-bound digest MUST pass promote_upgrade even with dirty worktree
             _, app_ok, sim_pr_ok = self._build_auth(
