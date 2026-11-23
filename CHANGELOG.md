@@ -4,11 +4,15 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 
 ## [Unreleased]
 
-## [3.0.1] - 2026-11-20
+## [3.0.1] - 2026-11-23
 
-> RELEASE_STATUS=CANDIDATE | VERSION=3.0.1 | LATEST_RELEASED_TAG=v3.0.0 | BASE_MAIN_COMMIT=b1a2e55a1612b5f9833d844479116c2ddb8e2d1c | PR12=MERGED (`c94e4f2fc8b72717f0c72f879584119a020c94e2`, Main CI Run `44259959029` Windows/Ubuntu PASS) | PR13=MERGED (`b1a2e55a1612b5f9833d844479116c2ddb8e2d1c`, by `xiefeifeihu`)
+> RELEASE_STATUS=RELEASED | VERSION=3.0.1 | TAG=v3.0.1 | PEELED_COMMIT=4facfdcd17a3003f04e7deaa3dbdcb320ff82afa | TAG_OBJECT_SHA=a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4 | MAIN_CI=PASS (Run 45099701154, 336 tests)
 >
-> **v3.0.1 发布候选说明**：本版本归档已完成合入 `main`（PR #12、PR #13）的 `Std-020` 消费端试点反馈与工具链安全/事务闭环整改，以及 `Std-021` 主干 Merge Commit 第一父链快照核验与 PR 合并后身份一致性修复；在修复 PR 合入 `main`、双平台 Main CI 全绿并由官方工作流签发不可变 Annotated Tag `v3.0.1` 前，当前官方正式已发布 Tag 仍为 `v3.0.0`。
+> **v3.0.1 正式发布 (PR #13 候选合并 + PR #14 最终修复合并，Main CI 双平台全绿，Annotated Tag v3.0.1 成功发布)**：
+> - **PR #13 (`release/std-020-v3.0.1`) — v3.0.1 发布候选来源 (`Std-020`)**：`candidate_commit=beac5acd7f3cdb86478c4eb733353dde9bf27f58`，HEAD `b373ca0d11b7a2ec6753d256db83f2ed3acf2fb0`（Push Run `44502018815` / PR Run `44502034034` PASS），已由 Owner (`xiefeifeihu`) 于 `2026-11-20T01:35:25Z` 合入 `main`（Merge Commit: `b1a2e55a1612b5f9833d844479116c2ddb8e2d1c`），合并 PR #12 (`c94e4f2fc8b72717f0c72f879584119a020c94e2`, Main CI Run `44259959029` PASS) 后推进 F13–F16 候选契约闭环。
+> - **PR #14 (`fix/std-021-mainline-snapshot-first-parent`) — 最终修复与合并来源 (`Std-021` / `Std-022`)**：HEAD `4bffd3b280002e54c15ba2731fc2a3e144962319`（Push Run `45095143704` / PR Run `45095147625` Windows & Ubuntu PASS, 336 tests PASS），已由 Owner (`xiefeifeihu`) 于 `2026-11-23T02:21:03Z` 合入 `main`（Merge Commit: `4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`）。
+> - **Main CI 与官方 Tag 签发**：Main CI Run `45099701154` 双平台全绿（Windows Job `137447449532` PASS, Ubuntu Job `137447449908` PASS, 336 项测试全量通过），Tag Publish Job `137451350401` 于 `2026-11-23T02:33:54Z` 成功签发不可变 Annotated Tag `v3.0.1`（Tag Object SHA: `a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4`，Peeled Commit: `4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`）；历史 `v3.0.0` Tag（`8256bb384e62894219db0992a2cb57e16d4fa8cd` -> `8b223019c254e0edeb94576b94af46c1e48b0316`）保持不可变。
+> - **Std-023 发布后资料与证据收口**：新增独立正式发布凭证 [`docs/release-evidence/v3.0.1.json`](./docs/release-evidence/v3.0.1.json)，将 Standards 自身锁定（`standards.lock.json` 与 `engineering-manifest.yaml`）同步至已正式发布的 `v3.0.1`（保留 `v2.10.0` / `v2.11.0` / `v3.0.0` 于 `previous_locks`），完成 `Std-020` R7/R8 发布后证据收口并刷新当前权威基线与跨会话交接文档。
 
 ### Added
 - **F17 / F18 主干 Merge Commit 第一父链快照核验与 PR 合并后身份一致性修复 (Std-021 / STD-034 / STD-035)**:
