@@ -2326,8 +2326,12 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         )
         self.assertIn(res["status"], ("PASS", "NOT_VERIFIABLE"))
         self.assertIn(res["remote_latest_status"], ("PASS", "NOT_VERIFIABLE"))
-        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0"))
-        if res["tag"] == "v3.0.0":
+        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0", "v3.0.1"))
+        if res["tag"] == "v3.0.1":
+            self.assertEqual(res["version"], "3.0.1")
+            self.assertEqual(res["peeled_commit"], "4facfdcd17a3003f04e7deaa3dbdcb320ff82afa")
+            self.assertEqual(res["tag_object_sha"], "a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4")
+        elif res["tag"] == "v3.0.0":
             self.assertEqual(res["version"], "3.0.0")
             self.assertEqual(res["peeled_commit"], "8b223019c254e0edeb94576b94af46c1e48b0316")
             self.assertEqual(res["tag_object_sha"], "8256bb384e62894219db0992a2cb57e16d4fa8cd")
@@ -3663,8 +3667,12 @@ COMMIT_HASH=4538b8ba29cb9413782c4197e73bddab64849d82
             ci_status_override="PASS",
         )
         self.assertIn(res["status"], ("PASS", "NOT_VERIFIABLE"))
-        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0"))
-        if res["tag"] == "v3.0.0":
+        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0", "v3.0.1"))
+        if res["tag"] == "v3.0.1":
+            self.assertEqual(res["version"], "3.0.1")
+            self.assertEqual(res["peeled_commit"], "4facfdcd17a3003f04e7deaa3dbdcb320ff82afa")
+            self.assertEqual(res["tag_object_sha"], "a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4")
+        elif res["tag"] == "v3.0.0":
             self.assertEqual(res["version"], "3.0.0")
             self.assertEqual(res["peeled_commit"], "8b223019c254e0edeb94576b94af46c1e48b0316")
             self.assertEqual(res["tag_object_sha"], "8256bb384e62894219db0992a2cb57e16d4fa8cd")

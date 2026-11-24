@@ -872,6 +872,63 @@ def recover_incomplete_package_transactions(
     return {"status": "CLEAN", "recovered": [], "blocked": []}
 
 
+def _detect_existing_package_identities(
+    pkg_dir: Path,
+    zip_name: str,
+    zip_path: Path,
+    sha_path: Path,
+) -> list[str]:
+    """Detect existing historical Acceptance ZIP, sidecar, or checksum index entries."""
+    identities: list[str] = []
+    if zip_path.exists():
+        identities.append(zip_name)
+    if sha_path.exists():
+        identities.append(sha_path.name)
+
+    for sibling in sorted(pkg_dir.glob(f"{zip_name}.*")):
+        if sibling.name.startswith(".") or sibling.name == sha_path.name:
+            continue
+        _ensure_no_symlink_in_chain(sibling, pkg_dir)
+        identities.append(sibling.name)
+
+    for index_name in ("CHECKSUMS.txt", "SHA256SUMS", "SHA256SUMS.txt"):
+        index_path = pkg_dir / index_name
+        if not index_path.exists() or not index_path.is_file():
+            continue
+        _ensure_no_symlink_in_chain(index_path, pkg_dir)
+        try:
+            content = index_path.read_text(encoding="utf-8-sig", errors="replace")
+        except Exception:
+            continue
+        for line in content.splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            for token in s.split():
+                clean_tok = token.lstrip("*")
+                if clean_tok in (zip_name, sha_path.name) or Path(clean_tok).name in (zip_name, sha_path.name):
+                    identities.append(f"{index_name}:{zip_name}")
+                    break
+            else:
+                continue
+            break
+
+    return identities
+
+
+def _append_overwrite_audit(pkg_dir: Path, record: dict[str, Any]) -> Path:
+    """Append an authorized overwrite audit record durably under pkg_dir/overwrite_audit.jsonl."""
+    audit_path = pkg_dir / "overwrite_audit.jsonl"
+    _ensure_no_symlink_in_chain(audit_path, pkg_dir)
+    payload = (json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+    with audit_path.open("ab") as f:
+        f.write(payload)
+        f.flush()
+        if hasattr(os, "fsync"):
+            os.fsync(f.fileno())
+    return audit_path
+
+
 def package_acceptance(
     task_id: str,
     version: str | None = None,
@@ -880,6 +937,8 @@ def package_acceptance(
     replace_fn: Callable[[Path, Path], None] | None = None,
     unlink_fn: Callable[[Path], None] | None = None,
     lock_timeout: float = 30.0,
+    allow_overwrite: bool = False,
+    overwrite_reason: str | None = None,
 ) -> dict[str, Any]:
     """Execute recoverable, cross-process locked multi-file transaction across manifest.json, ZIP, and .sha256 sidecar."""
     # Phase 0: Strict pre-flight input & path security validation BEFORE creating ANY directory or file
@@ -949,6 +1008,21 @@ def package_acceptance(
         # Re-read manifest_path in case startup recovery rolled back manifest.json to original!
         manifest_data = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
 
+        # Enforce historical ZIP / sidecar / checksum identity protection inside transaction lock
+        # AFTER crash recovery completes cleanly, BEFORE staging any backup or journal files.
+        existing_identities = _detect_existing_package_identities(pkg_dir, zip_name, zip_path, sha_path)
+        if existing_identities and not allow_overwrite:
+            raise FileExistsError(
+                f"ACCEPTANCE_PACKAGE_OVERWRITE_FORBIDDEN: Historical acceptance artifact(s) already exist for "
+                f"({task_id}, {v_ver}): {', '.join(existing_identities)}. "
+                f"Pass --allow-overwrite only with explicit task authorization."
+            )
+        effective_overwrite_reason = (
+            ((overwrite_reason or "").strip() or "EXPLICIT_ALLOW_OVERWRITE_FLAG")
+            if existing_identities
+            else None
+        )
+
         # All temp, backup, restore, and journal files live inside pkg_dir (.artifacts/packages/)
         tmp_manifest = pkg_dir / f".tmp_manifest_{task_id}_{v_ver}_{tx_id}.json"
         tmp_zip = pkg_dir / f".tmp_{zip_name}_{tx_id}.zip"
@@ -970,10 +1044,13 @@ def package_acceptance(
             _ensure_no_symlink_in_chain(p_check, pkg_dir)
 
         orig_manifest_bytes = manifest_path.read_bytes()
+        orig_manifest_sha = sha256_bytes(orig_manifest_bytes)
         orig_zip_existed = zip_path.exists()
         orig_zip_bytes = zip_path.read_bytes() if orig_zip_existed else None
+        orig_zip_sha = sha256_bytes(orig_zip_bytes) if orig_zip_bytes is not None else None
         orig_sha_existed = sha_path.exists()
         orig_sha_bytes = sha_path.read_bytes() if orig_sha_existed else None
+        orig_sha_file_sha = sha256_bytes(orig_sha_bytes) if orig_sha_bytes is not None else None
 
         rel_targets = {
             "manifest": f".artifacts/acceptance/{task_id}/{v_ver}/manifest.json",
@@ -992,15 +1069,18 @@ def package_acceptance(
             "version": v_ver,
             "run_id": effective_run_id,
             "state": "INITIALIZING",
+            "overwrite_authorized": bool(existing_identities and allow_overwrite),
+            "overwrite_reason": effective_overwrite_reason,
+            "existing_identities": existing_identities,
             "orig_existed": {
                 "manifest": True,
                 "zip": orig_zip_existed,
                 "sha": orig_sha_existed,
             },
             "orig_sha256": {
-                "manifest": sha256_bytes(orig_manifest_bytes),
-                "zip": sha256_bytes(orig_zip_bytes) if orig_zip_bytes is not None else None,
-                "sha": sha256_bytes(orig_sha_bytes) if orig_sha_bytes is not None else None,
+                "manifest": orig_manifest_sha,
+                "zip": orig_zip_sha,
+                "sha": orig_sha_file_sha,
             },
             "backup_sha256": {},
             "staged_sha256": {},
@@ -1176,7 +1256,27 @@ def package_acceptance(
                 pass
             raise RuntimeError(f"TEMP_CLEANUP_FAILED: {post_cleanup_errors}")
 
-        return {
+        overwritten = bool(existing_identities and allow_overwrite)
+        overwrite_audit: dict[str, Any] | None = None
+        if overwritten:
+            overwrite_audit = {
+                "task_id": task_id,
+                "version": v_ver,
+                "run_id": effective_run_id,
+                "tx_id": tx_id,
+                "overwritten_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "reason": effective_overwrite_reason,
+                "existing_identities": existing_identities,
+                "previous_zip_sha256": orig_zip_sha,
+                "new_zip_sha256": zip_sha,
+                "previous_sha256_sidecar_sha256": orig_sha_file_sha,
+                "new_sha256_sidecar_sha256": sha256_bytes(staged_sha_bytes),
+                "previous_manifest_sha256": orig_manifest_sha,
+                "new_manifest_sha256": sha256_bytes(staged_manifest_bytes),
+            }
+            _append_overwrite_audit(pkg_dir, overwrite_audit)
+
+        result_payload: dict[str, Any] = {
             "task_id": task_id,
             "version": v_ver,
             "run_id": effective_run_id,
@@ -1184,8 +1284,12 @@ def package_acceptance(
             "sha256_path": str(sha_path.relative_to(resolved_root)).replace("\\", "/"),
             "zip_sha256": zip_sha,
             "files_verified": len(validated_entries),
+            "overwritten": overwritten,
             "status": "PASS",
         }
+        if overwrite_audit is not None:
+            result_payload["overwrite_audit"] = overwrite_audit
+        return result_payload
     finally:
         _release_package_lock(lock_path, lock_fd)
 
@@ -1195,12 +1299,45 @@ def main() -> None:
     parser.add_argument("--task-id", required=True)
     parser.add_argument("--version", default=None)
     parser.add_argument("--run-id", default=None)
+    parser.add_argument("--repo-root", default=None, help="Repository root directory (defaults to script parent)")
     parser.add_argument("--recover", action="store_true", help="Run crash recovery for incomplete packaging transactions")
+    parser.add_argument(
+        "--allow-overwrite",
+        action="store_true",
+        default=False,
+        help="Explicitly authorize overwriting an existing historical acceptance package (requires task authorization)",
+    )
+    parser.add_argument(
+        "--overwrite-reason",
+        default=None,
+        help="Audit reason recorded when --allow-overwrite is authorized",
+    )
     args = parser.parse_args()
+    target_root = Path(args.repo_root).resolve() if args.repo_root else REPO_ROOT
     if args.recover:
-        res = recover_incomplete_package_transactions(task_id=args.task_id, version=args.version)
+        res = recover_incomplete_package_transactions(
+            repo_root=target_root,
+            task_id=args.task_id,
+            version=args.version,
+        )
     else:
-        res = package_acceptance(task_id=args.task_id, version=args.version, run_id=args.run_id)
+        try:
+            res = package_acceptance(
+                task_id=args.task_id,
+                version=args.version,
+                run_id=args.run_id,
+                repo_root=target_root,
+                allow_overwrite=args.allow_overwrite,
+                overwrite_reason=args.overwrite_reason,
+            )
+        except FileExistsError as exc:
+            res = {
+                "status": "BLOCKED",
+                "code": "ACCEPTANCE_PACKAGE_OVERWRITE_FORBIDDEN",
+                "task_id": args.task_id,
+                "version": args.version,
+                "reason": str(exc),
+            }
     print(json.dumps(res, indent=2, ensure_ascii=False))
     if res.get("status") == "BLOCKED":
         sys.exit(1)

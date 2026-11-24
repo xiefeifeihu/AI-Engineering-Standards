@@ -10,10 +10,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import subprocess
 import sys
 from typing import Any, Dict, List, Optional, Tuple
+import urllib.parse
 import jsonschema
 import yaml
 
@@ -95,6 +97,148 @@ def extract_bullet_items(body: str, max_items: int = 8) -> List[str]:
                 if len(items) >= max_items:
                     break
     return items
+
+
+def compute_relative_markdown_link(from_file: Path, target_file: Path, anchor: str = "") -> str:
+    """Compute clean UTF-8 POSIX relative Markdown link from from_file's directory to target_file."""
+    from_resolved = from_file.resolve(strict=False)
+    target_resolved = target_file.resolve(strict=False)
+    clean_anchor = urllib.parse.unquote(anchor.lstrip("#")).strip() if anchor else ""
+    if from_resolved == target_resolved:
+        if clean_anchor:
+            return f"#{clean_anchor}"
+        return f"./{target_resolved.name}"
+    from_dir = from_resolved.parent
+    try:
+        raw_rel = os.path.relpath(str(target_resolved), str(from_dir))
+    except ValueError:
+        raw_rel = target_resolved.as_posix()
+    rel = posixpath.normpath(raw_rel.replace("\\", "/"))
+    if rel != "." and not rel.startswith(("./", "../")):
+        rel = f"./{rel}"
+    if clean_anchor:
+        return f"{rel}#{clean_anchor}"
+    return rel
+
+
+def rebase_markdown_links(
+    text: str,
+    source_file: Path,
+    output_file: Path,
+    project_root: Path,
+) -> str:
+    """Rebase relative Markdown links authored relative to source_file to output_file."""
+    if not text or "](" not in text:
+        return text
+
+    proj_resolved = project_root.resolve(strict=False)
+    src_resolved = source_file.resolve(strict=False)
+    out_resolved = output_file.resolve(strict=False)
+    src_dir = src_resolved.parent
+    code_or_link_re = re.compile(r"(`[^`]*`)|(?<!!)\[([^\]]+)\]\(([^)]+)\)")
+
+    def _rewrite(m: re.Match[str]) -> str:
+        if m.group(1) is not None:
+            return m.group(1)
+        label = m.group(2)
+        raw_inner = m.group(3).strip()
+        if not raw_inner:
+            return m.group(0)
+
+        title_suffix = ""
+        if raw_inner.startswith("<"):
+            gt_idx = raw_inner.find(">")
+            if gt_idx > 1:
+                url_part = raw_inner[1:gt_idx].strip()
+                title_suffix = raw_inner[gt_idx + 1 :]
+            else:
+                return m.group(0)
+        else:
+            m_parts = re.match(r'^(\S+?)(\s+(?:"[^"]*"|\'[^\']*\'))?$', raw_inner)
+            if not m_parts:
+                return m.group(0)
+            url_part = m_parts.group(1)
+            title_suffix = m_parts.group(2) or ""
+
+        lower_url = url_part.lower()
+        if lower_url.startswith(
+            ("http://", "https://", "mailto:", "tel:", "data:", "javascript:", "file://", "conversation://")
+        ):
+            return m.group(0)
+
+        raw_path, has_hash, raw_anchor = url_part.partition("#")
+        decoded_path = urllib.parse.unquote(raw_path).strip().replace("\\", "/")
+        decoded_anchor = urllib.parse.unquote(raw_anchor).strip() if has_hash else ""
+
+        if not decoded_path and has_hash:
+            new_url = compute_relative_markdown_link(out_resolved, src_resolved, anchor=decoded_anchor)
+            return f"[{label}]({new_url}{title_suffix})"
+
+        if not decoded_path:
+            return m.group(0)
+
+        if decoded_path.startswith("/"):
+            chosen = (proj_resolved / decoded_path.lstrip("/")).resolve(strict=False)
+        else:
+            cand_rel = (src_dir / decoded_path).resolve(strict=False)
+            cand_root = (proj_resolved / decoded_path).resolve(strict=False)
+            if cand_rel.exists():
+                chosen = cand_rel
+            elif cand_root.exists():
+                chosen = cand_root
+            elif decoded_path.startswith(("docs/", "schemas/", "standards/", "templates/", "tools/", "handoff/")):
+                chosen = cand_root
+            else:
+                chosen = cand_rel
+
+        try:
+            chosen.relative_to(proj_resolved)
+        except ValueError:
+            return m.group(0)
+
+        new_url = compute_relative_markdown_link(out_resolved, chosen, anchor=decoded_anchor)
+        return f"[{label}]({new_url}{title_suffix})"
+
+    return code_or_link_re.sub(_rewrite, text)
+
+
+def _discover_consumer_workflow_path(project_root: Path, manifest: Dict[str, Any]) -> Tuple[str, str]:
+    """Discover real consumer CI workflow strictly from consumer manifest or workflows dir."""
+    std_val = manifest.get("standards_validation") or {}
+    req_jobs = std_val.get("required_ci_jobs")
+    candidates: List[str] = []
+    if isinstance(req_jobs, dict):
+        for job_spec in req_jobs.values():
+            if isinstance(job_spec, dict):
+                wf = str(job_spec.get("workflow_path") or job_spec.get("workflow") or "").strip().replace("\\", "/")
+                if wf:
+                    candidates.append(wf)
+    elif isinstance(req_jobs, list):
+        for job_spec in req_jobs:
+            if isinstance(job_spec, dict):
+                wf = str(job_spec.get("workflow_path") or job_spec.get("workflow") or "").strip().replace("\\", "/")
+                if wf:
+                    candidates.append(wf)
+
+    filtered = [
+        wf
+        for wf in candidates
+        if wf.lower() not in (".github/workflows/standards-ci.yml", ".github/workflows/standards-ci.yaml")
+    ]
+    for wf in filtered:
+        if (project_root / wf).is_file():
+            return wf, Path(wf).name
+    if filtered:
+        return filtered[0], Path(filtered[0]).name
+
+    wf_dir = project_root / ".github" / "workflows"
+    if wf_dir.is_dir():
+        for wf_file in sorted(list(wf_dir.glob("*.yml")) + list(wf_dir.glob("*.yaml"))):
+            if wf_file.name.lower() in ("standards-ci.yml", "standards-ci.yaml"):
+                continue
+            return f".github/workflows/{wf_file.name}", wf_file.name
+
+    return "engineering-manifest.yaml", "NOT_VERIFIABLE"
 
 
 def extract_adrs_from_decision_record(body: str, source_ref: str) -> List[Dict[str, Any]]:
@@ -841,6 +985,8 @@ def build_engineering_baseline(
     runtime_fact_override: Optional[Dict[str, Any]] = None,
     test_fact_override: Optional[Dict[str, Any]] = None,
     allow_offline: bool = True,
+    scope: Optional[str] = None,
+    output_path: Optional[Path] = None,
 ) -> Tuple[bool, List[str], Optional[Dict[str, Any]], Optional[str]]:
     """Build deterministic engineering baseline JSON and Markdown from authoritative sources.
     Fails closed if any source conflict or missing authoritative input is detected.
@@ -849,8 +995,22 @@ def build_engineering_baseline(
     project_root = project_root.resolve()
     std_root = resolve_standards_root(str(standards_root) if standards_root else None)
 
+    effective_output_md = (
+        (
+            output_path.resolve(strict=False)
+            if output_path.is_absolute()
+            else (project_root / output_path).resolve(strict=False)
+        )
+        if output_path is not None
+        else (project_root / "docs" / "当前权威基线.md").resolve(strict=False)
+    )
+
     # Normalize timestamps and load existing baseline facts to avoid non-deterministic loops
-    committed_baseline = project_root / "docs" / "当前权威基线.md"
+    committed_baseline = (
+        effective_output_md
+        if effective_output_md.exists()
+        else (project_root / "docs" / "当前权威基线.md")
+    )
     existing_facts: Dict[str, Any] = {}
     if committed_baseline.exists():
         try:
@@ -921,6 +1081,17 @@ def build_engineering_baseline(
 
     if not project_id or not project_name:
         errors.append("BASELINE_CONFLICT_INVALID_PROJECT_IDENTITY: project.id and project.name are required")
+
+    effective_scope = scope
+    if not effective_scope:
+        if (
+            project_id == "ai-engineering-standards"
+            and (project_root / "docs" / "release-evidence" / "v3.0.0-reissue.json").exists()
+        ):
+            effective_scope = "standards-release"
+        else:
+            effective_scope = "consumer"
+    is_standards_release_scope = effective_scope == "standards-release"
 
     # 2. Load VERSION
     version_path = project_root / "VERSION"
@@ -1072,13 +1243,19 @@ def build_engineering_baseline(
     def rel_doc(dtype: str) -> str:
         return str(source_docs[dtype][0].relative_to(project_root)).replace("\\", "/")
 
+    def doc_link(dtype: str) -> str:
+        return compute_relative_markdown_link(effective_output_md, source_docs[dtype][0])
+
+    def rel_link_from_str(rel_str: str) -> str:
+        return compute_relative_markdown_link(effective_output_md, project_root / rel_str)
+
     def doc_id_of(dtype: str) -> str:
         return str(source_docs[dtype][1].get("document_id"))
 
     def doc_ver_of(dtype: str) -> str:
         return str(source_docs[dtype][1].get("document_version"))
 
-    # Load release evidence if available
+    # Load release evidence if available (Standards release scope or explicitly supplied only)
     evidence_data: Optional[Dict[str, Any]] = release_evidence
     if snapshot_evidence_path:
         snap_ok, snap_errors, _ = load_release_evidence(project_root, snapshot_evidence_path)
@@ -1094,24 +1271,40 @@ def build_engineering_baseline(
             errors.extend([f"BASELINE_FINAL_RELEASE_EVIDENCE_INVALID: {e}" for e in final_errors])
         else:
             evidence_data = final_loaded
-    elif evidence_data is None:
+    elif evidence_data is None and (is_standards_release_scope or release_evidence_path):
         ev_ok, ev_errors, ev_loaded = load_release_evidence(project_root, release_evidence_path)
         if ev_ok and ev_loaded:
             evidence_data = ev_loaded
         elif release_evidence_path:
             errors.extend([f"BASELINE_RELEASE_EVIDENCE_INVALID: {e}" for e in ev_errors])
 
-    # Extract capabilities, boundaries, contracts, ADRs from authoritative sources
-    pb_items = extract_bullet_items(source_docs["PRODUCT_BASELINE"][2], max_items=8) or [
+    # Extract capabilities, boundaries, contracts, ADRs from authoritative sources & rebase links
+    pb_items_raw = extract_bullet_items(source_docs["PRODUCT_BASELINE"][2], max_items=8) or [
         str(source_docs["PRODUCT_BASELINE"][1].get("change_summary") or "权威产品基线核心能力")
     ]
-    arch_items = extract_bullet_items(source_docs["SYSTEM_ARCHITECTURE"][2], max_items=6) or [
+    pb_items = [
+        rebase_markdown_links(item, source_docs["PRODUCT_BASELINE"][0], effective_output_md, project_root)
+        for item in pb_items_raw
+    ]
+    arch_items_raw = extract_bullet_items(source_docs["SYSTEM_ARCHITECTURE"][2], max_items=6) or [
         "系统架构与组件边界参见权威架构文档"
     ]
-    api_items = extract_bullet_items(source_docs["API_CONTRACT"][2], max_items=6) or [
+    arch_items = [
+        rebase_markdown_links(item, source_docs["SYSTEM_ARCHITECTURE"][0], effective_output_md, project_root)
+        for item in arch_items_raw
+    ]
+    api_items_raw = extract_bullet_items(source_docs["API_CONTRACT"][2], max_items=6) or [
         "接口与 Schema 契约参见权威 API 契约文档"
     ]
+    api_items = [
+        rebase_markdown_links(item, source_docs["API_CONTRACT"][0], effective_output_md, project_root)
+        for item in api_items_raw
+    ]
     adr_items = extract_adrs_from_decision_record(source_docs["DECISION_RECORD"][2], rel_doc("DECISION_RECORD"))
+    for d_item in adr_items:
+        d_item["title"] = rebase_markdown_links(
+            d_item["title"], source_docs["DECISION_RECORD"][0], effective_output_md, project_root
+        )
 
     # Separate historical release evidence from current candidate PR facts (STD-034 / STD-035).
     # Historical evidence for an older released version (e.g. v3.0.0 std019) MUST NEVER overwrite
@@ -1159,7 +1352,7 @@ def build_engineering_baseline(
         last_verified_ci_commit
         or ci_commit
         or (current_ver_evidence.get("last_verified_ci_commit") if current_ver_evidence else None)
-        or code_candidate_commit
+        or (code_candidate_commit if is_standards_release_scope else "NOT_VERIFIABLE")
     )
     effective_ci_status = (
         ci_status
@@ -1287,54 +1480,82 @@ def build_engineering_baseline(
         release_status_str = "BLOCKED"
 
     pr_label = f"PR #{eff_cand_pr_number}" if eff_cand_pr_number is not None else "当前候选 PR"
+    has_explicit_cand_pr = any(
+        x is not None
+        for x in (
+            candidate_pr_number,
+            pr_number,
+            candidate_pr_status,
+            pr_status,
+            candidate_pr_head,
+            candidate_pr_merge_event,
+        )
+    )
 
-    if pending_verifications is not None:
-        pending_text = pending_verifications
-    elif effective_pr_status == "MERGED" and is_current_version_released:
-        pending_text = f"正式版本 v{version_str} 已发布并完成核验。"
-    elif effective_pr_status == "MERGED" and verified_merge_commit:
-        if effective_ci_status == "PASS":
-            pending_text = (
-                f"{pr_label} 已由 {verified_merged_by} 合入 main（Merge Commit: {verified_merge_commit[:8]}）；"
-                f"当前待修复 PR 合入 main 且 main CI 双平台全绿后由官方工作流自动签发 v{version_str} Annotated Tag。"
-            )
+    if is_standards_release_scope:
+        if pending_verifications is not None:
+            pending_text = pending_verifications
+        elif effective_pr_status == "MERGED" and is_current_version_released:
+            pending_text = f"正式版本 v{version_str} 已发布并完成核验。"
+        elif effective_pr_status == "MERGED" and verified_merge_commit:
+            if effective_ci_status == "PASS":
+                pending_text = (
+                    f"{pr_label} 已由 {verified_merged_by} 合入 main（Merge Commit: {verified_merge_commit[:8]}）；"
+                    f"当前待修复 PR 合入 main 且 main CI 双平台全绿后由官方工作流自动签发 v{version_str} Annotated Tag。"
+                )
+            else:
+                pending_text = (
+                    f"{pr_label} 已由 {verified_merged_by} 合入 main（Merge Commit: {verified_merge_commit[:8]}）；"
+                    f"当前快照 ({code_candidate_commit[:8]}) 待推送到 GitHub Actions 远端触发双平台真实 CI 实测并合入 main 后签发 v{version_str} Tag（实测前保持 NOT_VERIFIABLE）。"
+                )
+        elif effective_ci_status == "PASS":
+            pending_text = f"{pr_label} CI 已通过，等待 ChatGPT 独立复核与唯一 Owner 批准合入 main，由 main CI 自动签发 v{version_str} Annotated Tag。"
+        else:
+            pending_text = f"当前候选 Commit ({code_candidate_commit[:8]}) 待推送到 GitHub Actions 远端触发 Windows/Ubuntu 双平台真实 CI 完整运行；实测完成前严格保持 NOT_VERIFIABLE，严禁本地伪造 PASS"
+
+        default_historical_runs = [
+            "Run 42169418901 (Push @ 4041b1d, conclusion: success, Windows/Ubuntu PASS)",
+            "Run 42169424617 (PR #8 @ 4041b1d, conclusion: success, Windows/Ubuntu PASS)",
+            "Run 42177850321 (Push @ a7a0177, conclusion: success, Windows/Ubuntu PASS)",
+            "Run 42177858136 (PR #8 @ a7a0177, conclusion: success, Windows/Ubuntu PASS)",
+            "Run 42553441590 (Push @ a43ef57, conclusion: success, Windows/Ubuntu PASS)",
+            "Run 42553446392 (PR #8 @ a43ef57, conclusion: success, Windows/Ubuntu PASS)",
+            "Run 42571376296 (Push @ 96d1b4a, conclusion: success, Windows/Ubuntu PASS, 188 tests)",
+            "Run 42571381569 (PR #8 @ 96d1b4a, conclusion: success, Windows/Ubuntu PASS, 188 tests)",
+            "Run 42583709325 (Push @ e7b80fe, conclusion: success, Windows/Ubuntu PASS, 207 tests)",
+            "Run 42583717591 (PR #8 @ e7b80fe, conclusion: success, Windows/Ubuntu PASS, 207 tests)",
+            "Run 42747292971 (Push @ c52f97a, conclusion: success, Windows/Ubuntu PASS, 215 tests)",
+            "Run 42760791748 (PR #9 @ c52f97a, conclusion: success, Windows/Ubuntu PASS, 215 tests)",
+            "Run 42763704495 (Push @ 60a03bc, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
+            "Run 42763710456 (PR #9 @ 60a03bc, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
+            "Run 42772211734 (Push @ e187b49, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
+            "Run 42772217074 (PR #9 @ e187b49, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
+            "Run 42783497089 (Push @ 4538b8b, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
+            "Run 42783504258 (PR #9 @ 4538b8b, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
+            "Run 42800374434 (Push @ 70f7554, conclusion: success, Windows/Ubuntu PASS, 217 tests)",
+            "Run 42800383714 (PR #9 @ 70f7554, conclusion: success, Windows/Ubuntu PASS, 217 tests)",
+            "Run 42835602231 (Push @ 18a71b9, conclusion: success, Windows/Ubuntu PASS, 218 tests)",
+            "Run 42835611644 (PR #9 @ 18a71b9, conclusion: success, Windows/Ubuntu PASS, 218 tests)",
+            "Run 42843755347 (Push @ 3361148, conclusion: success, Windows/Ubuntu PASS, 219 tests)",
+            "Run 42843964061 (PR #9 @ 3361148, conclusion: success, Windows/Ubuntu PASS, 219 tests)",
+        ]
+        hist_runs = historical_ci_runs or default_historical_runs
+        workflow_path = ".github/workflows/standards-ci.yml"
+        workflow_name = "standards-ci.yml"
+    else:
+        workflow_path, workflow_name = _discover_consumer_workflow_path(project_root, manifest)
+        hist_runs = list(historical_ci_runs) if historical_ci_runs else []
+        if pending_verifications is not None:
+            pending_text = pending_verifications
+        elif effective_pr_status == "MERGED" and is_current_version_released:
+            pending_text = f"消费端版本 v{version_str} 已完成核验。"
+        elif has_explicit_cand_pr and effective_ci_status == "PASS":
+            pending_text = f"{pr_label} 消费端 CI 已通过，等待消费端评审与合并。"
         else:
             pending_text = (
-                f"{pr_label} 已由 {verified_merged_by} 合入 main（Merge Commit: {verified_merge_commit[:8]}）；"
-                f"当前快照 ({code_candidate_commit[:8]}) 待推送到 GitHub Actions 远端触发双平台真实 CI 实测并合入 main 后签发 v{version_str} Tag（实测前保持 NOT_VERIFIABLE）。"
+                f"消费端当前源码 ({code_candidate_commit[:8]}) 尚未提供已核验的 GitHub Actions CI 执行证据，"
+                "严格保持 NOT_VERIFIABLE，不得静态推断或补写历史 PASS。"
             )
-    elif effective_ci_status == "PASS":
-        pending_text = f"{pr_label} CI 已通过，等待 ChatGPT 独立复核与唯一 Owner 批准合入 main，由 main CI 自动签发 v{version_str} Annotated Tag。"
-    else:
-        pending_text = f"当前候选 Commit ({code_candidate_commit[:8]}) 待推送到 GitHub Actions 远端触发 Windows/Ubuntu 双平台真实 CI 完整运行；实测完成前严格保持 NOT_VERIFIABLE，严禁本地伪造 PASS"
-
-    default_historical_runs = [
-        "Run 42169418901 (Push @ 4041b1d, conclusion: success, Windows/Ubuntu PASS)",
-        "Run 42169424617 (PR #8 @ 4041b1d, conclusion: success, Windows/Ubuntu PASS)",
-        "Run 42177850321 (Push @ a7a0177, conclusion: success, Windows/Ubuntu PASS)",
-        "Run 42177858136 (PR #8 @ a7a0177, conclusion: success, Windows/Ubuntu PASS)",
-        "Run 42553441590 (Push @ a43ef57, conclusion: success, Windows/Ubuntu PASS)",
-        "Run 42553446392 (PR #8 @ a43ef57, conclusion: success, Windows/Ubuntu PASS)",
-        "Run 42571376296 (Push @ 96d1b4a, conclusion: success, Windows/Ubuntu PASS, 188 tests)",
-        "Run 42571381569 (PR #8 @ 96d1b4a, conclusion: success, Windows/Ubuntu PASS, 188 tests)",
-        "Run 42583709325 (Push @ e7b80fe, conclusion: success, Windows/Ubuntu PASS, 207 tests)",
-        "Run 42583717591 (PR #8 @ e7b80fe, conclusion: success, Windows/Ubuntu PASS, 207 tests)",
-        "Run 42747292971 (Push @ c52f97a, conclusion: success, Windows/Ubuntu PASS, 215 tests)",
-        "Run 42760791748 (PR #9 @ c52f97a, conclusion: success, Windows/Ubuntu PASS, 215 tests)",
-        "Run 42763704495 (Push @ 60a03bc, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
-        "Run 42763710456 (PR #9 @ 60a03bc, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
-        "Run 42772211734 (Push @ e187b49, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
-        "Run 42772217074 (PR #9 @ e187b49, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
-        "Run 42783497089 (Push @ 4538b8b, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
-        "Run 42783504258 (PR #9 @ 4538b8b, conclusion: success, Windows/Ubuntu PASS, 216 tests)",
-        "Run 42800374434 (Push @ 70f7554, conclusion: success, Windows/Ubuntu PASS, 217 tests)",
-        "Run 42800383714 (PR #9 @ 70f7554, conclusion: success, Windows/Ubuntu PASS, 217 tests)",
-        "Run 42835602231 (Push @ 18a71b9, conclusion: success, Windows/Ubuntu PASS, 218 tests)",
-        "Run 42835611644 (PR #9 @ 18a71b9, conclusion: success, Windows/Ubuntu PASS, 218 tests)",
-        "Run 42843755347 (Push @ 3361148, conclusion: success, Windows/Ubuntu PASS, 219 tests)",
-        "Run 42843964061 (PR #9 @ 3361148, conclusion: success, Windows/Ubuntu PASS, 219 tests)",
-    ]
-    hist_runs = historical_ci_runs or default_historical_runs
 
     candidate_pr_meta: Dict[str, Any] = {
         "candidate_version": version_str,
@@ -1364,9 +1585,10 @@ def build_engineering_baseline(
         "historical_ci_runs": hist_runs,
         "snapshot_status": "FRESH",
         "snapshot_validity_hours": 24,
-        "workflow": "standards-ci.yml",
-        "candidate_pr": candidate_pr_meta,
+        "workflow": workflow_name,
     }
+    if is_standards_release_scope or has_explicit_cand_pr:
+        ci_details["candidate_pr"] = candidate_pr_meta
     if effective_run_id:
         ci_details["run_id"] = int(effective_run_id) if str(effective_run_id).isdigit() else effective_run_id
     if effective_push_run:
@@ -1380,6 +1602,20 @@ def build_engineering_baseline(
     test_count_clause = f", {effective_test_count} tests" if effective_test_count is not None else ""
     if ci_summary:
         summary_text = ci_summary
+    elif not is_standards_release_scope:
+        if effective_ci_status == "PASS":
+            if effective_push_run and effective_pr_run:
+                run_lbl = f"{effective_push_run} Push / {effective_pr_run} {pr_label}"
+            elif effective_run_id:
+                run_lbl = str(effective_run_id)
+            else:
+                run_lbl = workflow_name
+            summary_text = f"消费端 GitHub Actions CI 已核验通过 (Run: {run_lbl}{test_count_clause})"
+        else:
+            summary_text = (
+                f"消费端工作流 ({workflow_path}) 尚未在当前证据范围内提供完整可信 CI 实测结论，"
+                f"严格保持 {effective_ci_status}"
+            )
     elif effective_ci_status == "PASS":
         if effective_push_run and effective_pr_run:
             run_lbl = f"{effective_push_run} Push / {effective_pr_run} {pr_label}"
@@ -1408,9 +1644,9 @@ def build_engineering_baseline(
 
     ci_fact: Dict[str, Any] = ci_fact_override or {
         "repository": repository,
-        "source_path": ".github/workflows/standards-ci.yml",
+        "source_path": workflow_path,
         "source_commit": source_commit,
-        "evidence_ref": ci_evidence_ref or ".github/workflows/standards-ci.yml",
+        "evidence_ref": ci_evidence_ref or workflow_path,
         "observed_at": now_iso,
         "verification_status": effective_ci_status,
         "summary": summary_text,
@@ -1509,6 +1745,37 @@ def build_engineering_baseline(
     if errors:
         return False, errors, None, None
 
+    if is_standards_release_scope:
+        eff_ro_boundaries = [
+            "AI-Engineering-Hub (Read-Only Reference)",
+            "AI-KB (Read-Only Reference)",
+            "vtip-platform-catalog (Read-Only Reference)",
+            "vtip-ai-sidecar (Read-Only Reference)",
+        ]
+        eff_open_issues: List[Dict[str, Any]] = [
+            {
+                "issue_id": "AIHUB-FIRST-CONSUMER-PILOT-001",
+                "summary": "AI-Hub 是首个消费端试点，待 Standards 正式发布后由 AI-Hub Owner 独立批准并执行；AI-KB、VTIP、SideCar 不在本轮范围",
+                "status": "DEFERRED",
+            }
+        ]
+        eff_pending_approvals: List[Dict[str, Any]] = [
+            {
+                "item_id": "PR-REVIEW-STANDARDS-V3-001",
+                "summary": "等待 Draft PR 阶段由 ChatGPT 独立读取 GitHub PR Diff 审核并由 Owner 批准合入 main",
+                "required_approver": "OWNER",
+                "status": "OWNER_APPROVAL_REQUIRED",
+            }
+        ]
+    else:
+        manifest_arch = manifest.get("architecture_boundaries") or manifest.get("boundaries") or {}
+        raw_ro = manifest_arch.get("read_only_boundaries") or manifest_arch.get("read_only") or []
+        eff_ro_boundaries = (
+            [str(x).strip() for x in raw_ro if str(x).strip()] if isinstance(raw_ro, list) else []
+        )
+        eff_open_issues = []
+        eff_pending_approvals = []
+
     baseline_payload: Dict[str, Any] = {
         "schema_version": "1.0.0",
         "project_identity": {
@@ -1543,12 +1810,7 @@ def build_engineering_baseline(
             ]
             if project_id == "ai-engineering-standards"
             else arch_items,
-            "read_only_boundaries": [
-                "AI-Engineering-Hub (Read-Only Reference)",
-                "AI-KB (Read-Only Reference)",
-                "vtip-platform-catalog (Read-Only Reference)",
-                "vtip-ai-sidecar (Read-Only Reference)",
-            ],
+            "read_only_boundaries": eff_ro_boundaries,
         },
         "api_contract_entrypoints": {
             "source_doc_ref": rel_doc("API_CONTRACT"),
@@ -1580,21 +1842,8 @@ def build_engineering_baseline(
         "recent_build_facts": build_fact,
         "runtime_verification_facts": runtime_fact,
         "test_and_acceptance_facts": test_fact,
-        "open_issues": [
-            {
-                "issue_id": "AIHUB-FIRST-CONSUMER-PILOT-001",
-                "summary": "AI-Hub 是首个消费端试点，待 Standards 正式发布后由 AI-Hub Owner 独立批准并执行；AI-KB、VTIP、SideCar 不在本轮范围",
-                "status": "DEFERRED",
-            }
-        ],
-        "pending_approvals": [
-            {
-                "item_id": "PR-REVIEW-STANDARDS-V3-001",
-                "summary": "等待 Draft PR 阶段由 ChatGPT 独立读取 GitHub PR Diff 审核并由 Owner 批准合入 main",
-                "required_approver": "OWNER",
-                "status": "OWNER_APPROVAL_REQUIRED",
-            }
-        ],
+        "open_issues": eff_open_issues,
+        "pending_approvals": eff_pending_approvals,
         "evidence_sources": [
             ci_fact,
             build_fact,
@@ -1626,11 +1875,15 @@ def build_engineering_baseline(
     # Render deterministic Markdown for docs/当前权威基线.md
     cap_bullets = "\n".join(f"- {c}" for c in baseline_payload["product_capabilities"]["capabilities"])
     owned_bullets = "\n".join(f"- 属主资源：`{r}`" for r in baseline_payload["architecture_boundaries"]["owned_resources"])
-    ro_bullets = "\n".join(f"- 只读边界：`{r}`" for r in baseline_payload["architecture_boundaries"]["read_only_boundaries"])
+    ro_bullets = (
+        "\n".join(f"- 只读边界：`{r}`" for r in baseline_payload["architecture_boundaries"]["read_only_boundaries"])
+        if baseline_payload["architecture_boundaries"]["read_only_boundaries"]
+        else "- 只读边界：无额外跨仓只读边界声明（参见系统架构文档）"
+    )
     api_bullets = "\n".join(f"- {c}" for c in baseline_payload["api_contract_entrypoints"]["contracts"])
     adr_rows = (
         "\n".join(
-            f"| `{d['decision_id']}` | {d['title']} | `{d['approval_status']}` | [`{d['source_ref']}`](./{Path(d['source_ref']).name}) |"
+            f"| `{d['decision_id']}` | {d['title']} | `{d['approval_status']}` | [`{d['source_ref']}`]({rel_link_from_str(d['source_ref'])}) |"
             for d in baseline_payload["approved_adrs"]["decisions"]
         )
         if baseline_payload["approved_adrs"]["decisions"]
@@ -1640,13 +1893,21 @@ def build_engineering_baseline(
         f"| `{ev['repository']}` | `{ev['source_path']}` | `{ev['source_commit']}` | `{ev['evidence_ref']}` | `{ev['observed_at']}` | `{ev['verification_status']}` |"
         for ev in baseline_payload["evidence_sources"]
     )
-    issue_rows = "\n".join(
-        f"| `{iss['issue_id']}` | {iss['summary']} | `{iss['status']}` |"
-        for iss in baseline_payload["open_issues"]
+    issue_rows = (
+        "\n".join(
+            f"| `{iss['issue_id']}` | {iss['summary']} | `{iss['status']}` |"
+            for iss in baseline_payload["open_issues"]
+        )
+        if baseline_payload["open_issues"]
+        else "| - | 暂无已登记未决问题 | - |"
     )
-    approval_rows = "\n".join(
-        f"| `{ap['item_id']}` | {ap['summary']} | `{ap['required_approver']}` | `{ap['status']}` |"
-        for ap in baseline_payload["pending_approvals"]
+    approval_rows = (
+        "\n".join(
+            f"| `{ap['item_id']}` | {ap['summary']} | `{ap['required_approver']}` | `{ap['status']}` |"
+            for ap in baseline_payload["pending_approvals"]
+        )
+        if baseline_payload["pending_approvals"]
+        else "| - | 暂无已登记待审批事项 | - | - |"
     )
 
     doc_prefix = project_id.upper().replace("_", "-")
@@ -1680,7 +1941,7 @@ def build_engineering_baseline(
         f"- **工程定位 (`purpose`)**：{project_purpose}",
         f"- **制品/部署形态 (`deployment_kind`)**：`{deployment_kind}`",
         f"- **发布治理档位 (`release_profile`)**：`{release_profile}`",
-        f"- **权威蓝图入口**：[`{rel_doc('PROJECT_BLUEPRINT')}`](./{Path(rel_doc('PROJECT_BLUEPRINT')).name}) (`{doc_id_of('PROJECT_BLUEPRINT')}`)",
+        f"- **权威蓝图入口**：[`{rel_doc('PROJECT_BLUEPRINT')}`]({doc_link('PROJECT_BLUEPRINT')}) (`{doc_id_of('PROJECT_BLUEPRINT')}`)",
         "",
         "## 2. 当前产品版本 (`product_version`)",
         f"- **当前版本 (`VERSION`)**：`{version_str}`",
@@ -1689,7 +1950,7 @@ def build_engineering_baseline(
     std_pr9_ev: Optional[Dict[str, Any]] = None
     std_snap_ev: Optional[Dict[str, Any]] = None
     std_019_ev: Optional[Dict[str, Any]] = None
-    if project_id == "ai-engineering-standards" and (project_root / "docs" / "release-evidence").exists():
+    if is_standards_release_scope and project_id == "ai-engineering-standards" and (project_root / "docs" / "release-evidence").exists():
         _ok_a, _, _ev_a = load_release_evidence(
             project_root, resolve_release_evidence_path(project_root)
         )
@@ -1712,7 +1973,8 @@ def build_engineering_baseline(
                 std_019_ev = _ev_19
 
     if (
-        std_active_ev
+        is_standards_release_scope
+        and std_active_ev
         and str(std_active_ev.get("version", "")).lstrip("v") == version_str
         and std_active_ev.get("release_flow_status") == "RELEASED"
     ):
@@ -1720,37 +1982,42 @@ def build_engineering_baseline(
             f"- **正式发布标签 (`release_tag`)**：`{std_active_ev['release_tag']}`",
             f"- **正式发布状态**：`RELEASED`（官方 main 上的 Annotated Tag `{std_active_ev['release_tag']}`，Tag Object SHA: `{std_active_ev['tag_object_sha']}`，Peeled Commit: `{std_active_ev['peeled_commit']}`，main CI Run {std_active_ev.get('main_ci_run_id') or std_active_ev['push_run_id']} 双平台全绿，{std_active_ev['test_count']} tests PASS）。",
         ])
-    elif std_active_ev and std_active_ev.get("release_flow_status") == "RELEASED":
+    elif is_standards_release_scope and std_active_ev and std_active_ev.get("release_flow_status") == "RELEASED":
         md_lines.extend([
             f"- **当前已发布最新正式标签 (`LATEST_RELEASED_TAG`)**：`{std_active_ev.get('release_tag', lock_data.get('tag', 'v3.0.0'))}`（Tag Object SHA: `{std_active_ev.get('tag_object_sha', lock_data.get('tag_object_sha'))}`，Peeled Commit: `{std_active_ev.get('peeled_commit', lock_data.get('peeled_commit'))}`）",
             f"- **候选目标标签 (`candidate_release_tag`)**：`v{version_str}`",
             f"- **正式发布状态**：`CANDIDATE`（当前工作区 `VERSION={version_str}` 尚未合入 main 并由官方工作流签发 `v{version_str}` Tag；正式版本以官方 `main` 上的 Annotated Tag 和 main CI 为准）。",
         ])
-    else:
+    elif is_standards_release_scope:
         md_lines.extend([
             f"- **候选目标标签 (`release_tag`)**：`v{version_str}`",
             "- **正式发布状态**：候选分支上的 VERSION 不等于正式发布；正式版本以官方 main 上的 Annotated Tag 和 main CI 为准。",
+        ])
+    else:
+        md_lines.extend([
+            f"- **目标/声明标签 (`release_tag`)**：`v{version_str}`",
+            "- **正式发布状态**：消费端版本与发布状态以消费端自身受控正式发布凭证为准；未提供已核验发布凭证时保持 `NOT_VERIFIABLE`。",
         ])
 
     md_lines.extend([
         f"- **版本事实来源**：`VERSION` @ `{source_commit}`",
         "",
         "## 3. 正式产品功能及职责 (`product_capabilities`)",
-        f"- **权威产品基线入口**：[`{rel_doc('PRODUCT_BASELINE')}`](./{Path(rel_doc('PRODUCT_BASELINE')).name}) (`{doc_id_of('PRODUCT_BASELINE')}`, `v{doc_ver_of('PRODUCT_BASELINE')}`)",
+        f"- **权威产品基线入口**：[`{rel_doc('PRODUCT_BASELINE')}`]({doc_link('PRODUCT_BASELINE')}) (`{doc_id_of('PRODUCT_BASELINE')}`, `v{doc_ver_of('PRODUCT_BASELINE')}`)",
         cap_bullets,
         "",
         "## 4. 当前架构边界 (`architecture_boundaries`)",
-        f"- **权威系统架构入口**：[`{rel_doc('SYSTEM_ARCHITECTURE')}`](./{Path(rel_doc('SYSTEM_ARCHITECTURE')).name}) (`{doc_id_of('SYSTEM_ARCHITECTURE')}`)",
-        f"- **权威技术设计入口**：[`{rel_doc('TECHNICAL_DESIGN')}`](./{Path(rel_doc('TECHNICAL_DESIGN')).name}) (`{doc_id_of('TECHNICAL_DESIGN')}`)",
+        f"- **权威系统架构入口**：[`{rel_doc('SYSTEM_ARCHITECTURE')}`]({doc_link('SYSTEM_ARCHITECTURE')}) (`{doc_id_of('SYSTEM_ARCHITECTURE')}`)",
+        f"- **权威技术设计入口**：[`{rel_doc('TECHNICAL_DESIGN')}`]({doc_link('TECHNICAL_DESIGN')}) (`{doc_id_of('TECHNICAL_DESIGN')}`)",
         owned_bullets,
         ro_bullets,
         "",
         "## 5. 接口契约入口 (`api_contract_entrypoints`)",
-        f"- **权威接口契约入口**：[`{rel_doc('API_CONTRACT')}`](./{Path(rel_doc('API_CONTRACT')).name}) (`{doc_id_of('API_CONTRACT')}`)",
+        f"- **权威接口契约入口**：[`{rel_doc('API_CONTRACT')}`]({doc_link('API_CONTRACT')}) (`{doc_id_of('API_CONTRACT')}`)",
         api_bullets,
         "",
         "## 6. 已批准 ADR (`approved_adrs`)",
-        f"- **权威决策记录入口**：[`{rel_doc('DECISION_RECORD')}`](./{Path(rel_doc('DECISION_RECORD')).name}) (`{doc_id_of('DECISION_RECORD')}`)",
+        f"- **权威决策记录入口**：[`{rel_doc('DECISION_RECORD')}`]({doc_link('DECISION_RECORD')}) (`{doc_id_of('DECISION_RECORD')}`)",
         "",
         "| 决策编号 | 决策摘要 | 审批状态 | 权威来源 |",
         "|:---|:---|:---|:---|",
@@ -1783,14 +2050,17 @@ def build_engineering_baseline(
         f"- **6. 当前待验证事项 (`pending_verifications`)**：{ci_fact['details'].get('pending_verifications')}",
         "- **7. 历史 CI 记录 (`historical_ci_runs`)**：",
     ])
-    for hr in ci_fact["details"].get("historical_ci_runs", []):
-        md_lines.append(f"  - {hr}")
+    if ci_fact["details"].get("historical_ci_runs"):
+        for hr in ci_fact["details"]["historical_ci_runs"]:
+            md_lines.append(f"  - {hr}")
+    else:
+        md_lines.append("  - 暂无已核验的消费端历史 CI 记录（NOT_VERIFIABLE）")
     md_lines.extend([
         f"- **证据引用 (`evidence_ref`)**：`{ci_fact['evidence_ref']}`",
         f"- **观测时间 (`observed_at`)**：`{ci_fact['observed_at']}`",
         f"- **事实说明**：{ci_fact['summary']}",
     ])
-    if project_id == "ai-engineering-standards" and std_pr9_ev and std_snap_ev and std_019_ev:
+    if is_standards_release_scope and project_id == "ai-engineering-standards" and std_pr9_ev and std_snap_ev and std_019_ev:
         md_lines.extend([
             "",
             "### 9.1 PR9 历史发布证据 (PR9_HISTORICAL_RELEASE_EVIDENCE)",
@@ -1890,11 +2160,11 @@ def build_engineering_baseline(
         f"- **事实说明**：{runtime_fact['summary']}",
         "",
         "## 12. 测试和验收事实 (`test_and_acceptance_facts`)",
-        f"- **权威原型与交互规范入口**：[`{rel_doc('PROTOTYPE_UX')}`](./{Path(rel_doc('PROTOTYPE_UX')).name}) (`{doc_id_of('PROTOTYPE_UX')}`)",
-        f"- **权威测试基线入口**：[`{rel_doc('TEST_ACCEPTANCE')}`](./{Path(rel_doc('TEST_ACCEPTANCE')).name}) (`{doc_id_of('TEST_ACCEPTANCE')}`)",
-        f"- **权威发布运维入口**：[`{rel_doc('RELEASE_OPERATIONS')}`](./{Path(rel_doc('RELEASE_OPERATIONS')).name}) (`{doc_id_of('RELEASE_OPERATIONS')}`)",
-        f"- **权威文档总索引入口**：[`{rel_doc('DOCUMENT_INDEX')}`](./{Path(rel_doc('DOCUMENT_INDEX')).name}) (`{doc_id_of('DOCUMENT_INDEX')}`)",
-        f"- **权威跨会话交接入口**：[`{rel_doc('CROSS_SESSION_HANDOFF')}`](./{Path(rel_doc('CROSS_SESSION_HANDOFF')).name}) (`{doc_id_of('CROSS_SESSION_HANDOFF')}`)",
+        f"- **权威原型与交互规范入口**：[`{rel_doc('PROTOTYPE_UX')}`]({doc_link('PROTOTYPE_UX')}) (`{doc_id_of('PROTOTYPE_UX')}`)",
+        f"- **权威测试基线入口**：[`{rel_doc('TEST_ACCEPTANCE')}`]({doc_link('TEST_ACCEPTANCE')}) (`{doc_id_of('TEST_ACCEPTANCE')}`)",
+        f"- **权威发布运维入口**：[`{rel_doc('RELEASE_OPERATIONS')}`]({doc_link('RELEASE_OPERATIONS')}) (`{doc_id_of('RELEASE_OPERATIONS')}`)",
+        f"- **权威文档总索引入口**：[`{rel_doc('DOCUMENT_INDEX')}`]({doc_link('DOCUMENT_INDEX')}) (`{doc_id_of('DOCUMENT_INDEX')}`)",
+        f"- **权威跨会话交接入口**：[`{rel_doc('CROSS_SESSION_HANDOFF')}`]({doc_link('CROSS_SESSION_HANDOFF')}) (`{doc_id_of('CROSS_SESSION_HANDOFF')}`)",
         f"- **核验状态 (`verification_status`)**：`{test_fact['verification_status']}`",
         f"- **证据引用 (`evidence_ref`)**：`{test_fact['evidence_ref']}`",
         f"- **观测时间 (`observed_at`)**：`{test_fact['observed_at']}`",
@@ -1926,38 +2196,63 @@ def build_engineering_baseline(
         "",
     ])
     cand_pr_num_display = str(eff_cand_pr_number) if eff_cand_pr_number is not None else "NOT_ASSIGNED"
-    section19_lines = [
-        "",
-        "## 19. 当前候选状态与消费端试点 (CURRENT_CANDIDATE_PR)",
-        "",
-        f"- **候选版本 (`candidate_version`)**：`{version_str}`",
-        f"- **当前候选 PR 编号 (`candidate_pr_number`)**：`{cand_pr_num_display}`",
-        f"- **当前候选 PR 状态 (`candidate_pr_status`)**：`{effective_pr_status}`",
-        f"- **PR 状态标记 (`PR_STATE`)**：`{pr_state_str}`",
-        f"- **PR 草稿标记 (`PR_DRAFT`)**：`{str(pr_draft_bool).lower()}`",
-        f"- **当前候选 PR Base (`candidate_pr_base`)**：`{eff_cand_pr_base}`",
-        f"- **当前候选 Commit (`candidate_commit`)**：`{code_candidate_commit}`",
-        "- **实时 PR HEAD 核验方式 (`live_pr_head_verification`)**：`GITHUB_PR_API_REQUIRED`（通过 GitHub PR API / Actions Event 在线核验 `candidate_commit` 为实时 PR HEAD 祖先，不自引用静态写入）",
-        "- **实时 CI 运行记录方式 (`ci_runtime_record`)**：`GITHUB_STEP_SUMMARY`（实时 PR HEAD 与 CI Run ID 由 CI Runtime 与 Step Summary 记录）",
-        f"- **状态快照观测时间 (`candidate_observed_at`)**：`{now_iso}`",
-        f"- **当前发布状态 (`RELEASE_STATUS`)**：`{release_status_str}`",
-    ]
-    if effective_pr_status == "MERGED" and verified_merge_commit and verified_merged_by:
+    if is_standards_release_scope:
+        section19_lines = [
+            "",
+            "## 19. 当前候选状态与消费端试点 (CURRENT_CANDIDATE_PR)",
+            "",
+            f"- **候选版本 (`candidate_version`)**：`{version_str}`",
+            f"- **当前候选 PR 编号 (`candidate_pr_number`)**：`{cand_pr_num_display}`",
+            f"- **当前候选 PR 状态 (`candidate_pr_status`)**：`{effective_pr_status}`",
+            f"- **PR 状态标记 (`PR_STATE`)**：`{pr_state_str}`",
+            f"- **PR 草稿标记 (`PR_DRAFT`)**：`{str(pr_draft_bool).lower()}`",
+            f"- **当前候选 PR Base (`candidate_pr_base`)**：`{eff_cand_pr_base}`",
+            f"- **当前候选 Commit (`candidate_commit`)**：`{code_candidate_commit}`",
+            "- **实时 PR HEAD 核验方式 (`live_pr_head_verification`)**：`GITHUB_PR_API_REQUIRED`（通过 GitHub PR API / Actions Event 在线核验 `candidate_commit` 为实时 PR HEAD 祖先，不自引用静态写入）",
+            "- **实时 CI 运行记录方式 (`ci_runtime_record`)**：`GITHUB_STEP_SUMMARY`（实时 PR HEAD 与 CI Run ID 由 CI Runtime 与 Step Summary 记录）",
+            f"- **状态快照观测时间 (`candidate_observed_at`)**：`{now_iso}`",
+            f"- **当前发布状态 (`RELEASE_STATUS`)**：`{release_status_str}`",
+        ]
+        if effective_pr_status == "MERGED" and verified_merge_commit and verified_merged_by:
+            section19_lines.extend([
+                f"- **当前候选 PR Merge Commit (`candidate_pr_merge_commit`)**：`{verified_merge_commit}`",
+                f"- **当前候选 PR 合并者 (`candidate_pr_merged_by`)**：`{verified_merged_by}`",
+                f"- 当前候选版本：`{version_str}`；{pr_label}（状态：`MERGED`）已由 `{verified_merged_by}` 合入官方 `{eff_cand_pr_base}`（Merge Commit: `{verified_merge_commit}`）。",
+            ])
+        else:
+            section19_lines.append(
+                f"- 当前候选版本：`{version_str}`；{pr_label}（状态：`{effective_pr_status}`，`PR_STATE={pr_state_str}`，`PR_DRAFT={str(pr_draft_bool).lower()}`）尚未合入官方 `{eff_cand_pr_base}`，尚未创建正式 `v{version_str}` Tag。"
+            )
         section19_lines.extend([
-            f"- **当前候选 PR Merge Commit (`candidate_pr_merge_commit`)**：`{verified_merge_commit}`",
-            f"- **当前候选 PR 合并者 (`candidate_pr_merged_by`)**：`{verified_merged_by}`",
-            f"- 当前候选版本：`{version_str}`；{pr_label}（状态：`MERGED`）已由 `{verified_merged_by}` 合入官方 `{eff_cand_pr_base}`（Merge Commit: `{verified_merge_commit}`）。",
+            "- 正式发布版本必须以官方 main 上的 Annotated Tag、Tag Object SHA、Peeled Commit 与 main CI 为准；严禁依赖 GitHub /releases/latest REST API 对象。",
+            "- **消费端首个试点**：AI-Engineering-Hub；AI-KB、VTIP、SideCar 不在本轮试点范围，是否接入由各工程 Owner 后续决定。",
+            "- **审批状态**：保持 `IN_REVIEW`，严禁智能体自批或伪造 `OWNER_APPROVED`。",
         ])
-    else:
-        section19_lines.append(
-            f"- 当前候选版本：`{version_str}`；{pr_label}（状态：`{effective_pr_status}`，`PR_STATE={pr_state_str}`，`PR_DRAFT={str(pr_draft_bool).lower()}`）尚未合入官方 `{eff_cand_pr_base}`，尚未创建正式 `v{version_str}` Tag。"
-        )
-    section19_lines.extend([
-        "- 正式发布版本必须以官方 main 上的 Annotated Tag、Tag Object SHA、Peeled Commit 与 main CI 为准；严禁依赖 GitHub /releases/latest REST API 对象。",
-        "- **消费端首个试点**：AI-Engineering-Hub；AI-KB、VTIP、SideCar 不在本轮试点范围，是否接入由各工程 Owner 后续决定。",
-        "- **审批状态**：保持 `IN_REVIEW`，严禁智能体自批或伪造 `OWNER_APPROVED`。",
-    ])
-    md_lines.extend(section19_lines)
+        md_lines.extend(section19_lines)
+    elif has_explicit_cand_pr:
+        section19_lines = [
+            "",
+            "## 19. 当前候选 PR 状态 (CURRENT_CANDIDATE_PR)",
+            "",
+            f"- **候选版本 (`candidate_version`)**：`{version_str}`",
+            f"- **当前候选 PR 编号 (`candidate_pr_number`)**：`{cand_pr_num_display}`",
+            f"- **当前候选 PR 状态 (`candidate_pr_status`)**：`{effective_pr_status}`",
+            f"- **PR 状态标记 (`PR_STATE`)**：`{pr_state_str}`",
+            f"- **PR 草稿标记 (`PR_DRAFT`)**：`{str(pr_draft_bool).lower()}`",
+            f"- **当前候选 PR Base (`candidate_pr_base`)**：`{eff_cand_pr_base}`",
+            f"- **当前候选 Commit (`candidate_commit`)**：`{code_candidate_commit}`",
+            "- **实时 PR HEAD 核验方式 (`live_pr_head_verification`)**：`GITHUB_PR_API_REQUIRED`",
+            "- **实时 CI 运行记录方式 (`ci_runtime_record`)**：`GITHUB_STEP_SUMMARY`",
+            f"- **状态快照观测时间 (`candidate_observed_at`)**：`{now_iso}`",
+            f"- **当前发布状态 (`RELEASE_STATUS`)**：`{release_status_str}`",
+        ]
+        if effective_pr_status == "MERGED" and verified_merge_commit and verified_merged_by:
+            section19_lines.extend([
+                f"- **当前候选 PR Merge Commit (`candidate_pr_merge_commit`)**：`{verified_merge_commit}`",
+                f"- **当前候选 PR 合并者 (`candidate_pr_merged_by`)**：`{verified_merged_by}`",
+            ])
+        section19_lines.append("- **审批状态**：保持 `IN_REVIEW`，严禁智能体自批或伪造 `OWNER_APPROVED`。")
+        md_lines.extend(section19_lines)
     markdown_text = "\n".join(md_lines)
     # Also update frontmatter content_sha256 using compute_canonical_document_sha256
     canonical_doc_sha = compute_canonical_document_sha256(markdown_text)
@@ -2036,6 +2331,12 @@ def main() -> None:
             print(f"[FAIL] Failed to load --candidate-pr-merge-event '{me_path}': {exc}")
             sys.exit(1)
 
+    if args.output:
+        raw_out = Path(args.output)
+        out_md = raw_out.resolve() if raw_out.is_absolute() else (project_root / raw_out).resolve()
+    else:
+        out_md = (project_root / "docs" / "当前权威基线.md").resolve()
+
     effective_observed_at = args.observed_at
     if effective_observed_at is None and not args.verify_only:
         effective_observed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -2073,14 +2374,14 @@ def main() -> None:
         snapshot_evidence_path=args.snapshot_evidence,
         final_evidence_path=args.final_evidence,
         allow_offline=cli_allow_offline,
+        scope=args.scope,
+        output_path=out_md,
     )
     if not ok or payload is None or md_text is None:
         print(f"[FAIL] Engineering baseline generation blocked ({len(errors)} issues):")
         for e in errors:
             print(f"  - {e}")
         sys.exit(1)
-
-    out_md = Path(args.output).resolve() if args.output else project_root / "docs" / "当前权威基线.md"
 
     if args.verify_only:
         if not out_md.exists():
@@ -2371,11 +2672,11 @@ def main() -> None:
     out_md.parent.mkdir(parents=True, exist_ok=True)
     out_md.write_text(md_text, encoding="utf-8")
 
-    out_json = (
-        Path(args.json_out).resolve()
-        if args.json_out
-        else project_root / ".artifacts" / "baseline" / "engineering_baseline.json"
-    )
+    if args.json_out:
+        raw_json = Path(args.json_out)
+        out_json = raw_json.resolve() if raw_json.is_absolute() else (project_root / raw_json).resolve()
+    else:
+        out_json = project_root / ".artifacts" / "baseline" / "engineering_baseline.json"
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
