@@ -1,17 +1,17 @@
 ---
 document_id: "DOC-AI-ENGINEERING-STANDARDS-CROSS-SESSION-HANDOFF-001"
-document_version: "3.0.1"
+document_version: "3.0.2"
 project_id: "ai-engineering-standards"
 document_type: "CROSS_SESSION_HANDOFF"
 status: "IN_REVIEW"
-applies_to_release: "v3.0.1"
-last_updated: "2026-11-24"
+applies_to_release: "v3.0.2"
+last_updated: "2026-11-25"
 supersedes: null
 change_summary: "自动采集生成任务 Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION 跨会话交接文档 (STD-020 v2.0.0)"
 history_reference: null
 primary_entrypoint: true
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
-content_sha256: "sha256:efd72b53ded79dffebc41627e87353bd910d618f900476da6564d77a153005dd"
+content_sha256: "sha256:4d8dc616115343523cf976317cb5859472a5489bbc1c277559b89a8b3cb29a82"
 approval_scope: "AI_APPROVABLE"
 approval_status: "IN_REVIEW"
 ---
@@ -20,30 +20,30 @@ approval_status: "IN_REVIEW"
 
 ```text
 TASK_ID=Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION
-VERSION=v3.0.1
+VERSION=v3.0.2
 HANDOFF_TYPE=DURABLE
 STATUS=IN_PROGRESS
-COMMIT_HASH=7651c5f2407f9f581a8950078176e556e5660758
-CAPTURED_AT=2026-11-24T07:21:44Z
-CONTENT_SHA256=sha256:b363ded1d4153c4927966bba1a92cab313671afa94d478255bf4652bd1d20abe
+COMMIT_HASH=dd4748c3e6c6028c7220e0297e0aa2d1e6cba50c
+CAPTURED_AT=2026-11-25T02:02:34Z
+CONTENT_SHA256=sha256:ca831f8bc999925747e7d08d5fee75aa1895673036c5ee007fd6895e8119f304
 ```
 
 > **强制重核验约束 (`STD-020` §3)**：新会话接手时必须重新核验实时工程事实（Git、Standards 锁定、CI 与 Runtime），严禁仅凭旧聊天摘要推断当前状态。
 
 ## 1. 当前 Git 状态与分支身份 (`git_state`)
 - **当前分支 (`branch`)**：`fix/std-024-consumer-ci-provenance-hardening`
-- **当前快照 Commit (`snapshot_commit`)**：`7651c5f2407f9f581a8950078176e556e5660758`
-- **本地 HEAD (`local_head`)**：`7651c5f2407f9f581a8950078176e556e5660758`
+- **当前快照 Commit (`snapshot_commit`)**：`dd4748c3e6c6028c7220e0297e0aa2d1e6cba50c`
+- **本地 HEAD (`local_head`)**：`dd4748c3e6c6028c7220e0297e0aa2d1e6cba50c`
 - **远端 main (`remote_head`)**：`4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`
 - **工作区干净状态 (`worktree_clean`)**：`false`
 - **Git 状态摘要 (`status_summary`)**：`## fix/std-024-consumer-ci-provenance-hardening...origin/fix/std-024-consumer-ci-provenance-hardening`
 
 ## 2. 当前 Standards 锁定 (`standards_lock`)
 - **规范仓库 (`repository`)**：`xiefeifeihu/AI-Engineering-Standards`
-- **锁定版本 (`version`)**：`3.0.0`
-- **锁定正式 Tag (`tag`)**：`v3.0.0`
-- **Tag Object SHA (`tag_object_sha`)**：`8256bb384e62894219db0992a2cb57e16d4fa8cd`
-- **Peeled Commit (`peeled_commit`)**：`8b223019c254e0edeb94576b94af46c1e48b0316`
+- **锁定版本 (`version`)**：`3.0.1`
+- **锁定正式 Tag (`tag`)**：`v3.0.1`
+- **Tag Object SHA (`tag_object_sha`)**：`a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4`
+- **Peeled Commit (`peeled_commit`)**：`4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`
 
 ## 3. 实际测试结果汇总 (`test_results`)
 - **核验状态 (`verification_status`)**：`NOT_RUN`
@@ -57,16 +57,16 @@ CONTENT_SHA256=sha256:b363ded1d4153c4927966bba1a92cab313671afa94d478255bf4652bd1
 - **Push Run ID**：`None`
 - **PR Run ID**：`None`
 - **工作流 (`workflow`)**：`.github/workflows/standards-ci.yml`
-- **关联 Commit (`commit`)**：`7651c5f2407f9f581a8950078176e556e5660758`
+- **关联 Commit (`commit`)**：`dd4748c3e6c6028c7220e0297e0aa2d1e6cba50c`
 - **核验状态 (`verification_status`)**：`NOT_VERIFIABLE`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
 ### 4.1 六项 CI / 快照核心概念区分 (`STD-034` / `STD-035`)
 - **1. 基线源 Commit**：`9687f961b22df612c4311961e06fc1c1fd508c37`
-- **2. Git 快照观测时间**：`2026-11-24T07:21:44Z`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
-- **3. 最近一次已验证 CI Commit**：`NOT_VERIFIABLE`
-- **4. 当前候选 Commit**：`7651c5f2407f9f581a8950078176e556e5660758`
-- **5. 当前待验证事项**：远端 GitHub Actions CI 双平台实测；严禁在推送前或运行完成前伪造 CI PASS
+- **2. Git 快照观测时间**：`2026-11-25T02:02:34Z`（快照有效时间 24 小时；过期标记 STALE 或 NOT_VERIFIABLE）
+- **3. 最近一次已验证 CI Commit**：`dd4748c3e6c6028c7220e0297e0aa2d1e6cba50c`
+- **4. 当前候选 Commit**：`dd4748c3e6c6028c7220e0297e0aa2d1e6cba50c`
+- **5. 当前待验证事项**：当前候选 Commit (dd4748c3) 已推送到 GitHub Actions 远端待触发 Windows/Ubuntu 双平台真实 CI 完整运行；实测完成前严格保持 NOT_VERIFIABLE，严禁本地伪造 PASS
 - **6. 历史 CI 记录**：Run 42169418901, 42169424617, 42177850321, 42177858136, 42553441590, 42553446392, 42571376296, 42571381569, 42583709325, 42583717591, 42747292971, 42760791748, 42763704495, 42763710456, 42772211734, 42772217074, 42783497089, 42783504258, 42800374434, 42800383714, 42835602231, 42835611644, 42843755347, 42843964061（避免每次记录 CI 无限触发基线变更）
 
 ### 4.2 PR9 历史发布凭证 (PR9_HISTORICAL_RELEASE_EVIDENCE)
@@ -135,20 +135,39 @@ CONTENT_SHA256=sha256:b363ded1d4153c4927966bba1a92cab313671afa94d478255bf4652bd1
 - **旧 Tag 删除状态**：`OLD_TAG_DELETED=true`
 - **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
 
-### 4.5 当前发布候选状态与实时 PR 身份 (CURRENT_CANDIDATE_PR)
+### 4.5 Std-020 最终发布证据与发布后收口 (STD020_FINAL_RELEASE)
+- **核验状态 (`verification_status`)**：`PASS`
+- **任务编号 (`task_id`)**：`Std-023-POST-RELEASE-EVIDENCE-CLOSEOUT`
+- **正式发布 Tag (`release_tag`)**：`v3.0.1`
+- **Tag Object SHA (`tag_object_sha`)**：`a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4`
+- **Peeled Commit (`peeled_commit`)**：`4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`
+- **代码候选 Commit (`candidate_commit`)**：`4bffd3b280002e54c15ba2731fc2a3e144962319`
+- **文档快照 Commit (`snapshot_commit`)**：`4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`
+- **最新已验证 CI Commit (`last_verified_ci_commit`)**：`4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`
+- **Push Run ID**：`45099701154`
+- **PR Run ID**：`45095147625`
+- **PR 编号与状态**：PR #14（状态：`MERGED`）
+- **PR 合并者 (`pr_merged_by`)**：`xiefeifeihu`
+- **发布时 main HEAD (`main_head`)**：`4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`
+- **测试用例数**：`336 tests PASS`
+- **Tag 发布状态 (`tag_publish_status`)**：`PASS`
+- **发布流程状态 (`release_flow_status`)**：`RELEASED`
+- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`
+
+### 4.6 当前发布候选状态与实时 PR 身份 (CURRENT_CANDIDATE_PR)
 - **任务编号 (`task_id`)**：`Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION`
-- **候选版本 (`candidate_version`)**：`3.0.1`
+- **候选版本 (`candidate_version`)**：`3.0.2`
 - **当前候选 PR 编号 (`candidate_pr_number`)**：`16`
 - **当前候选 PR 状态 (`candidate_pr_status`)**：`DRAFT`
 - **PR 状态标记 (`PR_STATE`)**：`OPEN`
 - **PR 草稿标记 (`PR_DRAFT`)**：`true`
 - **当前候选 PR Base (`candidate_pr_base`)**：`main`
-- **当前候选 Commit (`candidate_commit`)**：`7651c5f2407f9f581a8950078176e556e5660758`
+- **当前候选 Commit (`candidate_commit`)**：`dd4748c3e6c6028c7220e0297e0aa2d1e6cba50c`
 - **实时 PR HEAD 核验方式 (`live_pr_head_verification`)**：`GITHUB_PR_API_REQUIRED`（实时 PR HEAD 与 PR 状态通过 GitHub PR API / Actions Event 在线核验，不自引用静态写入）
 - **实时 CI 运行记录方式 (`ci_runtime_record`)**：`GITHUB_STEP_SUMMARY`（实时 PR HEAD 与 CI Run ID 由 CI Runtime 与 Step Summary 记录）
-- **状态快照观测时间 (`candidate_observed_at`)**：`2026-11-24T07:21:44Z`
-- **当前最新已发布正式 Tag (`LATEST_RELEASED_TAG`)**：`v3.0.0`
-- **发布流程状态 (`RELEASE_STATUS`)**：`CANDIDATE`（待 PR #16 经独立审查与 Owner 批准合入 main 后由 main CI 自动签发 v3.0.1 Tag）
+- **状态快照观测时间 (`candidate_observed_at`)**：`2026-11-25T02:02:34Z`
+- **当前最新已发布正式 Tag (`LATEST_RELEASED_TAG`)**：`v3.0.1`
+- **发布流程状态 (`RELEASE_STATUS`)**：`CANDIDATE`（待 PR #16 经独立审查与 Owner 批准合入 main 后由 main CI 自动签发 v3.0.2 Tag）
 
 ## 5. 已完成事项 (`completed_items`)
 - 暂无
