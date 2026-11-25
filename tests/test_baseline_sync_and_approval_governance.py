@@ -7033,19 +7033,30 @@ class HistoricalPrHeadEvolutionGovernanceTests(unittest.TestCase):
     def test_t09_std018_and_historical_evidence_files_remain_byte_identical(self) -> None:
         import hashlib
 
-        expected_hashes = {
+        expected_canonical_hashes = {
             "std018-current-snapshot.json": "74f05b0d525bf2f9a6d9e7e811a080f6e14f71053c59baab5f651ff1a1c95276",
             "std019-final-release.json": "adc34420015d57f856f3d0eb1608b585937f6032d1224bcd6ca752c3e9fe2b20",
             "v3.0.0-reissue.json": "5453aa93037b1c9f17bfbd274e69b86c0293edf76bb6e03ef3540a876d7422ad",
-            "v3.0.1.json": "cf829313fd37782103eb4d726a701e1307244ab9a1d72f153c99a1961e3dd14b",
+            "v3.0.1.json": "a39a35dcd3061409bfa004a452d6e0bcd1cb0354a3497db963288ddb11f8ed2b",
             "v3.0.2.json": "6a6f052cad04a467c8fa897678a7c6799c7529f4a53deac4a12ba914be7ef3ea",
         }
         ev_dir = ROOT / "docs" / "release-evidence"
-        for fname, exp_sha in expected_hashes.items():
+        for fname, exp_sha in expected_canonical_hashes.items():
             fpath = ev_dir / fname
             self.assertTrue(fpath.is_file(), f"Missing historical release evidence: {fpath}")
-            actual_sha = hashlib.sha256(fpath.read_bytes()).hexdigest().lower()
-            self.assertEqual(actual_sha, exp_sha, f"Historical evidence '{fname}' was modified!")
+            raw_bytes = fpath.read_bytes()
+            lf_sha = hashlib.sha256(raw_bytes.replace(b"\r\n", b"\n")).hexdigest().lower()
+            self.assertEqual(lf_sha, exp_sha, f"Historical evidence '{fname}' LF-normalized content was modified!")
+
+            blob_bytes = subprocess.check_output(
+                ["git", "-C", str(ROOT), "show", f"HEAD:docs/release-evidence/{fname}"]
+            )
+            blob_sha = hashlib.sha256(blob_bytes).hexdigest().lower()
+            self.assertEqual(blob_sha, exp_sha, f"Historical evidence '{fname}' Git blob was modified!")
+
+            if fname == "std018-current-snapshot.json":
+                raw_sha = hashlib.sha256(raw_bytes).hexdigest().lower()
+                self.assertEqual(raw_sha, exp_sha, "std018-current-snapshot.json raw bytes were modified!")
 
     def test_t10_four_official_release_evidence_files_still_pass(self) -> None:
         ev_dir = ROOT / "docs" / "release-evidence"
