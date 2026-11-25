@@ -6391,6 +6391,32 @@ class V301PostReleaseEvidenceCloseoutTests(unittest.TestCase):
                     self.assertIn("`a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4`", sec_txt)
                     self.assertIn(f"`{pr14_merge}`", sec_txt)
 
+    def test_v302_candidate_handoff_preserves_v301_released_and_emits_candidate_pr(self) -> None:
+        cand_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+        ok_h, errs_h, _, md_h = build_handoff_payload(
+            project_root=ROOT,
+            task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+            version="3.0.2",
+            status="IN_PROGRESS",
+            captured_at="2026-11-25T02:00:00Z",
+            source_commit_override=PROJECT_SOURCE_COMMIT,
+            candidate_commit_override=cand_sha,
+            candidate_pr_number=16,
+            candidate_pr_status="DRAFT",
+            candidate_pr_draft=True,
+            candidate_pr_base="main",
+            standards_root=ROOT,
+        )
+        self.assertTrue(ok_h, f"v3.0.2 candidate handoff failed: {errs_h}")
+        assert md_h is not None
+        std020_sec, std020_errs = extract_scope_content(md_h, "STD020_FINAL_RELEASE")
+        self.assertEqual(std020_errs, [], std020_errs)
+        self.assertIn("`v3.0.1`", std020_sec)
+        cand_sec, cand_errs = extract_scope_content(md_h, "CURRENT_CANDIDATE_PR")
+        self.assertEqual(cand_errs, [], cand_errs)
+        self.assertIn("`3.0.2`", cand_sec)
+        self.assertIn("`v3.0.1`", cand_sec)
+
 
 if __name__ == "__main__":
     unittest.main()
