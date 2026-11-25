@@ -912,24 +912,25 @@ def build_handoff_payload(
         elif anc_st == "NOT_VERIFIABLE" and not allow_offline:
             errors.extend(anc_errs)
 
+    # Collect known historical merge commits from prior versions so they can NEVER pollute the current candidate PR
     historical_merge_commits: set[str] = set()
-    if not is_current_version_released:
-        if evidence_data:
-            for hk in ("main_head", "peeled_commit"):
-                hv = str(evidence_data.get(hk) or "").strip()
-                if re.fullmatch(r"[0-9a-f]{40}", hv):
-                    historical_merge_commits.add(hv)
-        for hist_name in ("v3.0.0-reissue.json", "std018-current-snapshot.json", "std019-final-release.json"):
-            hp = project_root / "docs" / "release-evidence" / hist_name
-            if hp.is_file():
-                try:
-                    hdata = json.loads(hp.read_text(encoding="utf-8"))
+    if evidence_data and str(evidence_data.get("version", "")).lstrip("v") != resolved_version:
+        for hk in ("main_head", "peeled_commit"):
+            hv = str(evidence_data.get(hk) or "").strip()
+            if re.fullmatch(r"[0-9a-f]{40}", hv):
+                historical_merge_commits.add(hv)
+    for hist_name in ("v3.0.0-reissue.json", "std018-current-snapshot.json", "std019-final-release.json", "v3.0.1.json"):
+        hp = project_root / "docs" / "release-evidence" / hist_name
+        if hp.is_file():
+            try:
+                hdata = json.loads(hp.read_text(encoding="utf-8"))
+                if str(hdata.get("version", "")).lstrip("v") != resolved_version:
                     for hk in ("main_head", "peeled_commit"):
                         hv = str(hdata.get(hk) or "").strip()
                         if re.fullmatch(r"[0-9a-f]{40}", hv):
                             historical_merge_commits.add(hv)
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
     verified_merge_commit: Optional[str] = None
     verified_merged_by: Optional[str] = None
@@ -1219,6 +1220,8 @@ def build_handoff_payload(
     pr_label = f"PR #{eff_cand_pr_number}" if eff_cand_pr_number is not None else "当前候选 PR"
     if pending_verifications is not None:
         pending_text = pending_verifications
+    elif is_current_version_released:
+        pending_text = f"正式版本 v{resolved_version} 已发布并完成核验。"
     elif ci_run.get("verification_status") == "PASS":
         pending_text = f"{pr_label} CI 已通过，等待独立复核与 Owner 批准合入 main 后由 main CI 自动签发 v{resolved_version} Tag。"
     else:
@@ -1348,9 +1351,12 @@ def build_handoff_payload(
             _hok, _, _hev = load_release_evidence(project_root, _hp_019)
             if _hok:
                 _h_019_ev = _hev
-        _hok, _, _hev = load_release_evidence(project_root, resolve_release_evidence_path(project_root))
-        if _hok:
-            _h_act_ev = _hev
+        if final_evidence_path or release_evidence is not None:
+            _h_act_ev = evidence_data
+        else:
+            _hok, _, _hev = load_release_evidence(project_root, resolve_release_evidence_path(project_root))
+            if _hok:
+                _h_act_ev = _hev
 
     if project_id == "ai-engineering-standards" and _h_pr9_ev and _h_snap_ev and _h_019_ev:
         md_lines.extend([

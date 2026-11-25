@@ -987,6 +987,7 @@ def build_engineering_baseline(
     allow_offline: bool = True,
     scope: Optional[str] = None,
     output_path: Optional[Path] = None,
+    version_override: Optional[str] = None,
 ) -> Tuple[bool, List[str], Optional[Dict[str, Any]], Optional[str]]:
     """Build deterministic engineering baseline JSON and Markdown from authoritative sources.
     Fails closed if any source conflict or missing authoritative input is detected.
@@ -1094,14 +1095,19 @@ def build_engineering_baseline(
     is_standards_release_scope = effective_scope == "standards-release"
 
     # 2. Load VERSION
-    version_path = project_root / "VERSION"
-    if not version_path.exists():
-        errors.append("BASELINE_CONFLICT_MISSING_VERSION: VERSION file is missing")
-        version_str = "0.0.0"
-    else:
-        version_str = version_path.read_text(encoding="utf-8").strip().lstrip("v")
+    if version_override is not None:
+        version_str = str(version_override).strip().lstrip("v")
         if not re.match(r"^\d+\.\d+\.\d+$", version_str):
             errors.append(f"BASELINE_CONFLICT_INVALID_VERSION: '{version_str}' is not valid SemVer")
+    else:
+        version_path = project_root / "VERSION"
+        if not version_path.exists():
+            errors.append("BASELINE_CONFLICT_MISSING_VERSION: VERSION file is missing")
+            version_str = "0.0.0"
+        else:
+            version_str = version_path.read_text(encoding="utf-8").strip().lstrip("v")
+            if not re.match(r"^\d+\.\d+\.\d+$", version_str):
+                errors.append(f"BASELINE_CONFLICT_INVALID_VERSION: '{version_str}' is not valid SemVer")
 
     # 3. Load and cross-check standards.lock.json vs engineering-manifest.yaml
     lock_path = project_root / "standards.lock.json"
@@ -1316,25 +1322,25 @@ def build_engineering_baseline(
     )
     current_ver_evidence: Optional[Dict[str, Any]] = evidence_data if is_current_version_released else None
 
-    # Collect known historical merge commits so they can NEVER pollute the current candidate PR
+    # Collect known historical merge commits from prior versions so they can NEVER pollute the current candidate PR
     historical_merge_commits: set[str] = set()
-    if not is_current_version_released:
-        if evidence_data:
-            for hk in ("main_head", "peeled_commit"):
-                hv = str(evidence_data.get(hk) or "").strip()
-                if re.fullmatch(r"[0-9a-f]{40}", hv):
-                    historical_merge_commits.add(hv)
-        for hist_name in ("v3.0.0-reissue.json", "std018-current-snapshot.json", "std019-final-release.json"):
-            hp = project_root / "docs" / "release-evidence" / hist_name
-            if hp.is_file():
-                try:
-                    hdata = json.loads(hp.read_text(encoding="utf-8"))
+    if evidence_data and str(evidence_data.get("version", "")).lstrip("v") != version_str:
+        for hk in ("main_head", "peeled_commit"):
+            hv = str(evidence_data.get(hk) or "").strip()
+            if re.fullmatch(r"[0-9a-f]{40}", hv):
+                historical_merge_commits.add(hv)
+    for hist_name in ("v3.0.0-reissue.json", "std018-current-snapshot.json", "std019-final-release.json", "v3.0.1.json"):
+        hp = project_root / "docs" / "release-evidence" / hist_name
+        if hp.is_file():
+            try:
+                hdata = json.loads(hp.read_text(encoding="utf-8"))
+                if str(hdata.get("version", "")).lstrip("v") != version_str:
                     for hk in ("main_head", "peeled_commit"):
                         hv = str(hdata.get(hk) or "").strip()
                         if re.fullmatch(r"[0-9a-f]{40}", hv):
                             historical_merge_commits.add(hv)
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
     # Dynamic facts with mandatory 6 provenance fields (decoupled from historical v3.0.0 evidence)
     code_candidate_commit = (
@@ -1951,11 +1957,14 @@ def build_engineering_baseline(
     std_snap_ev: Optional[Dict[str, Any]] = None
     std_019_ev: Optional[Dict[str, Any]] = None
     if is_standards_release_scope and project_id == "ai-engineering-standards" and (project_root / "docs" / "release-evidence").exists():
-        _ok_a, _, _ev_a = load_release_evidence(
-            project_root, resolve_release_evidence_path(project_root)
-        )
-        if _ok_a and _ev_a:
-            std_active_ev = _ev_a
+        if final_evidence_path or release_evidence is not None:
+            std_active_ev = evidence_data
+        else:
+            _ok_a, _, _ev_a = load_release_evidence(
+                project_root, resolve_release_evidence_path(project_root)
+            )
+            if _ok_a and _ev_a:
+                std_active_ev = _ev_a
         _p_pr9 = project_root / "docs" / "release-evidence" / "v3.0.0-reissue.json"
         if _p_pr9.exists():
             _ok_p, _, _ev_p = load_release_evidence(project_root, _p_pr9)

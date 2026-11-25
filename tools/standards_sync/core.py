@@ -2054,9 +2054,56 @@ _AUTH_ENV_SHA_KEYS = {
 }
 
 
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+_AUXILIARY_CHECKOUT_PREFIXES = (
+    ".standards",
+    ".git",
+    "vendor",
+    "third_party",
+    "submodules",
+    "deps",
+    "external",
+    ".cache",
+    "tmp",
+)
+
+
 def _strip_gha_log_prefix(line: str) -> str:
-    """Return a working copy of a single log line without BOM or RFC3339 runner timestamp."""
-    return _GHA_TIMESTAMP_PREFIX_RE.sub("", line, count=1)
+    """Return a working copy of a single log line without BOM, RFC3339 runner timestamp, or ANSI escapes."""
+    cleaned = _GHA_TIMESTAMP_PREFIX_RE.sub("", line, count=1)
+    return _ANSI_ESCAPE_RE.sub("", cleaned)
+
+
+def _is_auxiliary_checkout_path(path: Optional[str]) -> bool:
+    """Return True if checkout path points to a submodule or auxiliary directory rather than primary repo."""
+    if not path:
+        return False
+    norm = str(path).strip().replace("\\", "/").strip("/")
+    if not norm or norm == ".":
+        return False
+    lower = norm.lower()
+    return any(lower == pref or lower.startswith(pref + "/") for pref in _AUXILIARY_CHECKOUT_PREFIXES)
+
+
+def _is_invalid_checkout_path(path: Optional[str]) -> bool:
+    """Reject absolute paths or parent-directory traversal in checkout paths."""
+    if not path:
+        return False
+    raw = str(path).strip()
+    if raw.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", raw):
+        return True
+    parts = [part for part in raw.replace("\\", "/").split("/") if part]
+    return ".." in parts
+
+
+def _normalize_rel_dir_path(path: Optional[str]) -> str:
+    if not path:
+        return "."
+    norm = str(path).strip().replace("\\", "/").strip("/")
+    while norm.startswith("./"):
+        norm = norm[2:]
+    return norm or "."
 
 
 def _is_non_executing_or_quoted_line(stripped_line: str) -> bool:
@@ -2084,21 +2131,46 @@ def _is_excluded_gha_group(group_name: str) -> bool:
     return g.startswith(("post checkout", "post set up", "post run "))
 
 
+def _update_json_brace_depth(depth: int, line: str) -> int:
+    """Update JSON object brace depth across pretty-printed JSON lines, ignoring braces inside strings."""
+    in_str = False
+    esc = False
+    for ch in line:
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            if in_str:
+                esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if not in_str:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth = max(0, depth - 1)
+    return depth
+
+
 def _extract_executing_log_text(raw_log: str) -> str:
     """Extract only executing runner output lines from raw_log without mutating raw_log.
 
     Excludes fenced code blocks, comment/quoted/echo/print lines, and GitHub Actions
-    `##[group]Run ...` script-definition blocks while preserving `##[error]` lines
-    and actual command stdout/stderr.
+    `##[group]Run ...` script-definition blocks while preserving `##[error]` lines,
+    pretty-printed JSON stdout blocks, and actual command stdout/stderr.
     """
     out_lines: List[str] = []
     in_fence = False
+    json_depth = 0
     group_stack: List[str] = []
     for raw_line in raw_log.splitlines():
         line = _strip_gha_log_prefix(raw_line)
         s = line.strip()
         if s.startswith("##[group]"):
             group_stack.append(s[len("##[group]"):].strip().lower())
+            json_depth = 0
             continue
         if s == "##[endgroup]":
             if group_stack:
@@ -2114,9 +2186,14 @@ def _extract_executing_log_text(raw_log: str) -> str:
             continue
         if s.startswith("```") or s.startswith("~~~"):
             in_fence = not in_fence
+            json_depth = 0
             continue
-        if in_fence or _is_non_executing_or_quoted_line(line):
+        if in_fence:
             continue
+        if json_depth == 0 and _is_non_executing_or_quoted_line(line):
+            continue
+        if json_depth > 0 or s.startswith("{"):
+            json_depth = _update_json_brace_depth(json_depth, s)
         out_lines.append(line)
     return "\n".join(out_lines)
 
@@ -2127,7 +2204,12 @@ def extract_runner_log_commit_provenance(raw_log: str) -> Dict[str, Any]:
     Never mutates `raw_log`. Explicitly separates:
     - `runner_image_provisioner_commits` (`##[group]Runner Image Provisioner`)
     - `non_source_commits` (`action_download`, `submodule`, `excluded_platform_group`)
-    - `authoritative_source_commits` (checkout HEAD, git log/rev-parse HEAD, checkout ref, verified source-check env)
+    - `checkout_requests` (requested checkout repository/ref/path parameters; NOT proof of checkout)
+    - `checkout_synced_repositories` (`Syncing repository: owner/repo` output)
+    - `checkout_actual_commits` (actual git log/rev-parse HEAD / detached HEAD output from primary repo)
+    - `expected_sha_env_declarations` (EXPECTED_SHA / SOURCE_COMMIT env vars; NOT proof of checkout)
+    - `working_directories` (`working-directory:` or `cd` targets used by Run steps)
+    - `authoritative_source_commits` (strictly `checkout_actual_commits` only)
     - `structured_commit_headers` (line-anchored non-GHA/stdout structured commit headers)
     - `untrusted_commit_mentions` (echoed/quoted/commented commit strings)
     """
@@ -2137,6 +2219,11 @@ def extract_runner_log_commit_provenance(raw_log: str) -> Dict[str, Any]:
         "submodule": [],
         "excluded_platform_group": [],
     }
+    checkout_requests: List[Dict[str, Any]] = []
+    checkout_synced_repositories: List[Dict[str, Any]] = []
+    checkout_actual_commits: List[Dict[str, str]] = []
+    expected_sha_env_declarations: List[Dict[str, Any]] = []
+    working_directories: List[str] = []
     authoritative: List[Dict[str, str]] = []
     structured_headers: List[Dict[str, str]] = []
     untrusted_mentions: List[str] = []
@@ -2148,30 +2235,48 @@ def extract_runner_log_commit_provenance(raw_log: str) -> Dict[str, Any]:
     group_stack: List[str] = []
     in_fence = False
     pending_git_cmd_source: Optional[str] = None
+    active_checkout_is_auxiliary = False
 
     # State for `##[group]Run ...` blocks
     in_run_group = False
     run_is_checkout_action = False
+    run_checkout_repo: Optional[str] = None
     run_checkout_ref: Optional[str] = None
     run_checkout_path: Optional[str] = None
     run_subsection = "script"
     run_checks_head_identity = False
-    run_env_shas: List[str] = []
+    run_env_shas: List[Tuple[str, str]] = []
 
     def _finalize_run_group() -> None:
-        nonlocal in_run_group, run_is_checkout_action, run_checkout_ref, run_checkout_path
-        nonlocal run_subsection, run_checks_head_identity, run_env_shas
-        if run_is_checkout_action and run_checkout_ref:
-            c_path = (run_checkout_path or "").strip().lower()
-            if c_path == ".standards" or c_path.startswith(".standards/"):
+        nonlocal in_run_group, run_is_checkout_action, run_checkout_repo, run_checkout_ref, run_checkout_path
+        nonlocal run_subsection, run_checks_head_identity, run_env_shas, active_checkout_is_auxiliary
+        if run_is_checkout_action:
+            is_aux = _is_auxiliary_checkout_path(run_checkout_path)
+            active_checkout_is_auxiliary = is_aux
+            checkout_requests.append(
+                {
+                    "repository": run_checkout_repo,
+                    "ref": run_checkout_ref,
+                    "path": run_checkout_path,
+                    "is_auxiliary_path": is_aux,
+                }
+            )
+            if is_aux and run_checkout_ref:
                 non_source_commits["submodule"].append(run_checkout_ref)
-            else:
-                authoritative.append({"commit": run_checkout_ref, "source": "checkout_action_with_ref"})
-        if run_checks_head_identity and run_env_shas:
-            for sha in run_env_shas:
-                authoritative.append({"commit": sha, "source": "source_identity_check_env"})
+        else:
+            active_checkout_is_auxiliary = False
+        if run_env_shas:
+            for env_key, sha in run_env_shas:
+                expected_sha_env_declarations.append(
+                    {
+                        "env_key": env_key,
+                        "commit": sha,
+                        "has_head_check_script": run_checks_head_identity,
+                    }
+                )
         in_run_group = False
         run_is_checkout_action = False
+        run_checkout_repo = None
         run_checkout_ref = None
         run_checkout_path = None
         run_subsection = "script"
@@ -2199,11 +2304,14 @@ def extract_runner_log_commit_provenance(raw_log: str) -> Dict[str, Any]:
                 run_is_checkout_action = bool(re.match(r"^run\s+actions/checkout@", grp_lower))
                 if run_is_checkout_action:
                     has_checkout_step = True
+                run_checkout_repo = None
                 run_checkout_ref = None
                 run_checkout_path = None
                 run_subsection = "script"
                 run_checks_head_identity = False
                 run_env_shas = []
+                if not run_is_checkout_action:
+                    active_checkout_is_auxiliary = False
             continue
 
         if s == "##[endgroup]":
@@ -2249,17 +2357,26 @@ def extract_runner_log_commit_provenance(raw_log: str) -> Dict[str, Any]:
 
         # Handle lines inside `##[group]Run ...` step definitions
         if in_run_group:
-            if line == "with:":
+            if line.strip() == "with:":
                 run_subsection = "with"
                 continue
-            if line == "env:":
+            if line.strip() == "env:":
                 run_subsection = "env"
                 continue
-            if line.startswith(("shell:", "working-directory:")):
+            if line.strip().startswith("working-directory:"):
+                wd = line.strip()[len("working-directory:"):].strip().strip("'\"")
+                if wd:
+                    working_directories.append(_normalize_rel_dir_path(wd))
+                run_subsection = "other"
+                continue
+            if line.strip().startswith("shell:"):
                 run_subsection = "other"
                 continue
 
             if run_is_checkout_action and run_subsection == "with":
+                m_repo = re.match(r"^\s*repository:\s*['\"]?([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)['\"]?\s*$", line, re.IGNORECASE)
+                if m_repo:
+                    run_checkout_repo = m_repo.group(1)
                 m_ref = re.match(r"^\s*ref:\s*['\"]?([0-9a-f]{40})['\"]?\s*$", line, re.IGNORECASE)
                 if m_ref:
                     run_checkout_ref = m_ref.group(1).lower()
@@ -2271,7 +2388,7 @@ def extract_runner_log_commit_provenance(raw_log: str) -> Dict[str, Any]:
             if run_subsection == "env":
                 m_env = re.match(r"^\s*([A-Za-z0-9_]+):\s*['\"]?([0-9a-f]{40})['\"]?\s*$", line, re.IGNORECASE)
                 if m_env and m_env.group(1).upper() in _AUTH_ENV_SHA_KEYS:
-                    run_env_shas.append(m_env.group(2).lower())
+                    run_env_shas.append((m_env.group(1).upper(), m_env.group(2).lower()))
                 continue
 
             if run_subsection == "script":
@@ -2283,10 +2400,24 @@ def extract_runner_log_commit_provenance(raw_log: str) -> Dict[str, Any]:
                     ):
                         run_checks_head_identity = True
                         has_source_identity_step = True
+                    m_cd = re.match(r"^\s*cd\s+['\"]?([^\s'\";&|]+)['\"]?", s)
+                    if m_cd:
+                        working_directories.append(_normalize_rel_dir_path(m_cd.group(1)))
                 else:
                     if re.search(r"(?:commit|head|sha)", s, re.IGNORECASE):
                         for m_sha in re.finditer(r"(?<![0-9a-f])([0-9a-f]{40})(?![0-9a-f])", s, re.IGNORECASE):
                             untrusted_mentions.append(m_sha.group(1).lower())
+            continue
+
+        # Capture synced repository output from actions/checkout
+        m_sync = re.match(r"^Syncing repository:\s*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\s*$", s, re.IGNORECASE)
+        if m_sync:
+            checkout_synced_repositories.append(
+                {
+                    "repository": m_sync.group(1),
+                    "is_auxiliary_path": active_checkout_is_auxiliary,
+                }
+            )
             continue
 
         # Capture output of `[command]...git log -1 --format=%H` or `[command]...git rev-parse HEAD`
@@ -2294,8 +2425,14 @@ def extract_runner_log_commit_provenance(raw_log: str) -> Dict[str, Any]:
             if not s:
                 continue
             if re.fullmatch(r"[0-9a-f]{40}", s, re.IGNORECASE):
-                authoritative.append({"commit": s.lower(), "source": pending_git_cmd_source})
-                has_checkout_step = True
+                sha_val = s.lower()
+                if active_checkout_is_auxiliary:
+                    non_source_commits["submodule"].append(sha_val)
+                else:
+                    entry = {"commit": sha_val, "source": pending_git_cmd_source}
+                    checkout_actual_commits.append(entry)
+                    authoritative.append(entry)
+                    has_checkout_step = True
                 pending_git_cmd_source = None
                 continue
             pending_git_cmd_source = None
@@ -2321,8 +2458,14 @@ def extract_runner_log_commit_provenance(raw_log: str) -> Dict[str, Any]:
         # Detached checkout line
         m_det = re.match(r"^HEAD is now at ([0-9a-f]{40})(?:\s|$)", s, re.IGNORECASE)
         if m_det:
-            authoritative.append({"commit": m_det.group(1).lower(), "source": "git_checkout_detached_head"})
-            has_checkout_step = True
+            sha_val = m_det.group(1).lower()
+            if active_checkout_is_auxiliary:
+                non_source_commits["submodule"].append(sha_val)
+            else:
+                entry = {"commit": sha_val, "source": "git_checkout_detached_head"}
+                checkout_actual_commits.append(entry)
+                authoritative.append(entry)
+                has_checkout_step = True
             continue
 
         # Line-anchored structured commit header outside excluded/Run/quoted blocks
@@ -2347,6 +2490,11 @@ def extract_runner_log_commit_provenance(raw_log: str) -> Dict[str, Any]:
         "has_source_identity_step": has_source_identity_step,
         "runner_image_provisioner_commits": runner_prov_commits,
         "non_source_commits": non_source_commits,
+        "checkout_requests": checkout_requests,
+        "checkout_synced_repositories": checkout_synced_repositories,
+        "checkout_actual_commits": checkout_actual_commits,
+        "expected_sha_env_declarations": expected_sha_env_declarations,
+        "working_directories": working_directories,
         "authoritative_source_commits": authoritative,
         "structured_commit_headers": structured_headers,
         "untrusted_commit_mentions": untrusted_mentions,
@@ -2358,12 +2506,69 @@ def _validate_log_commit_provenance(
     expected_commit: str,
     api_verified_commit: Optional[str] = None,
     require_source_identity: bool = False,
+    expected_repository: Optional[str] = None,
 ) -> Tuple[str, List[str], Dict[str, Any]]:
-    """Validate log source commit identity strictly without using Runner Image Provisioner metadata."""
+    """Validate log source commit and repository/path provenance strictly without Runner Image Provisioner metadata."""
     prov = extract_runner_log_commit_provenance(raw_log)
     exp_lower = expected_commit.lower()
 
+    # 1. Verify checkout repository and path safety/binding
+    if expected_repository:
+        exp_repo_lower = expected_repository.strip().lower()
+        repo_short_lower = exp_repo_lower.split("/")[-1]
+        for req in prov["checkout_requests"]:
+            c_path = req.get("path")
+            if _is_invalid_checkout_path(c_path):
+                return (
+                    "FAILED",
+                    [f"CONSUMER_CI_CHECKOUT_INVALID_PATH: unsafe checkout path '{c_path}'"],
+                    prov,
+                )
+            if req.get("is_auxiliary_path"):
+                continue
+            c_repo = req.get("repository")
+            if c_repo and str(c_repo).strip().lower() != exp_repo_lower:
+                return (
+                    "FAILED",
+                    [f"CONSUMER_CI_CHECKOUT_REPOSITORY_MISMATCH: checkout repository '{c_repo}' != '{expected_repository}'"],
+                    prov,
+                )
+            norm_path = _normalize_rel_dir_path(c_path)
+            if norm_path != "." and norm_path.lower() != repo_short_lower:
+                if norm_path.lower() not in {wd.lower() for wd in prov["working_directories"]}:
+                    return (
+                        "FAILED",
+                        [f"CONSUMER_CI_CHECKOUT_PATH_MISMATCH: primary checkout path '{c_path}' does not match repository '{repo_short_lower}' or any working-directory"],
+                        prov,
+                    )
+        for sync_entry in prov["checkout_synced_repositories"]:
+            if sync_entry.get("is_auxiliary_path"):
+                continue
+            s_repo = str(sync_entry.get("repository") or "").strip().lower()
+            if s_repo and s_repo != exp_repo_lower:
+                return (
+                    "FAILED",
+                    [f"CONSUMER_CI_CHECKOUT_REPOSITORY_MISMATCH: synced repository '{sync_entry.get('repository')}' != '{expected_repository}'"],
+                    prov,
+                )
+    else:
+        for req in prov["checkout_requests"]:
+            if _is_invalid_checkout_path(req.get("path")):
+                return (
+                    "FAILED",
+                    [f"CONSUMER_CI_CHECKOUT_INVALID_PATH: unsafe checkout path '{req.get('path')}'"],
+                    prov,
+                )
+
+    # 2. Check all trusted commit outputs AND primary checkout requests / head-check expected SHAs for conflicts
     all_trusted = list(prov["authoritative_source_commits"]) + list(prov["structured_commit_headers"])
+    for req in prov["checkout_requests"]:
+        if not req.get("is_auxiliary_path") and req.get("ref"):
+            all_trusted.append({"commit": req["ref"], "source": "checkout_requested_ref"})
+    for decl in prov["expected_sha_env_declarations"]:
+        if decl.get("has_head_check_script") and decl.get("commit"):
+            all_trusted.append({"commit": decl["commit"], "source": f"env:{decl['env_key']}"})
+
     mismatches = [
         entry for entry in all_trusted if entry["commit"].lower() != exp_lower
     ]
@@ -2378,6 +2583,12 @@ def _validate_log_commit_provenance(
     if prov["is_github_actions_log"]:
         if any(e["commit"].lower() == exp_lower for e in prov["authoritative_source_commits"]):
             return "VERIFIED", [], prov
+        if any(not req.get("is_auxiliary_path") and req.get("ref") for req in prov["checkout_requests"]) or prov["expected_sha_env_declarations"]:
+            return (
+                "NOT_VERIFIABLE",
+                ["CONSUMER_CI_SOURCE_IDENTITY_MISSING: GitHub Actions log only declares requested ref or expected SHA env without actual checkout/git HEAD output"],
+                prov,
+            )
         if prov["untrusted_commit_mentions"]:
             return (
                 "FAILED",
@@ -2427,6 +2638,138 @@ def _check_runner_log_failures(runner_log: str) -> Optional[Tuple[str, List[str]
     return None
 
 
+def _check_mixed_pytest_failure_summary(runner_log: str) -> Optional[Tuple[str, List[str]]]:
+    """Detect failed/error pytest summary lines inside executing output (for scan/release logs)."""
+    exec_text = _extract_executing_log_text(runner_log)
+    if re.search(
+        r"=+\s*[^=\n]*\b[1-9]\d*\s+(?:failed|errors?)\b[^=\n]*\bin\s+[0-9.]+s[^=\n]*=+",
+        exec_text,
+        re.IGNORECASE,
+    ):
+        return (
+            "FAILED",
+            ["CONSUMER_CI_RAW_LOG_CONTAINS_FAILURE: raw runner log contains failed pytest summary"],
+        )
+    return None
+
+
+def _command_matches_script(script_text: str, expected_command: str) -> bool:
+    """Match an expected CLI command against a GHA Run script block generically (no hardcoded step names)."""
+    norm_exp = " ".join(expected_command.strip().split())
+    if not norm_exp:
+        return True
+    norm_script = " ".join(script_text.strip().split())
+    if not norm_script:
+        return False
+    if norm_exp in norm_script:
+        return True
+
+    exp_tokens = norm_exp.split()
+    script_tokens = set(norm_script.split())
+    # If expected command specifies a script/test path or specific tool, require all significant tokens to match
+    noise_tokens = {"python", "python3", "py", "-m", "-v", "--verbose", "-q", "--quiet", "--tb=short", "&&", "||", "|"}
+    sig_tokens = [tok for tok in exp_tokens if tok not in noise_tokens]
+    if not sig_tokens:
+        sig_tokens = exp_tokens
+    if all(tok in norm_script for tok in sig_tokens):
+        return True
+    # Allow equivalent `python -m pytest` vs `pytest` invocation when target arguments match
+    if len(sig_tokens) >= 2 and sig_tokens[0] in ("pytest", "unittest") and sig_tokens[0] in script_tokens:
+        return all(tok in norm_script for tok in sig_tokens[1:])
+    return False
+
+
+def _extract_step_exec_text_for_command(raw_log: str, expected_command: str) -> Tuple[bool, str]:
+    """Scope executing stdout/stderr in a GitHub Actions log to the Run step matching `expected_command`."""
+    steps: List[Tuple[str, List[str]]] = []
+    current_script_lines: List[str] = []
+    current_exec_lines: List[str] = []
+    in_run_group = False
+    run_subsection = "script"
+    group_stack: List[str] = []
+    in_fence = False
+    json_depth = 0
+
+    for raw_line in raw_log.splitlines():
+        line = _strip_gha_log_prefix(raw_line)
+        s = line.strip()
+        if s.startswith("##[group]"):
+            grp_lower = s[len("##[group]"):].strip().lower()
+            group_stack.append(grp_lower)
+            if len(group_stack) == 1 and grp_lower.startswith("run "):
+                if in_run_group or current_script_lines:
+                    steps.append(("\n".join(current_script_lines), current_exec_lines))
+                in_run_group = True
+                run_subsection = "script"
+                current_script_lines = [s[len("##[group]"):].strip()[4:]]
+                current_exec_lines = []
+                json_depth = 0
+            continue
+        if s == "##[endgroup]":
+            if group_stack:
+                group_stack.pop()
+            if not group_stack:
+                run_subsection = "done"
+            continue
+
+        if group_stack:
+            if len(group_stack) == 1 and group_stack[0].startswith("run ") and in_run_group:
+                if s in ("with:", "env:") or s.startswith(("shell:", "working-directory:")):
+                    run_subsection = "meta"
+                    continue
+                if run_subsection == "script":
+                    current_script_lines.append(s)
+            continue
+
+        if not in_run_group:
+            continue
+        if s.startswith("##[error]"):
+            current_exec_lines.append(line)
+            continue
+        if s.startswith("```") or s.startswith("~~~"):
+            in_fence = not in_fence
+            json_depth = 0
+            continue
+        if in_fence:
+            continue
+        if json_depth == 0 and _is_non_executing_or_quoted_line(line):
+            continue
+        if json_depth > 0 or s.startswith("{"):
+            json_depth = _update_json_brace_depth(json_depth, s)
+        current_exec_lines.append(line)
+
+    if in_run_group or current_script_lines:
+        steps.append(("\n".join(current_script_lines), current_exec_lines))
+
+    matched_exec_lines: List[str] = []
+    matched_any = False
+    for script_txt, exec_lines in steps:
+        if _command_matches_script(script_txt, expected_command):
+            matched_any = True
+            matched_exec_lines.extend(exec_lines)
+    return matched_any, "\n".join(matched_exec_lines)
+
+
+def _extract_json_objects_from_text(text: str) -> List[Dict[str, Any]]:
+    """Decode complete top-level JSON objects embedded in runner stdout."""
+    decoder = json.JSONDecoder()
+    objs: List[Dict[str, Any]] = []
+    idx = 0
+    n = len(text)
+    while idx < n:
+        pos = text.find("{", idx)
+        if pos == -1:
+            break
+        try:
+            val, end_pos = decoder.raw_decode(text, pos)
+            if isinstance(val, dict):
+                objs.append(val)
+            idx = end_pos
+        except Exception:
+            idx = pos + 1
+    return objs
+
+
 def parse_runner_scan_log(
     runner_log: str,
     expected_commit: str,
@@ -2434,61 +2777,128 @@ def parse_runner_scan_log(
     claimed_vulns: Optional[int] = 0,
     api_verified_commit: Optional[str] = None,
     require_source_identity: bool = True,
+    expected_command: Optional[str] = None,
+    expected_repository: Optional[str] = None,
 ) -> Tuple[str, List[str]]:
-    """Parse raw security/scan runner log using unified commit provenance and anchored scan checks."""
+    """Parse raw security/scan runner log using commit provenance, command scoping, and strict metric reconciliation."""
     if not runner_log or not runner_log.strip():
         return "NOT_VERIFIABLE", ["CONSUMER_CI_RUNNER_LOG_UNREADABLE: Empty raw runner log from GitHub Actions"]
 
-    prov_st, prov_errs, _ = _validate_log_commit_provenance(
+    prov_st, prov_errs, prov = _validate_log_commit_provenance(
         runner_log,
         expected_commit,
         api_verified_commit=api_verified_commit,
         require_source_identity=require_source_identity,
+        expected_repository=expected_repository,
     )
     if prov_st == "FAILED":
         return "FAILED", prov_errs
 
-    fail_hit = _check_runner_log_failures(runner_log)
+    fail_hit = _check_runner_log_failures(runner_log) or _check_mixed_pytest_failure_summary(runner_log)
     if fail_hit is not None:
         return fail_hit
 
-    exec_text = _extract_executing_log_text(runner_log)
+    if prov["is_github_actions_log"] and expected_command:
+        cmd_matched, scoped_exec = _extract_step_exec_text_for_command(runner_log, expected_command)
+        if not cmd_matched:
+            return (
+                "NOT_VERIFIABLE",
+                [f"CONSUMER_CI_GATE_EXPECTED_COMMAND_NOT_EXECUTED: expected scan command '{expected_command}' was not executed in runner log"],
+            )
+        exec_text = scoped_exec
+    else:
+        exec_text = _extract_executing_log_text(runner_log)
 
-    m_vuln = re.search(r"(\d+)\s+vulnerabilit(?:y|ies)\s+found", exec_text, re.IGNORECASE)
-    if m_vuln and int(m_vuln.group(1)) > 0:
-        return "FAILED", [f"CONSUMER_CI_GATE_SCAN_VULNERABILITIES_FOUND: raw runner log indicates {m_vuln.group(1)} vulnerabilities"]
+    # Check ALL vulnerability/finding counts across executing text
+    for m_vuln in re.finditer(r"(\d+)\s+(?:vulnerabilit(?:y|ies)|issues?|findings?)\s+found", exec_text, re.IGNORECASE):
+        if int(m_vuln.group(1)) > 0:
+            return "FAILED", [f"CONSUMER_CI_GATE_SCAN_VULNERABILITIES_FOUND: raw runner log indicates {m_vuln.group(1)} vulnerabilities"]
 
     m_sev = re.search(r"([1-9]\d*)\s+(?:critical|high|medium)\s+vulnerabilit", exec_text, re.IGNORECASE)
     if m_sev:
         return "FAILED", [f"CONSUMER_CI_GATE_SCAN_VULNERABILITIES_FOUND: raw runner log indicates {m_sev.group(1)} vulnerabilities"]
 
-    # Check anchored scan summaries (never accept bare OK/SUCCESS/PASSED)
-    m_targets = re.search(r"(\d+)\s+targets?\s+scanned", exec_text, re.IGNORECASE)
-    has_zero_vuln = bool(
-        re.search(
-            r"(?:0\s+vulnerabilit(?:y|ies)\s+found|no\s+known\s+vulnerabilities\s+found|0\s+issues\s+found)",
+    target_matches = list(
+        re.finditer(
+            r"(?:(\d+)\s+(?:targets?|files?|packages?|items?)\s+scanned|scanned\s+(\d+)\s+(?:targets?|files?|packages?|items?))",
             exec_text,
             re.IGNORECASE,
         )
     )
-    has_pytest_ok = bool(re.search(r"=+\s*[\d\w\s,]+?\s+in\s+[0-9.]+s.*?=+", exec_text))
-    has_ut_ok = bool(
-        re.search(r"Ran\s+\d+\s+tests?\s+in\s+[0-9.]+s(?:\r?\n)+[ \t]*OK(?:\s*\([^\)]*\))?", exec_text)
+    has_zero_vuln = bool(
+        re.search(
+            r"(?:0\s+(?:vulnerabilit(?:y|ies)|issues?|findings?)\s+found|no\s+known\s+vulnerabilities\s+found)",
+            exec_text,
+            re.IGNORECASE,
+        )
     )
 
-    if m_targets:
-        parsed_targets = int(m_targets.group(1))
-        if parsed_targets <= 0:
+    exp_cmd_lower = (expected_command or "").lower()
+    allows_test_suite_scan = bool(
+        re.search(r"\b(?:pytest|unittest)\b", exp_cmd_lower)
+        or (not expected_command and re.search(r"(?:tests[/\\]security|security.*tests)", runner_log, re.IGNORECASE))
+    )
+
+    if target_matches:
+        parsed_counts = [int(m.group(1) or m.group(2)) for m in target_matches]
+        if any(c <= 0 for c in parsed_counts):
             return "FAILED", ["CONSUMER_CI_GATE_SCAN_ZERO_TARGETS: raw runner log indicates 0 targets scanned"]
+        if len(set(parsed_counts)) > 1:
+            return "FAILED", ["CONSUMER_CI_RAW_LOG_CONFLICTING_SUMMARIES: Multiple scan target summaries conflict"]
+        parsed_targets = parsed_counts[-1]
         if claimed_targets is not None and parsed_targets != claimed_targets:
             return "FAILED", [f"CONSUMER_CI_GATE_SCAN_COUNT_MISMATCH: claimed targets={claimed_targets}, raw log has {parsed_targets}"]
         if not has_zero_vuln:
             return "NOT_VERIFIABLE", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: scan log reports targets without explicit 0-vulnerability result"]
-    elif has_zero_vuln or has_pytest_ok or has_ut_ok:
-        if has_pytest_ok:
-            m_py_f = re.search(r"=+\s*([\d\w\s,]+?)\s+in\s+[0-9.]+s.*?=+", exec_text)
-            if m_py_f and re.search(r"\b([1-9]\d*)\s+(?:failed|errors?)\b", m_py_f.group(1)):
-                return "FAILED", ["CONSUMER_CI_GATE_SCAN_VULNERABILITIES_FOUND: raw scan test suite reported failures"]
+    elif allows_test_suite_scan:
+        pytest_matches = list(re.finditer(r"=+\s*([\d\w\s,]+?)\s+in\s+[0-9.]+s.*?=+", exec_text))
+        ut_matches = list(
+            re.finditer(
+                r"Ran\s+(\d+)\s+tests?\s+in\s+[0-9.]+s(?:\r?\n)+[ \t]*(OK(?:\s*\([^\)]*\))?|FAILED(?:\s*\([^\)]*\))?)",
+                exec_text,
+            )
+        )
+        if not pytest_matches and not ut_matches:
+            return "NOT_VERIFIABLE", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: security test suite log lacks verifiable summary"]
+        if len(pytest_matches) > 1 or len(ut_matches) > 1 or (pytest_matches and ut_matches):
+            return "FAILED", ["CONSUMER_CI_RAW_LOG_CONFLICTING_SUMMARIES: Multiple security test summaries detected"]
+        p = f = s = e = collected = 0
+        explicit_collected: Optional[int] = None
+        if pytest_matches:
+            s_str = pytest_matches[-1].group(1)
+            pm = re.search(r"\b(\d+)\s+passed\b", s_str)
+            fm = re.search(r"\b(\d+)\s+failed\b", s_str)
+            sm = re.search(r"\b(\d+)\s+skipped\b", s_str)
+            em = re.search(r"\b(\d+)\s+errors?\b", s_str)
+            if not any([pm, fm, sm, em]):
+                return "NOT_VERIFIABLE", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: Incomplete pytest summary in scan log"]
+            p = int(pm.group(1)) if pm else 0
+            f = int(fm.group(1)) if fm else 0
+            s = int(sm.group(1)) if sm else 0
+            e = int(em.group(1)) if em else 0
+            cm = re.search(r"\bcollected\s+(\d+)\s+items?\b", exec_text)
+            explicit_collected = int(cm.group(1)) if cm else None
+            collected = explicit_collected if explicit_collected is not None else (p + f + s + e)
+        else:
+            um = ut_matches[-1]
+            collected = int(um.group(1))
+            out_s = um.group(2).strip()
+            if out_s.startswith("FAILED"):
+                return "FAILED", ["CONSUMER_CI_GATE_SCAN_VULNERABILITIES_FOUND: security test suite failed"]
+            sm = re.search(r"\(skipped=(\d+)\)", out_s)
+            s = int(sm.group(1)) if sm else 0
+            p = collected - s
+        if f > 0 or e > 0:
+            return "FAILED", ["CONSUMER_CI_GATE_SCAN_VULNERABILITIES_FOUND: raw scan test suite reported failures"]
+        if p <= 0 or collected <= 0 or s >= collected:
+            return "FAILED", ["CONSUMER_CI_GATE_SCAN_ZERO_TARGETS: security test suite passed 0 tests"]
+        if explicit_collected is not None and explicit_collected != (p + f + s + e):
+            return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNTS_INCONSISTENT: collected={explicit_collected} != passed({p})+failed({f})+skipped({s})+errors({e})"]
+        if claimed_targets is not None and p != claimed_targets:
+            return "FAILED", [f"CONSUMER_CI_GATE_SCAN_COUNT_MISMATCH: claimed targets={claimed_targets}, raw security tests passed={p} (skipped={s})"]
+    elif has_zero_vuln:
+        if claimed_targets is not None:
+            return "NOT_VERIFIABLE", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: scan log lacks target count to reconcile claimed targets_scanned"]
     else:
         return "NOT_VERIFIABLE", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: raw runner log does not contain verifiable scan execution summary"]
 
@@ -2508,50 +2918,128 @@ def parse_runner_release_log(
     claimed_checks_failed: Optional[int] = 0,
     api_verified_commit: Optional[str] = None,
     require_source_identity: bool = True,
+    expected_command: Optional[str] = None,
+    expected_repository: Optional[str] = None,
+    claimed_checks_not_applicable: Optional[int] = None,
 ) -> Tuple[str, List[str]]:
-    """Parse raw release-gate runner log using unified commit provenance and anchored gate checks."""
+    """Parse raw release-gate runner log using commit provenance, command scoping, and structured gate reconciliation."""
     if not runner_log or not runner_log.strip():
         return "NOT_VERIFIABLE", ["CONSUMER_CI_RUNNER_LOG_UNREADABLE: Empty raw runner log from GitHub Actions"]
 
-    prov_st, prov_errs, _ = _validate_log_commit_provenance(
+    prov_st, prov_errs, prov = _validate_log_commit_provenance(
         runner_log,
         expected_commit,
         api_verified_commit=api_verified_commit,
         require_source_identity=require_source_identity,
+        expected_repository=expected_repository,
     )
     if prov_st == "FAILED":
         return "FAILED", prov_errs
 
-    fail_hit = _check_runner_log_failures(runner_log)
+    fail_hit = _check_runner_log_failures(runner_log) or _check_mixed_pytest_failure_summary(runner_log)
     if fail_hit is not None:
         return fail_hit
 
-    exec_text = _extract_executing_log_text(runner_log)
-    upper_exec = exec_text.upper()
+    if prov["is_github_actions_log"] and expected_command:
+        cmd_matched, scoped_exec = _extract_step_exec_text_for_command(runner_log, expected_command)
+        if not cmd_matched:
+            return (
+                "NOT_VERIFIABLE",
+                [f"CONSUMER_CI_GATE_EXPECTED_COMMAND_NOT_EXECUTED: expected release command '{expected_command}' was not executed in runner log"],
+            )
+        exec_text = scoped_exec
+    else:
+        exec_text = _extract_executing_log_text(runner_log)
 
+    upper_exec = exec_text.upper()
     if "RELEASE FAILED" in upper_exec or "CHECK FAILED" in upper_exec or "OVERALL=FAIL" in upper_exec or "OVERALL_STATUS=FAIL" in upper_exec:
         return "FAILED", ["CONSUMER_CI_GATE_RELEASE_CHECKS_FAILED: raw runner log indicates release check failure"]
 
-    m_failed = re.search(r"(\d+)\s+(?:checks?\s+)?failed", exec_text, re.IGNORECASE)
-    if m_failed and int(m_failed.group(1)) > 0:
-        return "FAILED", [f"CONSUMER_CI_GATE_RELEASE_CHECKS_FAILED: raw runner log indicates {m_failed.group(1)} failed checks"]
+    for m_failed in re.finditer(r"(\d+)\s+(?:checks?\s+)?failed\b", exec_text, re.IGNORECASE):
+        if int(m_failed.group(1)) > 0:
+            return "FAILED", [f"CONSUMER_CI_GATE_RELEASE_CHECKS_FAILED: raw runner log indicates {m_failed.group(1)} failed checks"]
 
-    m_passed = re.search(r"(\d+)\s+(?:checks?\s+)?passed\b", exec_text, re.IGNORECASE)
-    has_overall_pass = bool(re.search(r"\bOVERALL(?:_STATUS)?=PASS\b", exec_text))
-    has_gate_json = bool(re.search(r'"gate_id"\s*:', exec_text) and re.search(r'"passed"\s*:\s*true', exec_text))
-    has_pytest_ok = bool(re.search(r"=+\s*[\d\w\s,]+?\s+in\s+[0-9.]+s.*?=+", exec_text))
-    has_ut_ok = bool(
-        re.search(r"Ran\s+\d+\s+tests?\s+in\s+[0-9.]+s(?:\r?\n)+[ \t]*OK(?:\s*\([^\)]*\))?", exec_text)
-    )
+    # Mode 1: Structured JSON gate report (e.g., verify_delivery_contract.py G01-G12 output)
+    json_objs = _extract_json_objects_from_text(exec_text)
+    gate_reports = []
+    for obj in json_objs:
+        items = obj.get("gates") if isinstance(obj.get("gates"), list) else obj.get("checks")
+        if isinstance(items, list) and items and all(
+            isinstance(g, dict) and "status" in g and any(k in g for k in ("gate_id", "id", "check", "name"))
+            for g in items
+        ):
+            gate_reports.append((obj, items))
 
-    if m_passed:
-        parsed_passed = int(m_passed.group(1))
+    if gate_reports:
+        if len(gate_reports) > 1:
+            return "FAILED", ["CONSUMER_CI_RAW_LOG_CONFLICTING_SUMMARIES: Multiple structured release gate reports detected"]
+        report_obj, items = gate_reports[0]
+        overall_st = str(report_obj.get("overall_status") or "").strip().upper()
+        if overall_st and overall_st != "PASS":
+            return "FAILED", [f"CONSUMER_CI_GATE_RELEASE_CHECKS_FAILED: structured gate report overall_status={overall_st}"]
+
+        n_pass = 0
+        n_na = 0
+        n_fail = 0
+        n_incomplete = 0
+        exp_lower = expected_commit.lower()
+        for g in items:
+            gst = str(g.get("status") or "").strip().upper()
+            detail = g.get("detail") if isinstance(g.get("detail"), dict) else {}
+            src_c = str(detail.get("source_commit") or "").strip()
+            if re.fullmatch(r"[0-9a-f]{40}", src_c, re.IGNORECASE) and src_c.lower() != exp_lower:
+                return "FAILED", [f"CONSUMER_CI_RAW_REPORT_COMMIT_MISMATCH: gate '{g.get('gate_id') or g.get('check')}' source_commit={src_c} != {expected_commit}"]
+            if detail.get("executed") is True and detail.get("exit_code") not in (None, 0):
+                n_fail += 1
+                continue
+            if detail.get("passed") is False:
+                n_fail += 1
+                continue
+            if gst == "PASS":
+                n_pass += 1
+            elif gst == "NOT_APPLICABLE":
+                note = str(g.get("note") or g.get("reason") or detail.get("note") or detail.get("reason") or "").strip()
+                if not note:
+                    return "FAILED", [f"CONSUMER_CI_GATE_RELEASE_UNJUSTIFIED_NA: gate '{g.get('gate_id') or g.get('check')}' marked NOT_APPLICABLE without reason/note"]
+                n_na += 1
+            elif gst in ("FAIL", "FAILED", "BLOCK", "BLOCKED", "ERROR"):
+                n_fail += 1
+            else:
+                n_incomplete += 1
+
+        if n_fail > 0:
+            return "FAILED", [f"CONSUMER_CI_GATE_RELEASE_CHECKS_FAILED: {n_fail} structured release gates failed"]
+        if n_incomplete > 0:
+            return "FAILED", [f"CONSUMER_CI_GATE_RELEASE_CHECKS_INCOMPLETE: {n_incomplete} release gates were skipped or incomplete"]
+        if n_pass <= 0:
+            return "FAILED", ["CONSUMER_CI_GATE_RELEASE_ZERO_CHECKS: 0 release gates passed (all NOT_APPLICABLE or empty)"]
+        if claimed_checks_passed is not None and n_pass != claimed_checks_passed:
+            return "FAILED", [
+                f"CONSUMER_CI_GATE_RELEASE_COUNT_MISMATCH: claimed checks_passed={claimed_checks_passed}, raw log has PASS={n_pass} (NOT_APPLICABLE={n_na})"
+            ]
+        if claimed_checks_not_applicable is not None and n_na != claimed_checks_not_applicable:
+            return "FAILED", [
+                f"CONSUMER_CI_GATE_RELEASE_NA_COUNT_MISMATCH: claimed NOT_APPLICABLE={claimed_checks_not_applicable}, raw log has {n_na}"
+            ]
+    else:
+        # Mode 2: Explicit anchored release-check count summary (never bare OVERALL=PASS or unrelated pytest)
+        pass_matches = list(
+            re.finditer(
+                r"(?:(?:release\s+checks?|checks?)\b[^\n]*?(\d+)\s+(?:checks?\s+)?passed\b|(\d+)\s+checks?\s+passed\b)",
+                exec_text,
+                re.IGNORECASE,
+            )
+        )
+        if not pass_matches:
+            return "NOT_VERIFIABLE", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: raw runner log does not contain verifiable release gate summary"]
+        passed_vals = [int(m.group(1) or m.group(2)) for m in pass_matches]
+        if len(set(passed_vals)) > 1:
+            return "FAILED", ["CONSUMER_CI_RAW_LOG_CONFLICTING_SUMMARIES: Multiple conflicting release check summaries detected"]
+        parsed_passed = passed_vals[-1]
         if parsed_passed <= 0:
             return "FAILED", ["CONSUMER_CI_GATE_RELEASE_ZERO_CHECKS: raw runner log indicates 0 passed checks"]
         if claimed_checks_passed is not None and parsed_passed != claimed_checks_passed:
             return "FAILED", [f"CONSUMER_CI_GATE_RELEASE_COUNT_MISMATCH: claimed checks_passed={claimed_checks_passed}, raw log has {parsed_passed}"]
-    elif not (has_overall_pass or has_gate_json or has_pytest_ok or has_ut_ok):
-        return "NOT_VERIFIABLE", ["CONSUMER_CI_RAW_REPORT_UNPARSEABLE: raw runner log does not contain verifiable release gate summary"]
 
     if claimed_checks_failed is not None and claimed_checks_failed > 0:
         return "FAILED", [f"CONSUMER_CI_GATE_RELEASE_CHECKS_FAILED: {claimed_checks_failed} checks failed"]
@@ -2571,6 +3059,8 @@ def parse_runner_test_log(
     claimed_skipped: Optional[int] = 0,
     api_verified_commit: Optional[str] = None,
     require_source_identity: bool = True,
+    expected_command: Optional[str] = None,
+    expected_repository: Optional[str] = None,
 ) -> Tuple[str, List[str]]:
     """Parse raw runner log text and extract test execution metrics.
 
@@ -2588,11 +3078,12 @@ def parse_runner_test_log(
     if not runner_log or not runner_log.strip():
         return "NOT_VERIFIABLE", ["CONSUMER_CI_RUNNER_LOG_UNREADABLE: Empty raw runner log from GitHub Actions"]
 
-    prov_status, prov_errors, _ = _validate_log_commit_provenance(
+    prov_status, prov_errors, prov = _validate_log_commit_provenance(
         runner_log,
         expected_commit,
         api_verified_commit=api_verified_commit,
         require_source_identity=require_source_identity,
+        expected_repository=expected_repository,
     )
     if prov_status == "FAILED":
         return "FAILED", prov_errors
@@ -2603,6 +3094,25 @@ def parse_runner_test_log(
         return fail_hit
 
     exec_log = _extract_executing_log_text(runner_log)
+    if prov["is_github_actions_log"] and expected_command:
+        # Scope to expected command when the GHA log includes non-checkout/non-setup Run steps
+        has_exec_run_groups = any(
+            re.match(r"^##\[group\]Run\s+", _strip_gha_log_prefix(l).strip(), re.IGNORECASE)
+            and not re.match(
+                r"^##\[group\]Run\s+(?:actions/|test\s+\"\$\(git\s+rev-parse|git\s+-C\s+\.standards)",
+                _strip_gha_log_prefix(l).strip(),
+                re.IGNORECASE,
+            )
+            for l in runner_log.splitlines()
+        )
+        if has_exec_run_groups:
+            cmd_matched, scoped_exec = _extract_step_exec_text_for_command(runner_log, expected_command)
+            if not cmd_matched:
+                return (
+                    "NOT_VERIFIABLE",
+                    [f"CONSUMER_CI_GATE_EXPECTED_COMMAND_NOT_EXECUTED: expected test command '{expected_command}' was not executed in runner log"],
+                )
+            exec_log = scoped_exec
 
     # Pytest summary line parsing: "= ... in 0.12s ="
     pytest_matches = list(re.finditer(r"=+\s*([\d\w\s,]+?)\s+in\s+[0-9.]+s.*?=+", exec_log))
@@ -2859,6 +3369,30 @@ def verify_consumer_ci_gate(
             if raw_c is not None and raw_c != collected:
                 return "FAILED", [f"CONSUMER_CI_GATE_TEST_COUNT_MISMATCH: claimed collected={collected}, but raw report has collected={raw_c}"]
 
+        elif has_scan:
+            if "targets_scanned" not in raw_report:
+                return "FAILED", ["CONSUMER_CI_RAW_REPORT_MISSING_REQUIRED_FIELDS: raw_report missing targets_scanned"]
+            raw_t = raw_report.get("targets_scanned")
+            raw_v = raw_report.get("vulnerabilities_found", 0)
+            if not isinstance(raw_t, int) or raw_t <= 0:
+                return "FAILED", ["CONSUMER_CI_GATE_SCAN_ZERO_TARGETS: raw_report indicates 0 targets scanned"]
+            if raw_t != targets:
+                return "FAILED", [f"CONSUMER_CI_GATE_SCAN_COUNT_MISMATCH: claimed targets={targets}, raw_report has {raw_t}"]
+            if isinstance(raw_v, int) and raw_v > 0:
+                return "FAILED", [f"CONSUMER_CI_GATE_SCAN_VULNERABILITIES_FOUND: raw_report indicates {raw_v} vulnerabilities"]
+
+        elif has_release:
+            if "checks_passed" not in raw_report:
+                return "FAILED", ["CONSUMER_CI_RAW_REPORT_MISSING_REQUIRED_FIELDS: raw_report missing checks_passed"]
+            raw_cp = raw_report.get("checks_passed")
+            raw_cf = raw_report.get("checks_failed", 0)
+            if not isinstance(raw_cp, int) or raw_cp <= 0:
+                return "FAILED", ["CONSUMER_CI_GATE_RELEASE_ZERO_CHECKS: raw_report indicates 0 passed checks"]
+            if raw_cp != checks_passed:
+                return "FAILED", [f"CONSUMER_CI_GATE_RELEASE_COUNT_MISMATCH: claimed checks_passed={checks_passed}, raw_report has {raw_cp}"]
+            if isinstance(raw_cf, int) and raw_cf > 0:
+                return "FAILED", [f"CONSUMER_CI_GATE_RELEASE_CHECKS_FAILED: raw_report indicates {raw_cf} failed checks"]
+
     elif isinstance(raw_report, str):
         if not raw_report.strip():
             return "FAILED", ["CONSUMER_CI_RAW_REPORT_EMPTY: raw_report is an empty string"]
@@ -2867,6 +3401,7 @@ def verify_consumer_ci_gate(
             expected_commit,
             api_verified_commit=expected_commit,
             require_source_identity=False,
+            expected_repository=repository,
         )
         if raw_prov_st == "FAILED":
             return "FAILED", raw_prov_errs
@@ -2896,6 +3431,8 @@ def verify_consumer_ci_gate(
                 claimed_vulns=vulns,
                 api_verified_commit=expected_commit,
                 require_source_identity=False,
+                expected_command=gate.get("command"),
+                expected_repository=repository,
             )
             if rs_st != "VERIFIED":
                 return "FAILED", rs_errs
@@ -2907,6 +3444,8 @@ def verify_consumer_ci_gate(
                 claimed_checks_failed=checks_failed,
                 api_verified_commit=expected_commit,
                 require_source_identity=False,
+                expected_command=gate.get("command"),
+                expected_repository=repository,
             )
             if rr_st != "VERIFIED":
                 return "FAILED", rr_errs
@@ -2946,16 +3485,20 @@ def verify_consumer_ci_gate(
         run_repo = str((run.get("repository") or {}).get("full_name") or "")
         if run_repo.lower() != repository.lower():
             return "FAILED", ["CONSUMER_CI_RUN_REPOSITORY_MISMATCH"]
-        if run.get("id") is not None and run.get("id") != run_id:
-            return "FAILED", [f"CONSUMER_CI_RUN_ID_MISMATCH: API run.id ({run.get('id')}) != expected ({run_id})"]
+        api_run_id = run.get("id")
+        if api_run_id is None:
+            return "FAILED", ["CONSUMER_CI_RUN_ID_MISSING: GitHub API run.id is missing"]
+        if not isinstance(api_run_id, int) or api_run_id != run_id:
+            return "FAILED", [f"CONSUMER_CI_RUN_ID_MISMATCH: API run.id ({api_run_id}) != expected ({run_id})"]
         run_event = run.get("event")
-        if gate.get("event") is not None:
-            if not run_event or str(run_event).strip() != str(gate.get("event")).strip():
-                return "FAILED", [f"CONSUMER_CI_RUN_EVENT_MISMATCH: API run.event ({run_event}) != expected ({gate.get('event')})"]
-        if "event" in run:
-            if not run_event or str(run_event).strip() not in ALLOWED_CONSUMER_CI_EVENTS:
-                return "FAILED", [f"CONSUMER_CI_RUN_EVENT_UNTRUSTED: API run.event '{run_event}' is not an allowed source CI trigger"]
-        if str(run.get("head_sha") or "").lower() != expected_commit.lower():
+        if not run_event:
+            return "FAILED", ["CONSUMER_CI_RUN_EVENT_MISSING: GitHub API run.event is missing"]
+        if str(run_event).strip() not in ALLOWED_CONSUMER_CI_EVENTS:
+            return "FAILED", [f"CONSUMER_CI_RUN_EVENT_UNTRUSTED: API run.event '{run_event}' is not an allowed source CI trigger"]
+        if gate.get("event") is not None and str(run_event).strip() != str(gate.get("event")).strip():
+            return "FAILED", [f"CONSUMER_CI_RUN_EVENT_MISMATCH: API run.event ({run_event}) != expected ({gate.get('event')})"]
+        run_head_sha = str(run.get("head_sha") or "")
+        if not re.fullmatch(r"[0-9a-f]{40}", run_head_sha, re.IGNORECASE) or run_head_sha.lower() != expected_commit.lower():
             return "FAILED", ["CONSUMER_CI_RUN_COMMIT_MISMATCH"]
         if run.get("path") != gate.get("workflow_path"):
             return "FAILED", ["CONSUMER_CI_RUN_WORKFLOW_MISMATCH"]
@@ -2974,10 +3517,16 @@ def verify_consumer_ci_gate(
         job = matching[0]
         if job.get("status") != "completed" or job.get("conclusion") != "success":
             return "FAILED", [f"CONSUMER_CI_JOB_NOT_SUCCESS: {gate.get('job_name')}"]
-        if job.get("run_id") is not None and job.get("run_id") != run_id:
-            return "FAILED", [f"CONSUMER_CI_JOB_RUN_ID_MISMATCH: API job.run_id ({job.get('run_id')}) != expected ({run_id})"]
-        if job.get("head_sha") is not None and str(job.get("head_sha")).lower() != expected_commit.lower():
-            return "FAILED", [f"CONSUMER_CI_JOB_COMMIT_MISMATCH: API job.head_sha ({job.get('head_sha')}) != expected ({expected_commit})"]
+        job_run_id = job.get("run_id")
+        if job_run_id is None:
+            return "FAILED", ["CONSUMER_CI_JOB_RUN_ID_MISSING: GitHub API job.run_id is missing"]
+        if not isinstance(job_run_id, int) or job_run_id != run_id:
+            return "FAILED", [f"CONSUMER_CI_JOB_RUN_ID_MISMATCH: API job.run_id ({job_run_id}) != expected ({run_id})"]
+        job_head_sha = job.get("head_sha")
+        if not job_head_sha:
+            return "FAILED", ["CONSUMER_CI_JOB_COMMIT_MISSING: GitHub API job.head_sha is missing"]
+        if not re.fullmatch(r"[0-9a-f]{40}", str(job_head_sha), re.IGNORECASE) or str(job_head_sha).lower() != expected_commit.lower():
+            return "FAILED", [f"CONSUMER_CI_JOB_COMMIT_MISMATCH: API job.head_sha ({job_head_sha}) != expected ({expected_commit})"]
 
         job_id = job.get("id")
         if not isinstance(job_id, int) or job_id <= 0:
@@ -2987,34 +3536,54 @@ def verify_consumer_ci_gate(
         if isinstance(raw_report, dict) and raw_report.get("job_id") is not None and raw_report.get("job_id") != job_id:
             return "FAILED", [f"CONSUMER_CI_RAW_REPORT_JOB_ID_MISMATCH: raw_report job_id ({raw_report.get('job_id')}) != GitHub API job_id ({job_id})"]
 
-        # Verify step conclusions (catch continue-on-error masked step failures, checkout, and commit verification steps)
+        # Fail-closed step-level verification: require non-empty steps metadata
         job_steps = job.get("steps")
-        has_steps_metadata = isinstance(job_steps, list) and len(job_steps) > 0
+        if not isinstance(job_steps, list) or len(job_steps) == 0:
+            return "NOT_VERIFIABLE", [
+                "CONSUMER_CI_JOB_STEPS_METADATA_MISSING: GitHub API job.steps metadata is required for fail-closed verification"
+            ]
+
         has_checkout_step_ok = False
-        if has_steps_metadata:
-            checkout_steps = []
-            identity_steps = []
-            for step in job_steps:
-                if not isinstance(step, dict):
-                    continue
-                s_name = str(step.get("name") or "")
-                s_name_l = s_name.lower()
-                s_concl = str(step.get("conclusion") or "").lower()
-                if s_concl in ("failure", "cancelled", "timed_out", "action_required"):
-                    return "FAILED", [
-                        f"CONSUMER_CI_JOB_STEP_FAILED_MASKED: Step '{s_name}' concluded '{s_concl}' despite job success"
-                    ]
-                if "checkout" in s_name_l and not s_name_l.startswith("post "):
-                    checkout_steps.append((s_name, s_concl))
-                if re.search(r"(?:verify.*commit|source.*identity|event source commit)", s_name_l):
-                    identity_steps.append((s_name, s_concl))
-            if checkout_steps:
-                if not any(sc == "success" for _, sc in checkout_steps):
-                    return "FAILED", ["CONSUMER_CI_CHECKOUT_STEP_NOT_SUCCESS: Checkout step did not conclude success"]
-                has_checkout_step_ok = True
-            if identity_steps:
-                if not all(sc == "success" for _, sc in identity_steps):
-                    return "FAILED", ["CONSUMER_CI_SOURCE_IDENTITY_STEP_NOT_SUCCESS: Source commit verification step did not conclude success"]
+        checkout_steps = []
+        identity_steps = []
+        execution_steps = []
+        for step in job_steps:
+            if not isinstance(step, dict):
+                continue
+            s_name = str(step.get("name") or "")
+            s_name_l = s_name.lower()
+            s_concl = str(step.get("conclusion") or "").lower()
+            if s_concl in ("failure", "cancelled", "timed_out", "action_required"):
+                return "FAILED", [
+                    f"CONSUMER_CI_JOB_STEP_FAILED_MASKED: Step '{s_name}' concluded '{s_concl}' despite job success"
+                ]
+            is_checkout = "checkout" in s_name_l and not s_name_l.startswith("post ")
+            is_identity = bool(
+                re.search(
+                    r"(?:\bverify\b.*\b(?:commit|head|sha|source)\b|\bsource\s+(?:identity|commit)\s+(?:verify|check)\b)",
+                    s_name_l,
+                )
+            )
+            if is_checkout:
+                checkout_steps.append((s_name, s_concl))
+            if is_identity:
+                identity_steps.append((s_name, s_concl))
+            if (
+                not is_checkout
+                and not is_identity
+                and not s_name_l.startswith(("set up ", "complete job", "post ", "install ", "isolate ", "report ", "upload "))
+            ):
+                execution_steps.append((s_name, s_concl))
+
+        if checkout_steps:
+            if not any(sc == "success" for _, sc in checkout_steps):
+                return "FAILED", ["CONSUMER_CI_CHECKOUT_STEP_NOT_SUCCESS: Checkout step did not conclude success"]
+            has_checkout_step_ok = True
+        if identity_steps:
+            if not all(sc == "success" for _, sc in identity_steps):
+                return "FAILED", ["CONSUMER_CI_SOURCE_IDENTITY_STEP_NOT_SUCCESS: Source commit verification step did not conclude success"]
+        if execution_steps and not any(sc == "success" for _, sc in execution_steps):
+            return "FAILED", ["CONSUMER_CI_EXECUTION_STEPS_SKIPPED: All execution steps were skipped or did not conclude success"]
 
         # Authoritative raw execution evidence: GitHub Actions Job Log
         job_log_url = f"https://api.github.com/repos/{repository}/actions/jobs/{job_id}/logs"
@@ -3024,7 +3593,7 @@ def verify_consumer_ci_gate(
         except Exception as log_exc:
             return "NOT_VERIFIABLE", [f"CONSUMER_CI_API_NOT_VERIFIABLE: Cannot fetch raw job log from GitHub Actions: {log_exc}"]
 
-        if has_steps_metadata and not has_checkout_step_ok:
+        if not has_checkout_step_ok:
             log_prov = extract_runner_log_commit_provenance(runner_log)
             if not log_prov["authoritative_source_commits"]:
                 return "NOT_VERIFIABLE", [
@@ -3040,7 +3609,9 @@ def verify_consumer_ci_gate(
                 claimed_failed=failed,
                 claimed_skipped=skipped,
                 api_verified_commit=expected_commit,
-                require_source_identity=False,
+                require_source_identity=(not has_checkout_step_ok),
+                expected_command=gate.get("command"),
+                expected_repository=repository,
             )
             if log_status != "VERIFIED":
                 return log_status, log_errors
@@ -3052,7 +3623,9 @@ def verify_consumer_ci_gate(
                 claimed_targets=targets,
                 claimed_vulns=vulns,
                 api_verified_commit=expected_commit,
-                require_source_identity=False,
+                require_source_identity=(not has_checkout_step_ok),
+                expected_command=gate.get("command"),
+                expected_repository=repository,
             )
             if scan_status != "VERIFIED":
                 return scan_status, scan_errors
@@ -3063,7 +3636,9 @@ def verify_consumer_ci_gate(
                 claimed_checks_passed=checks_passed,
                 claimed_checks_failed=checks_failed,
                 api_verified_commit=expected_commit,
-                require_source_identity=False,
+                require_source_identity=(not has_checkout_step_ok),
+                expected_command=gate.get("command"),
+                expected_repository=repository,
             )
             if rel_status != "VERIFIED":
                 return rel_status, rel_errors

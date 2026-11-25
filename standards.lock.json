@@ -1,13 +1,14 @@
 {
   "schema_version": "1.0.0",
   "repository": "xiefeifeihu/AI-Engineering-Standards",
-  "version": "3.0.0",
-  "tag": "v3.0.0",
-  "tag_object_sha": "8256bb384e62894219db0992a2cb57e16d4fa8cd",
-  "peeled_commit": "8b223019c254e0edeb94576b94af46c1e48b0316",
-  "locked_at": "2026-11-11T09:35:00Z",
-  "lock_reason": "Latest verified official release tag on main (PR #10 merged / v3.0.0 released)",
-  "approval_evidence_ref": "docs/DECISION-RECORD.md",
+  "version": "3.0.1",
+  "tag": "v3.0.1",
+  "tag_object_sha": "a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4",
+  "peeled_commit": "4facfdcd17a3003f04e7deaa3dbdcb320ff82afa",
+  "locked_at": "2026-11-23T02:33:58Z",
+  "lock_reason": "Latest verified official release tag on main (PR #13 candidate + PR #14 final fix merged / v3.0.1 released)",
+  "approval_evidence_ref": "docs/release-evidence/v3.0.1.json",
+  "ci_run_id": "45099701154",
   "ci_verification_status": "PASS",
   "previous_locks": [
     {
@@ -28,6 +29,17 @@
       "peeled_commit": "5e17c0ef560ab8abafe880b988d70f85f380a104",
       "locked_at": "2026-11-05T10:00:00Z",
       "lock_reason": "Latest verified official release tag on main prior to v3.0.0 approval and tagging (D3/STD-034)",
+      "approval_evidence_ref": "docs/DECISION-RECORD.md",
+      "ci_verification_status": "PASS"
+    },
+    {
+      "repository": "xiefeifeihu/AI-Engineering-Standards",
+      "version": "3.0.0",
+      "tag": "v3.0.0",
+      "tag_object_sha": "8256bb384e62894219db0992a2cb57e16d4fa8cd",
+      "peeled_commit": "8b223019c254e0edeb94576b94af46c1e48b0316",
+      "locked_at": "2026-11-11T09:35:00Z",
+      "lock_reason": "Latest verified official release tag on main (PR #10 merged / v3.0.0 released)",
       "approval_evidence_ref": "docs/DECISION-RECORD.md",
       "ci_verification_status": "PASS"
     }

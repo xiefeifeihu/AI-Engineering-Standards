@@ -5135,6 +5135,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             candidate_pr_number=13,
             candidate_pr_status="OPEN",
             candidate_pr_draft=False,
+            final_evidence_path="docs/release-evidence/std019-final-release.json",
         )
         self.assertTrue(ok, errs)
         assert payload is not None and md is not None
@@ -5164,6 +5165,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
                 candidate_pr_head=head_sha,
                 candidate_pr_base="main",
                 candidate_pr_merge_event=fake_event,
+                final_evidence_path="docs/release-evidence/std019-final-release.json",
             )
             self.assertFalse(ok_bad, f"Historical merge commit {hist_sha} should have been rejected")
             self.assertTrue(
@@ -5708,6 +5710,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             candidate_pr_status="OPEN",
             candidate_pr_draft=False,
             candidate_pr_base="main",
+            final_evidence_path="docs/release-evidence/std019-final-release.json",
         )
         self.assertTrue(ok_b, errs_b)
         assert md_b is not None
@@ -5724,6 +5727,7 @@ class CandidatePrIdentityAndReleaseFallbackTests(unittest.TestCase):
             candidate_pr_status="OPEN",
             candidate_pr_draft=False,
             candidate_pr_base="main",
+            final_evidence_path="docs/release-evidence/std019-final-release.json",
             standards_root=ROOT,
         )
         self.assertTrue(ok_h, errs_h)
@@ -5925,6 +5929,7 @@ class PostMergePrFactsAndFirstParentTests(unittest.TestCase):
             candidate_pr_status="MERGED",
             candidate_pr_base="main",
             candidate_pr_merge_event=merged_pr13_api,
+            final_evidence_path="docs/release-evidence/std019-final-release.json",
         )
         self.assertTrue(ok_b, f"Baseline MERGED build failed: {errs_b}")
         assert payload_b is not None and md_b is not None
@@ -5951,6 +5956,7 @@ class PostMergePrFactsAndFirstParentTests(unittest.TestCase):
             candidate_pr_status="MERGED",
             candidate_pr_base="main",
             candidate_pr_merge_event=merged_pr13_api,
+            final_evidence_path="docs/release-evidence/std019-final-release.json",
             standards_root=ROOT,
         )
         self.assertTrue(ok_h, f"Handoff MERGED build failed: {errs_h}")
@@ -6005,6 +6011,7 @@ class PostMergePrFactsAndFirstParentTests(unittest.TestCase):
             candidate_pr_status="OPEN",
             candidate_pr_draft=False,
             candidate_pr_base="main",
+            final_evidence_path="docs/release-evidence/std019-final-release.json",
         )
         _, _, _, md_h_open = build_handoff_payload(
             project_root=ROOT,
@@ -6017,6 +6024,7 @@ class PostMergePrFactsAndFirstParentTests(unittest.TestCase):
             candidate_pr_status="OPEN",
             candidate_pr_draft=False,
             candidate_pr_base="main",
+            final_evidence_path="docs/release-evidence/std019-final-release.json",
             standards_root=ROOT,
         )
         assert md_b_open is not None and md_h_open is not None
@@ -6282,6 +6290,106 @@ class PostMergePrFactsAndFirstParentTests(unittest.TestCase):
                 )
                 self.assertTrue(ok_b_ok, errs_b_ok)
                 self.assertTrue(ok_h_ok, errs_h_ok)
+
+
+class V301PostReleaseEvidenceCloseoutTests(unittest.TestCase):
+    """Std-023: Verify official v3.0.1 release evidence, tampering rejection, and RELEASED baseline/handoff rendering."""
+
+    def test_v301_release_evidence_resolution_schema_and_tamper_rejection(self) -> None:
+        ev_path = ROOT / "docs" / "release-evidence" / "v3.0.1.json"
+        self.assertTrue(ev_path.is_file(), f"Missing v3.0.1 evidence: {ev_path}")
+        self.assertEqual(resolve_release_evidence_path(ROOT).resolve(), ev_path.resolve())
+
+        ok_rel, errs_rel, data = is_verified_released_evidence(ROOT, ev_path, expected_version="3.0.1")
+        self.assertTrue(ok_rel, f"v3.0.1.json verification failed: {errs_rel}")
+        assert data is not None
+        self.assertEqual(data["release_flow_status"], "RELEASED")
+        self.assertEqual(data["pr_number"], 14)
+        self.assertEqual(str(data["main_ci_run_id"]), "45099701154")
+        self.assertEqual(data["tag_object_sha"], "a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4")
+        self.assertEqual(data["peeled_commit"], "4facfdcd17a3003f04e7deaa3dbdcb320ff82afa")
+
+        schema = json.loads((SCHEMAS_DIR / "release-evidence.schema.json").read_text(encoding="utf-8"))
+        jsonschema.validate(instance=data, schema=schema)
+
+        # Negative tampering checks against local v3.0.1 annotated tag
+        for field, bad_val, expected_err in (
+            ("tag_object_sha", "f" * 40, "RELEASE_EVIDENCE_LOCAL_TAG_OBJECT_MISMATCH"),
+            ("peeled_commit", "e" * 40, "RELEASE_EVIDENCE_PEELED_MISMATCH"),
+            ("release_flow_status", "CANDIDATE", "RELEASE_EVIDENCE_NOT_RELEASED"),
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                bad_path = Path(tmp) / "v3.0.1.json"
+                bad_obj = dict(data)
+                bad_obj[field] = bad_val
+                bad_path.write_text(json.dumps(bad_obj), encoding="utf-8")
+                ok_bad, errs_bad, _ = is_verified_released_evidence(ROOT, bad_path, expected_version="3.0.1")
+                self.assertFalse(ok_bad, f"Tampered {field} should be rejected")
+                self.assertTrue(any(expected_err in e for e in errs_bad), f"Expected {expected_err}, got: {errs_bad}")
+
+    def test_v301_released_baseline_and_handoff_render_and_preserve_history(self) -> None:
+        pr14_merge = "4facfdcd17a3003f04e7deaa3dbdcb320ff82afa"
+        pr14_cand = "4bffd3b280002e54c15ba2731fc2a3e144962319"
+        merged_pr14_api = {
+            "number": 14,
+            "state": "closed",
+            "draft": False,
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "merge_commit_sha": pr14_merge,
+            "base": {"ref": "main", "repo": {"full_name": "xiefeifeihu/AI-Engineering-Standards"}},
+            "head": {"ref": "fix/std-021-mainline-snapshot-first-parent", "sha": pr14_cand},
+        }
+        with patch("tools.generate_engineering_baseline.query_remote_main_head", return_value=pr14_merge), \
+             patch("tools.generate_handoff.query_remote_main_head", return_value=pr14_merge):
+            ok_b, errs_b, payload_b, md_b = build_engineering_baseline(
+                project_root=ROOT,
+                standards_root=ROOT,
+                observed_at="2026-11-23T02:40:00Z",
+                source_commit_override=PROJECT_SOURCE_COMMIT,
+                candidate_commit_override=pr14_cand,
+                candidate_pr_number=14,
+                candidate_pr_status="MERGED",
+                candidate_pr_base="main",
+                candidate_pr_merge_event=merged_pr14_api,
+                version_override="3.0.1",
+            )
+            self.assertTrue(ok_b, f"Released v3.0.1 baseline failed: {errs_b}")
+            assert payload_b is not None and md_b is not None
+            self.assertEqual(payload_b["recent_ci_facts"]["details"]["candidate_pr"]["release_status"], "RELEASED")
+
+            ok_h, errs_h, _, md_h = build_handoff_payload(
+                project_root=ROOT,
+                task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+                version="3.0.1",
+                status="COMPLETED",
+                captured_at="2026-11-23T02:40:00Z",
+                source_commit_override=PROJECT_SOURCE_COMMIT,
+                candidate_commit_override=pr14_cand,
+                candidate_pr_number=14,
+                candidate_pr_status="MERGED",
+                candidate_pr_base="main",
+                candidate_pr_merge_event=merged_pr14_api,
+                standards_root=ROOT,
+            )
+            self.assertTrue(ok_h, f"Released v3.0.1 handoff failed: {errs_h}")
+            assert md_h is not None
+
+        for label, doc_text in (("baseline", md_b), ("handoff", md_h)):
+            for scope_name in (
+                "PR9_HISTORICAL_RELEASE_EVIDENCE",
+                "STD018_CURRENT_SNAPSHOT",
+                "STD019_FINAL_RELEASE",
+                "STD020_FINAL_RELEASE",
+            ):
+                sec_txt, sec_errs = extract_scope_content(doc_text, scope_name)
+                self.assertEqual(sec_errs, [], f"{label} missing scope {scope_name}: {sec_errs}")
+                if scope_name == "STD020_FINAL_RELEASE":
+                    self.assertIn("`v3.0.1`", sec_txt)
+                    self.assertIn("`RELEASED`", sec_txt)
+                    self.assertIn("`45099701154`", sec_txt)
+                    self.assertIn("`a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4`", sec_txt)
+                    self.assertIn(f"`{pr14_merge}`", sec_txt)
 
 
 if __name__ == "__main__":
