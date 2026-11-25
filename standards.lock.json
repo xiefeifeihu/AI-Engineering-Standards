@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0.0",
   "repository": "xiefeifeihu/AI-Engineering-Standards",
-  "version": "3.0.1",
-  "tag": "v3.0.1",
-  "tag_object_sha": "a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4",
-  "peeled_commit": "4facfdcd17a3003f04e7deaa3dbdcb320ff82afa",
-  "locked_at": "2026-11-23T02:33:58Z",
-  "lock_reason": "Latest verified official release tag on main (PR #13 candidate + PR #14 final fix merged / v3.0.1 released)",
-  "approval_evidence_ref": "docs/release-evidence/v3.0.1.json",
-  "ci_run_id": "45099701154",
+  "version": "3.0.2",
+  "tag": "v3.0.2",
+  "tag_object_sha": "56578f1b790ea4356cb671cdf1e3348cbd85f9ca",
+  "peeled_commit": "0c1b48a1a6ac2f205ca77b2c34665704f44044f6",
+  "locked_at": "2026-11-25T08:07:00Z",
+  "lock_reason": "v3.0.2 已通过 Main CI 并由官方工作流签发 (PR #16 merged at 0c1b48a1a6ac2f205ca77b2c34665704f44044f6, Main CI Run 45559795518 PASS, Tag Publish Job 139026054533 PASS)",
+  "approval_evidence_ref": "docs/release-evidence/v3.0.2.json",
+  "ci_run_id": "45559795518",
   "ci_verification_status": "PASS",
   "previous_locks": [
     {
@@ -41,6 +41,18 @@
       "locked_at": "2026-11-11T09:35:00Z",
       "lock_reason": "Latest verified official release tag on main (PR #10 merged / v3.0.0 released)",
       "approval_evidence_ref": "docs/DECISION-RECORD.md",
+      "ci_verification_status": "PASS"
+    },
+    {
+      "repository": "xiefeifeihu/AI-Engineering-Standards",
+      "version": "3.0.1",
+      "tag": "v3.0.1",
+      "tag_object_sha": "a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4",
+      "peeled_commit": "4facfdcd17a3003f04e7deaa3dbdcb320ff82afa",
+      "locked_at": "2026-11-23T02:33:58Z",
+      "lock_reason": "Latest verified official release tag on main (PR #13 candidate + PR #14 final fix merged / v3.0.1 released)",
+      "approval_evidence_ref": "docs/release-evidence/v3.0.1.json",
+      "ci_run_id": "45099701154",
       "ci_verification_status": "PASS"
     }
   ]

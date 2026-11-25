@@ -2326,8 +2326,12 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         )
         self.assertIn(res["status"], ("PASS", "NOT_VERIFIABLE"))
         self.assertIn(res["remote_latest_status"], ("PASS", "NOT_VERIFIABLE"))
-        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0", "v3.0.1"))
-        if res["tag"] == "v3.0.1":
+        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0", "v3.0.1", "v3.0.2"))
+        if res["tag"] == "v3.0.2":
+            self.assertEqual(res["version"], "3.0.2")
+            self.assertEqual(res["peeled_commit"], "0c1b48a1a6ac2f205ca77b2c34665704f44044f6")
+            self.assertEqual(res["tag_object_sha"], "56578f1b790ea4356cb671cdf1e3348cbd85f9ca")
+        elif res["tag"] == "v3.0.1":
             self.assertEqual(res["version"], "3.0.1")
             self.assertEqual(res["peeled_commit"], "4facfdcd17a3003f04e7deaa3dbdcb320ff82afa")
             self.assertEqual(res["tag_object_sha"], "a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4")
@@ -3667,8 +3671,12 @@ COMMIT_HASH=4538b8ba29cb9413782c4197e73bddab64849d82
             ci_status_override="PASS",
         )
         self.assertIn(res["status"], ("PASS", "NOT_VERIFIABLE"))
-        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0", "v3.0.1"))
-        if res["tag"] == "v3.0.1":
+        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0", "v3.0.1", "v3.0.2"))
+        if res["tag"] == "v3.0.2":
+            self.assertEqual(res["version"], "3.0.2")
+            self.assertEqual(res["peeled_commit"], "0c1b48a1a6ac2f205ca77b2c34665704f44044f6")
+            self.assertEqual(res["tag_object_sha"], "56578f1b790ea4356cb671cdf1e3348cbd85f9ca")
+        elif res["tag"] == "v3.0.1":
             self.assertEqual(res["version"], "3.0.1")
             self.assertEqual(res["peeled_commit"], "4facfdcd17a3003f04e7deaa3dbdcb320ff82afa")
             self.assertEqual(res["tag_object_sha"], "a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4")
@@ -6301,7 +6309,7 @@ class V301PostReleaseEvidenceCloseoutTests(unittest.TestCase):
     def test_v301_release_evidence_resolution_schema_and_tamper_rejection(self) -> None:
         ev_path = ROOT / "docs" / "release-evidence" / "v3.0.1.json"
         self.assertTrue(ev_path.is_file(), f"Missing v3.0.1 evidence: {ev_path}")
-        self.assertEqual(resolve_release_evidence_path(ROOT).resolve(), ev_path.resolve())
+        self.assertEqual(resolve_release_evidence_path(ROOT, version="3.0.1").resolve(), ev_path.resolve())
 
         ok_rel, errs_rel, data = is_verified_released_evidence(ROOT, ev_path, expected_version="3.0.1")
         self.assertTrue(ok_rel, f"v3.0.1.json verification failed: {errs_rel}")
@@ -6396,20 +6404,22 @@ class V301PostReleaseEvidenceCloseoutTests(unittest.TestCase):
 
     def test_v302_candidate_handoff_preserves_v301_released_and_emits_candidate_pr(self) -> None:
         cand_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
-        ok_h, errs_h, _, md_h = build_handoff_payload(
-            project_root=ROOT,
-            task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
-            version="3.0.2",
-            status="IN_PROGRESS",
-            captured_at="2026-11-25T02:00:00Z",
-            source_commit_override=PROJECT_SOURCE_COMMIT,
-            candidate_commit_override=cand_sha,
-            candidate_pr_number=16,
-            candidate_pr_status="DRAFT",
-            candidate_pr_draft=True,
-            candidate_pr_base="main",
-            standards_root=ROOT,
-        )
+        v301_ev_path = ROOT / "docs" / "release-evidence" / "v3.0.1.json"
+        with patch("tools.generate_handoff.resolve_release_evidence_path", return_value=v301_ev_path):
+            ok_h, errs_h, _, md_h = build_handoff_payload(
+                project_root=ROOT,
+                task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+                version="3.0.2",
+                status="IN_PROGRESS",
+                captured_at="2026-11-25T02:00:00Z",
+                source_commit_override=PROJECT_SOURCE_COMMIT,
+                candidate_commit_override=cand_sha,
+                candidate_pr_number=16,
+                candidate_pr_status="DRAFT",
+                candidate_pr_draft=True,
+                candidate_pr_base="main",
+                standards_root=ROOT,
+            )
         self.assertTrue(ok_h, f"v3.0.2 candidate handoff failed: {errs_h}")
         assert md_h is not None
         std020_sec, std020_errs = extract_scope_content(md_h, "STD020_FINAL_RELEASE")
@@ -6419,6 +6429,113 @@ class V301PostReleaseEvidenceCloseoutTests(unittest.TestCase):
         self.assertEqual(cand_errs, [], cand_errs)
         self.assertIn("`3.0.2`", cand_sec)
         self.assertIn("`v3.0.1`", cand_sec)
+
+
+class V302PostReleaseEvidenceCloseoutTests(unittest.TestCase):
+    """Std-026: Verify official v3.0.2 release evidence, tampering rejection, and RELEASED baseline/handoff rendering."""
+
+    def test_v302_release_evidence_resolution_schema_and_tamper_rejection(self) -> None:
+        ev_path = ROOT / "docs" / "release-evidence" / "v3.0.2.json"
+        self.assertTrue(ev_path.is_file(), f"Missing v3.0.2 evidence: {ev_path}")
+        self.assertEqual(resolve_release_evidence_path(ROOT).resolve(), ev_path.resolve())
+
+        ok_rel, errs_rel, data = is_verified_released_evidence(ROOT, ev_path, expected_version="3.0.2")
+        self.assertTrue(ok_rel, f"v3.0.2.json verification failed: {errs_rel}")
+        assert data is not None
+        self.assertEqual(data["release_flow_status"], "RELEASED")
+        self.assertEqual(data["pr_number"], 16)
+        self.assertEqual(str(data["main_ci_run_id"]), "45559795518")
+        self.assertEqual(data["tag_object_sha"], "56578f1b790ea4356cb671cdf1e3348cbd85f9ca")
+        self.assertEqual(data["peeled_commit"], "0c1b48a1a6ac2f205ca77b2c34665704f44044f6")
+        self.assertEqual(str(data["tag_publish_job"]), "139026054533")
+
+        schema = json.loads((SCHEMAS_DIR / "release-evidence.schema.json").read_text(encoding="utf-8"))
+        jsonschema.validate(instance=data, schema=schema)
+
+        for field, bad_val, expected_err in (
+            ("tag_object_sha", "f" * 40, "RELEASE_EVIDENCE_LOCAL_TAG_OBJECT_MISMATCH"),
+            ("peeled_commit", "e" * 40, "RELEASE_EVIDENCE_PEELED_MISMATCH"),
+            ("release_flow_status", "CANDIDATE", "RELEASE_EVIDENCE_NOT_RELEASED"),
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                bad_path = Path(tmp) / "v3.0.2.json"
+                bad_obj = dict(data)
+                bad_obj[field] = bad_val
+                bad_path.write_text(json.dumps(bad_obj), encoding="utf-8")
+                ok_bad, errs_bad, _ = is_verified_released_evidence(ROOT, bad_path, expected_version="3.0.2")
+                self.assertFalse(ok_bad, f"Tampered {field} should be rejected")
+                self.assertTrue(any(expected_err in e for e in errs_bad), f"Expected {expected_err}, got: {errs_bad}")
+
+    def test_v302_released_baseline_and_handoff_render_and_preserve_history(self) -> None:
+        pr16_merge = "0c1b48a1a6ac2f205ca77b2c34665704f44044f6"
+        pr16_cand = "ba39c93b4818e54b95b27e2c6565e36b3d676f0e"
+        merged_pr16_api = {
+            "number": 16,
+            "state": "closed",
+            "draft": False,
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "merge_commit_sha": pr16_merge,
+            "base": {"ref": "main", "repo": {"full_name": "xiefeifeihu/AI-Engineering-Standards"}},
+            "head": {"ref": "fix/std-024-consumer-ci-provenance-hardening", "sha": pr16_cand},
+        }
+        with patch("tools.generate_engineering_baseline.query_remote_main_head", return_value=pr16_merge), \
+             patch("tools.generate_handoff.query_remote_main_head", return_value=pr16_merge):
+            ok_b, errs_b, payload_b, md_b = build_engineering_baseline(
+                project_root=ROOT,
+                standards_root=ROOT,
+                observed_at="2026-11-25T08:06:40Z",
+                source_commit_override=PROJECT_SOURCE_COMMIT,
+                candidate_commit_override=pr16_cand,
+                candidate_pr_number=16,
+                candidate_pr_status="MERGED",
+                candidate_pr_base="main",
+                candidate_pr_merge_event=merged_pr16_api,
+                version_override="3.0.2",
+            )
+            self.assertTrue(ok_b, f"Released v3.0.2 baseline failed: {errs_b}")
+            assert payload_b is not None and md_b is not None
+            self.assertEqual(payload_b["recent_ci_facts"]["details"]["candidate_pr"]["release_status"], "RELEASED")
+
+            ok_h, errs_h, _, md_h = build_handoff_payload(
+                project_root=ROOT,
+                task_id="Std-026-v3-0-2-post-release-closeout",
+                version="3.0.2",
+                status="COMPLETED",
+                captured_at="2026-11-25T08:06:40Z",
+                source_commit_override=PROJECT_SOURCE_COMMIT,
+                candidate_commit_override=pr16_cand,
+                candidate_pr_number=16,
+                candidate_pr_status="MERGED",
+                candidate_pr_base="main",
+                candidate_pr_merge_event=merged_pr16_api,
+                standards_root=ROOT,
+            )
+            self.assertTrue(ok_h, f"Released v3.0.2 handoff failed: {errs_h}")
+            assert md_h is not None
+
+        self.assertNotIn("CURRENT_CANDIDATE_PR", md_h)
+        for label, doc_text in (("baseline", md_b), ("handoff", md_h)):
+            for scope_name in (
+                "PR9_HISTORICAL_RELEASE_EVIDENCE",
+                "STD018_CURRENT_SNAPSHOT",
+                "STD019_FINAL_RELEASE",
+                "V301_HISTORICAL_RELEASE",
+                "STD020_FINAL_RELEASE",
+            ):
+                sec_txt, sec_errs = extract_scope_content(doc_text, scope_name)
+                self.assertEqual(sec_errs, [], f"{label} missing scope {scope_name}: {sec_errs}")
+                if scope_name == "V301_HISTORICAL_RELEASE":
+                    self.assertIn("`v3.0.1`", sec_txt)
+                    self.assertIn("`a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4`", sec_txt)
+                    self.assertIn("`4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`", sec_txt)
+                if scope_name == "STD020_FINAL_RELEASE":
+                    self.assertIn("`v3.0.2`", sec_txt)
+                    self.assertIn("`RELEASED`", sec_txt)
+                    self.assertIn("`45559795518`", sec_txt)
+                    self.assertIn("`56578f1b790ea4356cb671cdf1e3348cbd85f9ca`", sec_txt)
+                    self.assertIn(f"`{pr16_merge}`", sec_txt)
+                    self.assertIn("`139026054533`", sec_txt)
 
 
 if __name__ == "__main__":
