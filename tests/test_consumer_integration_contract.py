@@ -12,7 +12,7 @@ import unittest
 import zipfile
 import yaml
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from tests.test_baseline_sync_and_approval_governance import _copy_minimal_valid_project
 
@@ -568,6 +568,8 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
             },
         }
         run_payload = {
+            "id": 12345,
+            "event": "pull_request",
             "repository": {"full_name": repository},
             "head_sha": commit,
             "path": ".github/workflows/ci.yml",
@@ -575,7 +577,20 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
             "conclusion": "success",
         }
         jobs_payload = {
-            "jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]
+            "jobs": [
+                {
+                    "id": 101,
+                    "run_id": 12345,
+                    "head_sha": commit,
+                    "name": "Unit Tests",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "steps": [
+                        {"name": "Checkout", "conclusion": "success"},
+                        {"name": "Run tests", "conclusion": "success"},
+                    ],
+                }
+            ]
         }
         log_payload = b"Ran 10 tests in 0.5s\n\nOK\n"
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_payload)]):
@@ -1054,14 +1069,46 @@ class ConsumerIntegrationContractTests(unittest.TestCase):
         }
 
         run_payload = {
+            "id": 12345,
+            "event": "pull_request",
             "repository": {"full_name": repository},
             "head_sha": commit,
             "path": ".github/workflows/ci.yml",
             "status": "completed",
             "conclusion": "success",
         }
-        jobs_scan = {"jobs": [{"id": 201, "name": "Security Scan", "status": "completed", "conclusion": "success"}]}
-        jobs_release = {"jobs": [{"id": 202, "name": "Release Gate", "status": "completed", "conclusion": "success"}]}
+        jobs_scan = {
+            "jobs": [
+                {
+                    "id": 201,
+                    "run_id": 12345,
+                    "head_sha": commit,
+                    "name": "Security Scan",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "steps": [
+                        {"name": "Checkout", "conclusion": "success"},
+                        {"name": "Run pip-audit", "conclusion": "success"},
+                    ],
+                }
+            ]
+        }
+        jobs_release = {
+            "jobs": [
+                {
+                    "id": 202,
+                    "run_id": 12345,
+                    "head_sha": commit,
+                    "name": "Release Gate",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "steps": [
+                        {"name": "Checkout", "conclusion": "success"},
+                        {"name": "Run release checks", "conclusion": "success"},
+                    ],
+                }
+            ]
+        }
         scan_log = b"Scan complete: 15 targets scanned, 0 vulnerabilities found. SUCCESS\n"
         release_log = b"Release checks completed: 5 passed, 0 failed. SUCCESS\n"
 
@@ -1227,6 +1274,8 @@ standards_validation:
             },
         }
         run_payload = {
+            "id": 12345,
+            "event": "pull_request",
             "repository": {"full_name": repository},
             "head_sha": commit,
             "path": ".github/workflows/ci.yml",
@@ -1234,7 +1283,20 @@ standards_validation:
             "conclusion": "success",
         }
         jobs_payload = {
-            "jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]
+            "jobs": [
+                {
+                    "id": 101,
+                    "run_id": 12345,
+                    "head_sha": commit,
+                    "name": "Unit Tests",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "steps": [
+                        {"name": "Checkout", "conclusion": "success"},
+                        {"name": "Run tests", "conclusion": "success"},
+                    ],
+                }
+            ]
         }
         failing_log = b"test_something (test.Test) ... FAIL\nFAILURES!\nRan 10 tests in 0.5s\n"
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(failing_log)]):
@@ -1272,6 +1334,8 @@ standards_validation:
             },
         }
         run_payload = {
+            "id": 12345,
+            "event": "pull_request",
             "repository": {"full_name": repository},
             "head_sha": commit,
             "path": ".github/workflows/ci.yml",
@@ -1314,6 +1378,8 @@ standards_validation:
             },
         }
         run_payload = {
+            "id": 12345,
+            "event": "pull_request",
             "repository": {"full_name": repository},
             "head_sha": diff_commit,
             "path": ".github/workflows/ci.yml",
@@ -1355,6 +1421,8 @@ standards_validation:
             },
         }
         run_payload = {
+            "id": 12345,
+            "event": "pull_request",
             "repository": {"full_name": repository},
             "head_sha": commit,
             "path": ".github/workflows/ci.yml",
@@ -1362,7 +1430,20 @@ standards_validation:
             "conclusion": "success",
         }
         jobs_payload = {
-            "jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "failure"}]
+            "jobs": [
+                {
+                    "id": 101,
+                    "run_id": 12345,
+                    "head_sha": commit,
+                    "name": "Unit Tests",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "steps": [
+                        {"name": "Checkout", "conclusion": "success"},
+                        {"name": "Run tests", "conclusion": "failure"},
+                    ],
+                }
+            ]
         }
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
@@ -1399,6 +1480,8 @@ standards_validation:
             },
         }
         run_payload = {
+            "id": 12345,
+            "event": "pull_request",
             "repository": {"full_name": repository},
             "head_sha": commit,
             "path": ".github/workflows/ci.yml",
@@ -1406,7 +1489,20 @@ standards_validation:
             "conclusion": "success",
         }
         jobs_payload = {
-            "jobs": [{"id": 101, "name": "Other Unrelated Job", "status": "completed", "conclusion": "success"}]
+            "jobs": [
+                {
+                    "id": 101,
+                    "run_id": 12345,
+                    "head_sha": commit,
+                    "name": "Other Unrelated Job",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "steps": [
+                        {"name": "Checkout", "conclusion": "success"},
+                        {"name": "Run other", "conclusion": "success"},
+                    ],
+                }
+            ]
         }
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
@@ -1444,6 +1540,8 @@ standards_validation:
             },
         }
         run_payload = {
+            "id": 12345,
+            "event": "pull_request",
             "repository": {"full_name": repository},
             "head_sha": commit,
             "path": ".github/workflows/ci.yml",
@@ -1451,7 +1549,20 @@ standards_validation:
             "conclusion": "success",
         }
         jobs_payload = {
-            "jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]
+            "jobs": [
+                {
+                    "id": 101,
+                    "run_id": 12345,
+                    "head_sha": commit,
+                    "name": "Unit Tests",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "steps": [
+                        {"name": "Checkout", "conclusion": "success"},
+                        {"name": "Run tests", "conclusion": "success"},
+                    ],
+                }
+            ]
         }
         with patch("urllib.request.urlopen", side_effect=[
             FakeResponse(run_payload),
@@ -1703,6 +1814,8 @@ standards_validation:
             },
         }
         run_payload = {
+            "id": 12345,
+            "event": "pull_request",
             "repository": {"full_name": repository},
             "head_sha": commit,
             "path": ".github/workflows/ci.yml",
@@ -1710,7 +1823,20 @@ standards_validation:
             "conclusion": "success",
         }
         jobs_payload = {
-            "jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]
+            "jobs": [
+                {
+                    "id": 101,
+                    "run_id": 12345,
+                    "head_sha": commit,
+                    "name": "Unit Tests",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "steps": [
+                        {"name": "Checkout", "conclusion": "success"},
+                        {"name": "Run tests", "conclusion": "success"},
+                    ],
+                }
+            ]
         }
         with patch("urllib.request.urlopen", side_effect=[
             FakeResponse(run_payload),
@@ -1739,8 +1865,8 @@ standards_validation:
             "raw_report": {"tests_collected": 1, "tests_passed": 1, "tests_failed": 0, "tests_skipped": 0},
             "test_execution": {"tests_collected": 1, "tests_passed": 1, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0, "evidence_log_ref": "ref"},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(unparseable_log)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
         self.assertEqual(status, "NOT_VERIFIABLE")
@@ -1762,8 +1888,8 @@ standards_validation:
             "raw_report": log_bytes.decode("utf-8"),
             "test_execution": {"tests_collected": 7, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 2, "exit_code": 0, "evidence_log_ref": "ref"},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
         self.assertEqual(status, "FAILED")
@@ -1781,8 +1907,8 @@ standards_validation:
             "raw_report": log_bytes.decode("utf-8"),
             "test_execution": {"tests_collected": 7, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 2, "exit_code": 0, "evidence_log_ref": "ref"},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
             status, errors = verify_consumer_ci_gate(repository, gate_matched, commit)
         self.assertEqual(status, "VERIFIED", errors)
@@ -1806,8 +1932,8 @@ standards_validation:
             "raw_report": log_bytes.decode("utf-8"),
             "test_execution": {"tests_collected": 3, "tests_passed": 3, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0, "evidence_log_ref": "ref"},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
         self.assertEqual(status, "FAILED")
@@ -1825,8 +1951,8 @@ standards_validation:
             "raw_report": log_bytes.decode("utf-8"),
             "test_execution": {"tests_collected": 10, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 5, "exit_code": 0, "evidence_log_ref": "ref"},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
         self.assertEqual(status, "FAILED")
@@ -1844,8 +1970,8 @@ standards_validation:
             "raw_report": log_bytes.decode("utf-8"),
             "test_execution": {"tests_collected": 10, "tests_passed": 10, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0, "evidence_log_ref": "ref"},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
         self.assertEqual(status, "FAILED")
@@ -1863,8 +1989,8 @@ standards_validation:
             "raw_report": log_bytes.decode("utf-8"),
             "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0, "evidence_log_ref": "ref"},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
         self.assertEqual(status, "FAILED")
@@ -1881,8 +2007,8 @@ standards_validation:
             "raw_report": "Ran 5 tests in 0.05s\n\nOK",
             "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0, "evidence_log_ref": "ref"},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         log_bytes = b"pytest running...\ntest_one.py .\ntest_two.py .\n"
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
@@ -1900,8 +2026,8 @@ standards_validation:
             "raw_report": "Ran 5 tests in 0.05s\n\nOK",
             "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0, "evidence_log_ref": "ref"},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         log_bytes = b"Docker image build OK\nSystem setup OK\n"
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(log_bytes)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
@@ -1950,8 +2076,8 @@ standards_validation:
             "raw_report": {"tests_collected": 10, "tests_passed": 10},
             "test_execution": {"tests_collected": 10, "tests_passed": 10, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(runner_log)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
         self.assertEqual(status, "FAILED")
@@ -1969,8 +2095,8 @@ standards_validation:
             "raw_report": {"tests_collected": 10, "tests_passed": 10},
             "test_execution": {"tests_collected": 10, "tests_passed": 10, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(runner_log)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
         self.assertEqual(status, "FAILED")
@@ -1987,8 +2113,8 @@ standards_validation:
             "raw_report": {"tests_collected": 5, "tests_passed": 5},
             "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
         self.assertEqual(status, "FAILED")
@@ -2005,7 +2131,7 @@ standards_validation:
             "raw_report": {"tests_collected": 5, "tests_passed": 5},
             "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/other.yml", "status": "completed", "conclusion": "success"}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/other.yml", "status": "completed", "conclusion": "success"}
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
         self.assertEqual(status, "FAILED")
@@ -2024,8 +2150,8 @@ standards_validation:
             "raw_report": {"tests_collected": 5, "tests_passed": 5},
             "test_execution": {"tests_collected": 5, "tests_passed": 5, "tests_failed": 0, "tests_skipped": 0, "exit_code": 0},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(runner_log)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
         self.assertEqual(status, "FAILED")
@@ -2043,8 +2169,8 @@ standards_validation:
             "raw_report": {"tests_collected": 10, "tests_passed": 8, "tests_skipped": 2},
             "test_execution": {"tests_collected": 10, "tests_passed": 8, "tests_failed": 0, "tests_skipped": 2, "exit_code": 0},
         }
-        run_payload = {"repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
-        jobs_payload = {"jobs": [{"id": 101, "name": "Unit Tests", "status": "completed", "conclusion": "success"}]}
+        run_payload = {"id": 12345, "event": "pull_request", "repository": {"full_name": repository}, "head_sha": commit, "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success"}
+        jobs_payload = {"jobs": [{"id": 101, "run_id": 12345, "head_sha": commit, "name": "Unit Tests", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout", "conclusion": "success"}, {"name": "Run tests", "conclusion": "success"}]}]}
         with patch("urllib.request.urlopen", side_effect=[FakeResponse(run_payload), FakeResponse(jobs_payload), FakeResponse(runner_log)]):
             status, errors = verify_consumer_ci_gate(repository, gate, commit)
         self.assertEqual(status, "VERIFIED", errors)
@@ -2545,7 +2671,7 @@ class PackageAcceptanceContractTests(unittest.TestCase):
         (acc_dir / "manifest.json").write_text(orig_manifest_content, encoding="utf-8")
 
         with self.assertRaises(ValueError):
-            package_acceptance("TEST-TASK", version="3.0.0", run_id="new-run-fail", repo_root=self.root)
+            package_acceptance("TEST-TASK", version="3.0.0", run_id="new-run-fail", repo_root=self.root, allow_overwrite=True, overwrite_reason="TEST-AUTHORIZED-CRASH-RECOVERY-RESEAL")
 
         self.assertEqual(old_zip.read_text(encoding="utf-8"), "OLD_ZIP_CONTENT")
         self.assertEqual(old_sha.read_text(encoding="utf-8"), "OLD_SHA_CONTENT")
@@ -4317,7 +4443,7 @@ class FinalBlockerClosureRound2Tests(unittest.TestCase):
             os.replace(src, dst)
 
         with self.assertRaises(OSError):
-            package_acceptance("TX-TASK", version="3.0.0", run_id="new-run", repo_root=root, replace_fn=fail_on_manifest)
+            package_acceptance("TX-TASK", version="3.0.0", run_id="new-run", repo_root=root, replace_fn=fail_on_manifest, allow_overwrite=True, overwrite_reason="TEST-AUTHORIZED-CRASH-RECOVERY-RESEAL")
 
         self.assertEqual(manifest_path.read_bytes(), orig_m)
         self.assertEqual(zip_path.read_bytes(), orig_z)
@@ -4335,7 +4461,7 @@ class FinalBlockerClosureRound2Tests(unittest.TestCase):
 
         with patch("scripts.package_acceptance.zipfile.ZipFile", side_effect=OSError("Injected ZIP write error")):
             with self.assertRaises(OSError):
-                package_acceptance("TX-TASK", version="3.0.0", run_id="new-run", repo_root=root)
+                package_acceptance("TX-TASK", version="3.0.0", run_id="new-run", repo_root=root, allow_overwrite=True, overwrite_reason="TEST-AUTHORIZED-CRASH-RECOVERY-RESEAL")
 
         self.assertEqual(manifest_path.read_bytes(), orig_m)
         self.assertEqual(zip_path.read_bytes(), orig_z)
@@ -4358,7 +4484,7 @@ class FinalBlockerClosureRound2Tests(unittest.TestCase):
             os.replace(src, dst)
 
         with self.assertRaises(PermissionError):
-            package_acceptance("TX-TASK", version="3.0.0", run_id="new-run", repo_root=root, replace_fn=fail_on_sidecar)
+            package_acceptance("TX-TASK", version="3.0.0", run_id="new-run", repo_root=root, replace_fn=fail_on_sidecar, allow_overwrite=True, overwrite_reason="TEST-AUTHORIZED-CRASH-RECOVERY-RESEAL")
 
         # Verify restoration itself used temp files + atomic replace
         restore_calls = [src_name for src_name, _ in replace_ops if ".tmp_restore" in src_name]
@@ -4395,7 +4521,7 @@ class FinalBlockerClosureRound2Tests(unittest.TestCase):
             os.replace(src, dst)
 
         with self.assertRaises(RuntimeError) as ctx:
-            package_acceptance("TX-TASK", version="3.0.0", run_id="new-run", repo_root=root, replace_fn=fail_sidecar_and_restore)
+            package_acceptance("TX-TASK", version="3.0.0", run_id="new-run", repo_root=root, replace_fn=fail_sidecar_and_restore, allow_overwrite=True, overwrite_reason="TEST-AUTHORIZED-CRASH-RECOVERY-RESEAL")
         self.assertIn("TRANSACTION_RECOVERY_FAILED", str(ctx.exception))
         # Journal and backup must be preserved on recovery failure
         journals = list(pkg_dir.glob(".tx_journal_*"))
@@ -4430,6 +4556,8 @@ class FinalBlockerClosureRound2Tests(unittest.TestCase):
                 repo_root=root,
                 replace_fn=fail_sidecar_replace,
                 unlink_fn=fail_bak_unlink,
+                allow_overwrite=True,
+                overwrite_reason="TEST-AUTHORIZED-CRASH-RECOVERY-RESEAL",
             )
         self.assertIn("TRANSACTION_ROLLED_BACK_CLEANUP_FAILED", str(ctx1.exception))
         # All 3 originals must still be intact
@@ -4739,7 +4867,28 @@ class F12RollbackCommitBindingTests(unittest.TestCase):
         mf_path = promo_root / "engineering-manifest.yaml"
         mf_data = yaml.safe_load(mf_path.read_text(encoding="utf-8"))
         mf_data["project"]["repository"] = "xiefeifeihu/AI-Engineering-Hub"
+        mf_data["standards"]["version"] = "2.11.0"
+        mf_data["standards"]["tag"] = "v2.11.0"
+        mf_data["standards"]["tag_object_sha"] = "2f4b4b54348a5ac8891e5a0b33c04635a27213a0"
+        mf_data["standards"]["peeled_commit"] = "5e17c0ef560ab8abafe880b988d70f85f380a104"
         mf_path.write_text(yaml.safe_dump(mf_data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+        promo_lock = {
+            "schema_version": "1.0.0",
+            "repository": "xiefeifeihu/AI-Engineering-Standards",
+            "version": "2.11.0",
+            "tag": "v2.11.0",
+            "tag_object_sha": "2f4b4b54348a5ac8891e5a0b33c04635a27213a0",
+            "peeled_commit": "5e17c0ef560ab8abafe880b988d70f85f380a104",
+            "locked_at": "2026-11-10T00:00:00Z",
+            "lock_reason": "Bootstrap v2.11.0 for promote parity test",
+            "approval_evidence_ref": None,
+            "ci_verification_status": "NOT_VERIFIABLE",
+            "previous_locks": [],
+        }
+        (promo_root / "standards.lock.json").write_text(
+            json.dumps(promo_lock, indent=2) + "\n", encoding="utf-8"
+        )
 
         subprocess.run(["git", "-C", str(promo_root), "add", "."], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(promo_root), "commit", "-m", "promo consumer head"], capture_output=True, check=True)
@@ -4782,6 +4931,7 @@ class F12RollbackCommitBindingTests(unittest.TestCase):
                 simulate_remote_refs=real_refs,
             )
             self.assertEqual(res_fail["status"], "UPGRADE_BLOCKED", res_fail)
+            self.assertNotIn("DOWNGRADE_FORBIDDEN", str(res_fail.get("reason", "")), res_fail)
 
             # Commit-bound digest MUST pass promote_upgrade even with dirty worktree
             _, app_ok, sim_pr_ok = self._build_auth(
@@ -4897,7 +5047,8 @@ class PackagerPathSecurityTests(unittest.TestCase):
         self._seed_acceptance("SEC-TASK", "v3.0.0")
         res = package_acceptance("SEC-TASK", version="3.0.0", run_id="ok-1", repo_root=self.repo)
         self.assertTrue((self.repo / res["zip_path"]).exists())
-        res2 = package_acceptance("SEC-TASK", version="v3.0.0", run_id="ok-2", repo_root=self.repo)
+        self._seed_acceptance("SEC-TASK-PREFIX", "v3.0.0")
+        res2 = package_acceptance("SEC-TASK-PREFIX", version="v3.0.0", run_id="ok-2", repo_root=self.repo)
         self.assertTrue((self.repo / res2["zip_path"]).exists())
 
     def test_p3_symlink_escape_rejected(self) -> None:
@@ -5025,7 +5176,7 @@ def crash_replace(src: Path, dst: Path) -> None:
         if j.get("state") == "COMMITTED":
             os._exit(99)
 
-pa.package_acceptance(task_id, version=version, run_id={repr(run_id)}, repo_root=repo, replace_fn=crash_replace)
+pa.package_acceptance(task_id, version=version, run_id={repr(run_id)}, repo_root=repo, replace_fn=crash_replace, allow_overwrite=True, overwrite_reason="TEST-AUTHORIZED-CRASH-RECOVERY-RESEAL")
 """
 
     def test_c1_real_os_crash_during_committing_points_recovers_originals_and_succeeds(self) -> None:
@@ -5060,7 +5211,7 @@ pa.package_acceptance(task_id, version=version, run_id={repr(run_id)}, repo_root
                 proc2.communicate(timeout=20)
                 self.assertEqual(proc2.returncode, 99)
 
-                res_next = package_acceptance(task_id, version="3.0.0", run_id="final-run", repo_root=self.repo)
+                res_next = package_acceptance(task_id, version="3.0.0", run_id="final-run", repo_root=self.repo, allow_overwrite=True, overwrite_reason="TEST-AUTHORIZED-CRASH-RECOVERY-RESEAL")
                 self.assertEqual(json.loads(manifest_path.read_text(encoding="utf-8"))["run_id"], "final-run")
                 with zipfile.ZipFile(zip_path, "r") as zf:
                     self.assertEqual(json.loads(zf.read("manifest.json").decode("utf-8"))["run_id"], "final-run")
@@ -5210,7 +5361,7 @@ pa.package_acceptance(task_id, version=version, run_id={repr(run_id)}, repo_root
         self.assertIn("RECOVERY_FAILED", blk_rf["reason"])
         self.assertTrue(jpath.exists())
         with self.assertRaises(RuntimeError) as ctx_rf:
-            package_acceptance("IDEM-TASK", version="3.0.0", run_id="r4", repo_root=self.repo)
+            package_acceptance("IDEM-TASK", version="3.0.0", run_id="r4", repo_root=self.repo, allow_overwrite=True, overwrite_reason="TEST-AUTHORIZED-CRASH-RECOVERY-RESEAL")
         self.assertIn("TRANSACTION_RECOVERY_BLOCKED", str(ctx_rf.exception))
 
     def test_c5_multiprocess_os_lock_serialization_and_timeout_block(self) -> None:
@@ -5229,13 +5380,13 @@ def slow_replace(src, dst):
     if Path(dst).name == "manifest.json":
         time.sleep(0.4)
     os.replace(src, dst)
-package_acceptance("CONC-TASK", version="3.0.0", run_id="proc-A", repo_root=repo, replace_fn=slow_replace, lock_timeout=15.0)
+package_acceptance("CONC-TASK", version="3.0.0", run_id="proc-A", repo_root=repo, replace_fn=slow_replace, lock_timeout=15.0, allow_overwrite=True, overwrite_reason="TEST-AUTHORIZED-CRASH-RECOVERY-RESEAL")
 """
         code_b = f"""
 from pathlib import Path
 from scripts.package_acceptance import package_acceptance
 repo = Path({repr(str(self.repo))})
-package_acceptance("CONC-TASK", version="3.0.0", run_id="proc-B", repo_root=repo, lock_timeout=15.0)
+package_acceptance("CONC-TASK", version="3.0.0", run_id="proc-B", repo_root=repo, lock_timeout=15.0, allow_overwrite=True, overwrite_reason="TEST-AUTHORIZED-CRASH-RECOVERY-RESEAL")
 """
         p_a = self._spawn_worker(code_a)
         p_b = self._spawn_worker(code_b)
@@ -5264,7 +5415,7 @@ def hold_lock(src, dst):
         print("LOCK_HELD", flush=True)
         time.sleep(1.5)
     os.replace(src, dst)
-package_acceptance("CONC-TASK", version="3.0.0", run_id="holder", repo_root=repo, replace_fn=hold_lock, lock_timeout=10.0)
+package_acceptance("CONC-TASK", version="3.0.0", run_id="holder", repo_root=repo, replace_fn=hold_lock, lock_timeout=10.0, allow_overwrite=True, overwrite_reason="TEST-AUTHORIZED-CRASH-RECOVERY-RESEAL")
 """
         p_hold = self._spawn_worker(holder_code)
         try:
@@ -5272,11 +5423,1777 @@ package_acceptance("CONC-TASK", version="3.0.0", run_id="holder", repo_root=repo
             ready_line = p_hold.stdout.readline().strip()
             self.assertEqual(ready_line, "LOCK_HELD")
             with self.assertRaises(RuntimeError) as ctx_blk:
-                package_acceptance("CONC-TASK", version="3.0.0", run_id="contender", repo_root=self.repo, lock_timeout=0.15)
+                package_acceptance("CONC-TASK", version="3.0.0", run_id="contender", repo_root=self.repo, lock_timeout=0.15, allow_overwrite=True, overwrite_reason="TEST-AUTHORIZED-CRASH-RECOVERY-RESEAL")
             self.assertIn("TRANSACTION_CONCURRENCY_BLOCKED", str(ctx_blk.exception))
         finally:
             _, hold_err = p_hold.communicate(timeout=20)
             self.assertEqual(p_hold.returncode, 0, hold_err)
+
+
+class Std024ConsumerCiProvenanceHardeningTests(unittest.TestCase):
+    """T01-T08: Runner Image Provisioner isolation & strict consumer CI provenance tests (STD-024)."""
+
+    RUNNER_PROV_COMMIT = "b8a594ea514ff44cadb5342986c68b1eac6e22ed"
+    CONSUMER_COMMIT = "a7acc7967f2ea84d1711bf137428b594893e47fd"
+    STANDARDS_SUB_COMMIT = "4facfdcd17a3003f04e7deaa3dbdcb320ff82afa"
+    ALT_COMMIT = "c" * 40
+    REPO = "xiefeifeihu/AI-Engineering-Hub"
+
+    @classmethod
+    def _build_gha_log(
+        cls,
+        *,
+        provisioner_commit: Optional[str] = RUNNER_PROV_COMMIT,
+        checkout_ref: Optional[str] = CONSUMER_COMMIT,
+        git_log_commit: Optional[str] = CONSUMER_COMMIT,
+        expected_sha_env: Optional[str] = CONSUMER_COMMIT,
+        submodule_commit: Optional[str] = STANDARDS_SUB_COMMIT,
+        include_identity_step: bool = True,
+        exec_body: str = "2026-11-24T05:00:10Z collected 12 items\n2026-11-24T05:00:11Z === 12 passed in 1.25s ===",
+        extra_tail: str = "",
+    ) -> str:
+        lines = [
+            "2026-11-24T05:00:00Z Current runner version: '2.333.1'",
+            "2026-11-24T05:00:00Z ##[group]Runner Image Provisioner",
+            "2026-11-24T05:00:00Z Hosted Compute Agent",
+        ]
+        if provisioner_commit:
+            lines.append(f"2026-11-24T05:00:00Z Commit: {provisioner_commit}")
+        lines.extend([
+            "2026-11-24T05:00:00Z Build Date: 2026-11-16",
+            "2026-11-24T05:00:00Z ##[endgroup]",
+            "2026-11-24T05:00:01Z Download action repository 'actions/checkout@v4' (SHA:34e114876b0b11c390a56381ad16ebd13914f8d5)",
+        ])
+        if checkout_ref is not None:
+            lines.extend([
+                "2026-11-24T05:00:02Z ##[group]Run actions/checkout@v4",
+                "2026-11-24T05:00:02Z with:",
+                "2026-11-24T05:00:02Z   submodules: recursive",
+                "2026-11-24T05:00:02Z ##[endgroup]",
+                "2026-11-24T05:00:03Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/35/merge",
+            ])
+        if git_log_commit is not None:
+            lines.extend([
+                "2026-11-24T05:00:04Z [command]/usr/bin/git log -1 --format=%H",
+                f"2026-11-24T05:00:04Z {git_log_commit}",
+            ])
+        if submodule_commit is not None:
+            lines.extend([
+                "2026-11-24T05:00:05Z ##[group]Fetching submodules",
+                f"2026-11-24T05:00:05Z Submodule path '.standards': checked out '{submodule_commit}'",
+                "2026-11-24T05:00:05Z ##[endgroup]",
+            ])
+        if include_identity_step and expected_sha_env is not None:
+            lines.extend([
+                "2026-11-24T05:00:06Z ##[group]Run test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\"",
+                "2026-11-24T05:00:06Z test \"$(git rev-parse HEAD)\" = \"$EXPECTED_SHA\"",
+                "2026-11-24T05:00:06Z env:",
+                f"2026-11-24T05:00:06Z   EXPECTED_SHA: {expected_sha_env}",
+                "2026-11-24T05:00:06Z ##[endgroup]",
+            ])
+        if exec_body:
+            lines.append(exec_body)
+        if extra_tail:
+            lines.append(extra_tail)
+        return "\n".join(lines) + "\n"
+
+    def _build_gate(
+        self,
+        *,
+        run_id: int = 45310932802,
+        job_id: int = 138166184154,
+        job_name: str = "Unit & Contract Tests (Ubuntu)",
+        head_sha: str = CONSUMER_COMMIT,
+        workflow_path: str = ".github/workflows/ci-governance.yml",
+        event: str = "pull_request",
+        collected: int = 12,
+        passed: int = 12,
+        failed: int = 0,
+        skipped: int = 0,
+    ) -> Dict[str, Any]:
+        return {
+            "status": "PASS",
+            "command": "pytest -q",
+            "workflow_path": workflow_path,
+            "event": event,
+            "run_id": run_id,
+            "job_id": job_id,
+            "job_name": job_name,
+            "head_sha": head_sha,
+            "evidence_ref": f"https://github.com/{self.REPO}/actions/runs/{run_id}",
+            "raw_report": {
+                "repository": self.REPO,
+                "event": event,
+                "run_id": run_id,
+                "job_id": job_id,
+                "job_name": job_name,
+                "head_sha": head_sha,
+                "tests_collected": collected,
+                "tests_passed": passed,
+                "tests_failed": failed,
+                "tests_skipped": skipped,
+            },
+            "test_execution": {
+                "tests_collected": collected,
+                "tests_passed": passed,
+                "tests_failed": failed,
+                "tests_skipped": skipped,
+                "exit_code": 0,
+                "evidence_log_ref": f"https://github.com/{self.REPO}/actions/runs/{run_id}",
+            },
+        }
+
+    @staticmethod
+    def _mock_urlopen(run_payload: Dict[str, Any], jobs_payload: Dict[str, Any], log_text: str):
+        def _handler(req, timeout=12):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/jobs/" in url and url.endswith("/logs"):
+                return FakeResponse(log_text.encode("utf-8"))
+            if "/jobs" in url:
+                return FakeResponse(jobs_payload)
+            return FakeResponse(run_payload)
+        return _handler
+
+    def test_t01_runner_image_commit_isolated_from_consumer_commit(self) -> None:
+        from tools.standards_sync.core import (
+            extract_runner_log_commit_provenance,
+            parse_runner_test_log,
+        )
+
+        # Log with Runner Image Provisioner commit, action download SHA, .standards submodule SHA,
+        # and NO authoritative consumer source commit must NEVER pass source provenance or be confused with Consumer Commit.
+        prov_only_log = self._build_gha_log(
+            provisioner_commit=self.RUNNER_PROV_COMMIT,
+            checkout_ref=None,
+            git_log_commit=None,
+            expected_sha_env=None,
+            include_identity_step=False,
+        )
+        prov = extract_runner_log_commit_provenance(prov_only_log)
+        self.assertIn(self.RUNNER_PROV_COMMIT, prov["runner_image_provisioner_commits"])
+        self.assertIn("34e114876b0b11c390a56381ad16ebd13914f8d5", prov["non_source_commits"]["action_download"])
+        self.assertIn(self.STANDARDS_SUB_COMMIT, prov["non_source_commits"]["submodule"])
+        self.assertEqual(prov["authoritative_source_commits"], [])
+        self.assertEqual(prov["structured_commit_headers"], [])
+
+        st, errs = parse_runner_test_log(
+            prov_only_log,
+            expected_commit=self.CONSUMER_COMMIT,
+            claimed_passed=12,
+            claimed_collected=12,
+            claimed_failed=0,
+            claimed_skipped=0,
+            require_source_identity=True,
+        )
+        self.assertEqual(st, "NOT_VERIFIABLE", errs)
+        self.assertNotEqual(st, "VERIFIED")
+        self.assertTrue(any("CONSUMER_CI_SOURCE_IDENTITY_MISSING" in e for e in errs), errs)
+
+        # Even if expected_commit were set to Runner Image Provisioner commit, provisioner SHA is NOT source identity!
+        st_prov_exp, _ = parse_runner_test_log(
+            prov_only_log,
+            expected_commit=self.RUNNER_PROV_COMMIT,
+            claimed_passed=12,
+            claimed_collected=12,
+            claimed_failed=0,
+            claimed_skipped=0,
+            require_source_identity=True,
+        )
+        self.assertEqual(st_prov_exp, "NOT_VERIFIABLE")
+
+    def test_t02_correct_consumer_commit_verified_offline_and_api_path(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import parse_runner_test_log
+
+        log_text = self._build_gha_log()
+        snapshot = str(log_text)
+        st_parse, errs_parse = parse_runner_test_log(
+            log_text,
+            expected_commit=self.CONSUMER_COMMIT,
+            claimed_passed=12,
+            claimed_collected=12,
+            claimed_failed=0,
+            claimed_skipped=0,
+            require_source_identity=True,
+        )
+        self.assertEqual(st_parse, "VERIFIED", errs_parse)
+        self.assertEqual(log_text, snapshot)
+
+        gate = self._build_gate()
+        run_payload = {
+            "id": 45310932802,
+            "event": "pull_request",
+            "repository": {"full_name": self.REPO},
+            "head_sha": self.CONSUMER_COMMIT,
+            "path": ".github/workflows/ci-governance.yml",
+            "status": "completed",
+            "conclusion": "success",
+        }
+        jobs_payload = {
+            "jobs": [
+                {
+                    "id": 138166184154,
+                    "run_id": 45310932802,
+                    "head_sha": self.CONSUMER_COMMIT,
+                    "name": "Unit & Contract Tests (Ubuntu)",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "steps": [
+                        {"name": "Checkout repository", "conclusion": "success"},
+                        {"name": "Verify pull_request event source commit", "conclusion": "success"},
+                        {"name": "Run tests", "conclusion": "success"},
+                    ],
+                }
+            ]
+        }
+        with patch("urllib.request.urlopen", side_effect=self._mock_urlopen(run_payload, jobs_payload, log_text)):
+            st_api, errs_api = verify_consumer_ci_gate(self.REPO, gate, self.CONSUMER_COMMIT)
+        self.assertEqual(st_api, "VERIFIED", errs_api)
+        self.assertEqual(errs_api, [])
+
+    def test_t03_conflicting_authoritative_source_commit_returns_failed(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import (
+            parse_runner_release_log,
+            parse_runner_scan_log,
+            parse_runner_test_log,
+        )
+
+        # Authoritative git log -1 outputs ALT_COMMIT even though Runner Provisioner or env mentions something else
+        bad_git_log = self._build_gha_log(
+            git_log_commit=self.ALT_COMMIT,
+            expected_sha_env=self.CONSUMER_COMMIT,
+        )
+        st, errs = parse_runner_test_log(
+            bad_git_log,
+            expected_commit=self.CONSUMER_COMMIT,
+            claimed_passed=12,
+            claimed_collected=12,
+            claimed_failed=0,
+            claimed_skipped=0,
+            require_source_identity=True,
+        )
+        self.assertEqual(st, "FAILED", errs)
+        self.assertTrue(any("CONSUMER_CI_RAW_REPORT_COMMIT_MISMATCH" in e for e in errs), errs)
+
+        bad_scan_log = self._build_gha_log(
+            git_log_commit=self.ALT_COMMIT,
+            exec_body="2026-11-24T05:00:10Z 5 targets scanned\n2026-11-24T05:00:11Z 0 vulnerabilities found",
+        )
+        st_scan, errs_scan = parse_runner_scan_log(bad_scan_log, expected_commit=self.CONSUMER_COMMIT, claimed_targets=5)
+        self.assertEqual(st_scan, "FAILED", errs_scan)
+
+        bad_rel_log = self._build_gha_log(
+            git_log_commit=self.ALT_COMMIT,
+            exec_body="2026-11-24T05:00:10Z 3 checks passed\n2026-11-24T05:00:11Z OVERALL=PASS",
+        )
+        st_rel, errs_rel = parse_runner_release_log(bad_rel_log, expected_commit=self.CONSUMER_COMMIT, claimed_checks_passed=3)
+        self.assertEqual(st_rel, "FAILED", errs_rel)
+
+        # String raw_report pre-check and fetched job log must both reject conflicting source commit
+        gate = self._build_gate()
+        gate["raw_report"] = bad_git_log
+        st_gate, errs_gate = verify_consumer_ci_gate(self.REPO, gate, self.CONSUMER_COMMIT)
+        self.assertEqual(st_gate, "FAILED", errs_gate)
+
+        gate_obj = self._build_gate()
+        run_payload = {
+            "id": 45310932802,
+            "event": "pull_request",
+            "repository": {"full_name": self.REPO},
+            "head_sha": self.CONSUMER_COMMIT,
+            "path": ".github/workflows/ci-governance.yml",
+            "status": "completed",
+            "conclusion": "success",
+        }
+        jobs_payload = {
+            "jobs": [
+                {
+                    "id": 138166184154,
+                    "run_id": 45310932802,
+                    "head_sha": self.CONSUMER_COMMIT,
+                    "name": "Unit & Contract Tests (Ubuntu)",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "steps": [{"name": "Checkout repository", "conclusion": "success"}],
+                }
+            ]
+        }
+        with patch("urllib.request.urlopen", side_effect=self._mock_urlopen(run_payload, jobs_payload, bad_git_log)):
+            st_api, errs_api = verify_consumer_ci_gate(self.REPO, gate_obj, self.CONSUMER_COMMIT)
+        self.assertEqual(st_api, "FAILED", errs_api)
+        self.assertTrue(any("CONSUMER_CI_RAW_REPORT_COMMIT_MISMATCH" in e for e in errs_api), errs_api)
+
+    def test_t04_api_head_sha_event_and_ids_mismatch_return_failed(self) -> None:
+        from unittest.mock import patch
+
+        valid_log = self._build_gha_log()
+        base_run = {
+            "id": 45310932802,
+            "event": "pull_request",
+            "repository": {"full_name": self.REPO},
+            "head_sha": self.CONSUMER_COMMIT,
+            "path": ".github/workflows/ci-governance.yml",
+            "status": "completed",
+            "conclusion": "success",
+        }
+        base_job = {
+            "id": 138166184154,
+            "run_id": 45310932802,
+            "head_sha": self.CONSUMER_COMMIT,
+            "name": "Unit & Contract Tests (Ubuntu)",
+            "status": "completed",
+            "conclusion": "success",
+            "steps": [{"name": "Checkout repository", "conclusion": "success"}],
+        }
+
+        cases = [
+            ("run_head_sha", {**base_run, "head_sha": self.ALT_COMMIT}, base_job, "CONSUMER_CI_RUN_COMMIT_MISMATCH"),
+            ("job_head_sha", base_run, {**base_job, "head_sha": self.ALT_COMMIT}, "CONSUMER_CI_JOB_COMMIT_MISMATCH"),
+            ("run_event_mismatch", {**base_run, "event": "push"}, base_job, "CONSUMER_CI_RUN_EVENT_MISMATCH"),
+            ("run_event_untrusted", {**base_run, "event": "issue_comment"}, base_job, "CONSUMER_CI_RUN_EVENT_MISMATCH"),
+            ("run_id_mismatch", {**base_run, "id": 999}, base_job, "CONSUMER_CI_RUN_ID_MISMATCH"),
+            ("job_run_id_mismatch", base_run, {**base_job, "run_id": 999}, "CONSUMER_CI_JOB_RUN_ID_MISMATCH"),
+            ("job_id_mismatch", base_run, {**base_job, "id": 999}, "CONSUMER_CI_GATE_JOB_ID_MISMATCH"),
+        ]
+        for label, r_pay, j_pay, expected_err in cases:
+            with self.subTest(case=label):
+                gate = self._build_gate()
+                if label == "run_event_untrusted":
+                    gate["event"] = "issue_comment"
+                    gate["raw_report"]["event"] = "issue_comment"
+                    expected_err = "CONSUMER_CI_RUN_EVENT_UNTRUSTED"
+                with patch(
+                    "urllib.request.urlopen",
+                    side_effect=self._mock_urlopen(r_pay, {"jobs": [j_pay]}, valid_log),
+                ):
+                    st, errs = verify_consumer_ci_gate(self.REPO, gate, self.CONSUMER_COMMIT)
+                self.assertEqual(st, "FAILED", f"{label}: {errs}")
+                self.assertTrue(any(expected_err in e for e in errs), f"{label}: {errs}")
+
+    def test_t05_empty_log_missing_identity_and_bare_ok_cannot_verify(self) -> None:
+        from unittest.mock import patch
+        import urllib.error
+        from tools.standards_sync.core import (
+            parse_runner_release_log,
+            parse_runner_scan_log,
+            parse_runner_test_log,
+        )
+
+        for empty in ("", "   \n\t  "):
+            self.assertEqual(parse_runner_test_log(empty, self.CONSUMER_COMMIT, 1, 1)[0], "NOT_VERIFIABLE")
+            self.assertEqual(parse_runner_scan_log(empty, self.CONSUMER_COMMIT, 1)[0], "NOT_VERIFIABLE")
+            self.assertEqual(parse_runner_release_log(empty, self.CONSUMER_COMMIT, 1)[0], "NOT_VERIFIABLE")
+
+        # Bare "OK" or "SUCCESS" without anchored summary MUST NOT pass scan or release logs
+        bare_scan = self._build_gha_log(exec_body="2026-11-24T05:00:10Z OK\n2026-11-24T05:00:11Z SUCCESS")
+        st_scan, errs_scan = parse_runner_scan_log(bare_scan, self.CONSUMER_COMMIT)
+        self.assertEqual(st_scan, "NOT_VERIFIABLE", errs_scan)
+
+        bare_rel = self._build_gha_log(exec_body="2026-11-24T05:00:10Z OK\n2026-11-24T05:00:11Z SUCCESS")
+        st_rel, errs_rel = parse_runner_release_log(bare_rel, self.CONSUMER_COMMIT)
+        self.assertEqual(st_rel, "NOT_VERIFIABLE", errs_rel)
+
+        # API/network unreachable must return NOT_VERIFIABLE, never VERIFIED
+        gate = self._build_gate()
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("API unavailable")):
+            st_api, errs_api = verify_consumer_ci_gate(self.REPO, gate, self.CONSUMER_COMMIT)
+        self.assertEqual(st_api, "NOT_VERIFIABLE", errs_api)
+        self.assertTrue(any("CONSUMER_CI_API_NOT_VERIFIABLE" in e for e in errs_api), errs_api)
+
+        # Missing checkout/source identity in both job steps and log returns NOT_VERIFIABLE
+        no_id_log = self._build_gha_log(checkout_ref=None, git_log_commit=None, expected_sha_env=None, include_identity_step=False)
+        run_payload = {
+            "id": 45310932802,
+            "event": "pull_request",
+            "repository": {"full_name": self.REPO},
+            "head_sha": self.CONSUMER_COMMIT,
+            "path": ".github/workflows/ci-governance.yml",
+            "status": "completed",
+            "conclusion": "success",
+        }
+        jobs_payload = {
+            "jobs": [
+                {
+                    "id": 138166184154,
+                    "run_id": 45310932802,
+                    "head_sha": self.CONSUMER_COMMIT,
+                    "name": "Unit & Contract Tests (Ubuntu)",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "steps": [{"name": "Run tests", "conclusion": "success"}],
+                }
+            ]
+        }
+        with patch("urllib.request.urlopen", side_effect=self._mock_urlopen(run_payload, jobs_payload, no_id_log)):
+            st_no_id, errs_no_id = verify_consumer_ci_gate(self.REPO, gate, self.CONSUMER_COMMIT)
+        self.assertEqual(st_no_id, "NOT_VERIFIABLE", errs_no_id)
+
+    def test_t06_continue_on_error_and_masked_step_failures_fail(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import (
+            parse_runner_release_log,
+            parse_runner_scan_log,
+            parse_runner_test_log,
+        )
+
+        masked_test_log = self._build_gha_log(
+            exec_body="2026-11-24T05:00:10Z ##[error]Process completed with exit code 1.\n"
+            "2026-11-24T05:00:11Z === 1 failed, 11 passed in 1.25s ==="
+        )
+        self.assertEqual(
+            parse_runner_test_log(masked_test_log, self.CONSUMER_COMMIT, 11, 12, 0, 0)[0],
+            "FAILED",
+        )
+        self.assertEqual(
+            parse_runner_scan_log(masked_test_log, self.CONSUMER_COMMIT)[0],
+            "FAILED",
+        )
+        self.assertEqual(
+            parse_runner_release_log(masked_test_log, self.CONSUMER_COMMIT)[0],
+            "FAILED",
+        )
+
+        # String raw_report containing failure must fail BEFORE network
+        gate_str = self._build_gate()
+        gate_str["raw_report"] = self._build_gha_log(exec_body="2026-11-24T05:00:10Z === 2 failed, 10 passed in 1.0s ===")
+        st_pre, _ = verify_consumer_ci_gate(self.REPO, gate_str, self.CONSUMER_COMMIT)
+        self.assertEqual(st_pre, "FAILED")
+
+        # API step failure masked by continue-on-error even if job conclusion == success and test log looks green
+        green_log = self._build_gha_log()
+        run_payload = {
+            "id": 45310932802,
+            "event": "pull_request",
+            "repository": {"full_name": self.REPO},
+            "head_sha": self.CONSUMER_COMMIT,
+            "path": ".github/workflows/ci-governance.yml",
+            "status": "completed",
+            "conclusion": "success",
+        }
+        jobs_payload = {
+            "jobs": [
+                {
+                    "id": 138166184154,
+                    "run_id": 45310932802,
+                    "head_sha": self.CONSUMER_COMMIT,
+                    "name": "Unit & Contract Tests (Ubuntu)",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "steps": [
+                        {"name": "Checkout repository", "conclusion": "success"},
+                        {"name": "Run pytest", "conclusion": "failure"},
+                    ],
+                }
+            ]
+        }
+        gate = self._build_gate()
+        with patch("urllib.request.urlopen", side_effect=self._mock_urlopen(run_payload, jobs_payload, green_log)):
+            st_masked, errs_masked = verify_consumer_ci_gate(self.REPO, gate, self.CONSUMER_COMMIT)
+        self.assertEqual(st_masked, "FAILED", errs_masked)
+        self.assertTrue(any("CONSUMER_CI_JOB_STEP_FAILED_MASKED" in e for e in errs_masked), errs_masked)
+
+    def test_t07_forged_and_non_executing_commit_and_summary_text_rejected(self) -> None:
+        from tools.standards_sync.core import parse_runner_test_log
+
+        forged_echo = "\n".join([
+            f'echo "Commit: {self.CONSUMER_COMMIT}"',
+            'echo "=== 12 passed in 0.50s ==="',
+        ])
+        st_e, errs_e = parse_runner_test_log(forged_echo, self.CONSUMER_COMMIT, 12, 12, 0, 0)
+        self.assertEqual(st_e, "FAILED", errs_e)
+
+        forged_comment_and_fence = "\n".join([
+            f"# source_commit: {self.CONSUMER_COMMIT}",
+            f'QUOTE: HEAD={self.CONSUMER_COMMIT}',
+            "```text",
+            f"commit: {self.CONSUMER_COMMIT}",
+            "Ran 12 tests in 0.25s",
+            "",
+            "OK",
+            "```",
+        ])
+        st_f, errs_f = parse_runner_test_log(forged_comment_and_fence, self.CONSUMER_COMMIT, 12, 12, 0, 0)
+        self.assertEqual(st_f, "FAILED", errs_f)
+
+    def test_t08_hub_run_45310932802_five_jobs_full_regression_and_verbatim_if_present(self) -> None:
+        from unittest.mock import patch
+        from tools.standards_sync.core import (
+            parse_runner_release_log,
+            parse_runner_scan_log,
+            parse_runner_test_log,
+        )
+
+        hub_jobs = [
+            {
+                "key": "unit_tests",
+                "job_id": 138166184154,
+                "job_name": "Unit & Contract Tests (Ubuntu)",
+                "evidence_type": "test_execution",
+                "command": "python -m pytest tests/contract tests/test_standards_bootstrap.py tests/test_operational_v2.py -v",
+                "collected": 308,
+                "passed": 287,
+                "skipped": 21,
+                "sha256": "e6e77db4deed2edbe23da276e99d13ef92aa4e9b170a7e2c7ad3d4da89eea3b2",
+                "extra": "",
+            },
+            {
+                "key": "integration_tests",
+                "job_id": 138166184471,
+                "job_name": "Integration Tests (Ubuntu)",
+                "evidence_type": "test_execution",
+                "command": "python -m pytest tests/integration -v",
+                "collected": 9,
+                "passed": 9,
+                "skipped": 0,
+                "sha256": "beb5bcc4f38e7338e3c7d54aeaba47326f3b15122ca7e78d420d50b31739054f",
+                "extra": "",
+            },
+            {
+                "key": "security_scan",
+                "job_id": 138166184081,
+                "job_name": "Security & Isolation Tests (Ubuntu)",
+                "evidence_type": "scan_execution",
+                "command": "python -m pytest tests/security -v",
+                "scanner": "pytest-security",
+                "targets_scanned": 36,
+                "collected": 37,
+                "passed": 36,
+                "skipped": 1,
+                "sha256": "866dc7bcd20889ea1e75a7390e552c3c9a536cdde971da55ba415397b25da2df",
+                "extra": "",
+            },
+            {
+                "key": "business_api",
+                "job_id": 138166184067,
+                "job_name": "Business API & Runtime Tests (Ubuntu)",
+                "evidence_type": "test_execution",
+                "command": "python -m pytest tests/runtime -v",
+                "collected": 149,
+                "passed": 111,
+                "skipped": 38,
+                "sha256": "dcbbd320fe03c6b6758fc25eb1ee7469b5621738198fc926e188854aa2001788",
+                "extra": "2026-11-24T05:00:09Z tests/test_foo.py::test_hex[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb] PASSED",
+            },
+            {
+                "key": "runtime_acceptance",
+                "job_id": 138166183598,
+                "job_name": "Runtime Acceptance (Docker + Playwright Chromium)",
+                "evidence_type": "test_execution",
+                "command": "python -m pytest tests/e2e/test_hub002_standards_v300_playwright.py -v",
+                "collected": 5,
+                "passed": 5,
+                "skipped": 0,
+                "sha256": "6d68b68282359aa5ff5dcb8835a876ec0e2b331d808b743b64133af15953064c",
+                "extra": '2026-11-24T05:00:08Z #10 FROM docker.io/library/python:3.11@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n2026-11-24T05:00:09Z {"standards_commit": "4facfdcd17a3003f04e7deaa3dbdcb320ff82afa"}',
+            },
+            {
+                "key": "release_gates",
+                "job_id": 138166184132,
+                "job_name": "Agent Governance, Unit/Contract/Integration Tests & Delivery Gate",
+                "evidence_type": "release_execution",
+                "command": "python scripts/ci/verify_delivery_contract.py --mode DEVELOPMENT --run-pytest",
+                "gate_name": "delivery-contract-G01-G12",
+                "checks_passed": 10,
+                "checks_na": 2,
+                "sha256": "d2548105b206e42076a5292c5ce0b105c3b1cb895cab08dff96a9d8a64fdf6e0",
+                "extra": "",
+            },
+        ]
+
+        run_payload = {
+            "id": 45310932802,
+            "event": "pull_request",
+            "repository": {"full_name": self.REPO},
+            "head_sha": self.CONSUMER_COMMIT,
+            "path": ".github/workflows/ci-governance.yml",
+            "status": "completed",
+            "conclusion": "success",
+        }
+
+        def _make_gate_for_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
+            ev_url = f"https://github.com/{self.REPO}/actions/runs/45310932802"
+            g: Dict[str, Any] = {
+                "status": "PASS",
+                "command": spec["command"],
+                "workflow_path": ".github/workflows/ci-governance.yml",
+                "event": "pull_request",
+                "run_id": 45310932802,
+                "job_id": spec["job_id"],
+                "job_name": spec["job_name"],
+                "head_sha": self.CONSUMER_COMMIT,
+                "evidence_ref": ev_url,
+            }
+            if spec["evidence_type"] == "test_execution":
+                g["raw_report"] = {
+                    "repository": self.REPO,
+                    "event": "pull_request",
+                    "run_id": 45310932802,
+                    "job_id": spec["job_id"],
+                    "job_name": spec["job_name"],
+                    "head_sha": self.CONSUMER_COMMIT,
+                    "tests_collected": spec["collected"],
+                    "tests_passed": spec["passed"],
+                    "tests_failed": 0,
+                    "tests_skipped": spec["skipped"],
+                }
+                g["test_execution"] = {
+                    "tests_collected": spec["collected"],
+                    "tests_passed": spec["passed"],
+                    "tests_failed": 0,
+                    "tests_skipped": spec["skipped"],
+                    "exit_code": 0,
+                    "evidence_log_ref": ev_url,
+                }
+            elif spec["evidence_type"] == "scan_execution":
+                g["raw_report"] = {
+                    "repository": self.REPO,
+                    "event": "pull_request",
+                    "run_id": 45310932802,
+                    "job_id": spec["job_id"],
+                    "job_name": spec["job_name"],
+                    "head_sha": self.CONSUMER_COMMIT,
+                    "scanner": spec["scanner"],
+                    "targets_scanned": spec["targets_scanned"],
+                    "vulnerabilities_found": 0,
+                    "exit_code": 0,
+                }
+                g["scan_execution"] = {
+                    "scanner": spec["scanner"],
+                    "targets_scanned": spec["targets_scanned"],
+                    "vulnerabilities_found": 0,
+                    "exit_code": 0,
+                    "evidence_log_ref": ev_url,
+                }
+            else:
+                g["raw_report"] = {
+                    "repository": self.REPO,
+                    "event": "pull_request",
+                    "run_id": 45310932802,
+                    "job_id": spec["job_id"],
+                    "job_name": spec["job_name"],
+                    "head_sha": self.CONSUMER_COMMIT,
+                    "gate_name": spec["gate_name"],
+                    "checks_passed": spec["checks_passed"],
+                    "checks_failed": 0,
+                    "exit_code": 0,
+                }
+                g["release_execution"] = {
+                    "gate_name": spec["gate_name"],
+                    "checks_passed": spec["checks_passed"],
+                    "checks_failed": 0,
+                    "exit_code": 0,
+                    "evidence_log_ref": ev_url,
+                }
+            return g
+
+        # 1) Offline structural 6-job regression ALWAYS runs on Windows & Ubuntu CI without private repo access
+        for spec in hub_jobs:
+            with self.subTest(mode="offline_fixture", job=spec["key"]):
+                if spec["evidence_type"] == "release_execution":
+                    gates_json = {
+                        "overall_status": "PASS",
+                        "gates": [
+                            {"gate_id": f"G{idx:02d}", "status": "PASS", "detail": {"source_commit": self.CONSUMER_COMMIT}}
+                            for idx in (1, 2, 3, 4, 6, 7, 8, 9, 10, 11)
+                        ]
+                        + [
+                            {"gate_id": "G05", "status": "NOT_APPLICABLE", "detail": {"note": "DEVELOPMENT mode"}},
+                            {"gate_id": "G12", "status": "NOT_APPLICABLE", "detail": {"note": "DEVELOPMENT mode"}},
+                        ],
+                    }
+                    exec_body = (
+                        f"2026-11-24T05:00:09Z ##[group]Run {spec['command']}\n"
+                        f"2026-11-24T05:00:09Z {spec['command']}\n"
+                        "2026-11-24T05:00:09Z ##[endgroup]\n"
+                        + json.dumps(gates_json, indent=2)
+                    )
+                else:
+                    summary_parts = [f"{spec['passed']} passed"]
+                    if spec["skipped"]:
+                        summary_parts.append(f"{spec['skipped']} skipped")
+                    exec_body = (
+                        f"2026-11-24T05:00:08Z ##[group]Run {spec['command']}\n"
+                        f"2026-11-24T05:00:08Z {spec['command']}\n"
+                        "2026-11-24T05:00:08Z ##[endgroup]\n"
+                        + (f"{spec['extra']}\n" if spec["extra"] else "")
+                        + f"2026-11-24T05:00:10Z collected {spec['collected']} items\n"
+                        + f"2026-11-24T05:00:12Z === {', '.join(summary_parts)} in 2.34s ==="
+                    )
+                synth_log = self._build_gha_log(exec_body=exec_body)
+                if spec["evidence_type"] == "test_execution":
+                    st_p, errs_p = parse_runner_test_log(
+                        synth_log,
+                        expected_commit=self.CONSUMER_COMMIT,
+                        claimed_passed=spec["passed"],
+                        claimed_collected=spec["collected"],
+                        claimed_failed=0,
+                        claimed_skipped=spec["skipped"],
+                        require_source_identity=True,
+                        expected_command=spec["command"],
+                        expected_repository=self.REPO,
+                    )
+                elif spec["evidence_type"] == "scan_execution":
+                    st_p, errs_p = parse_runner_scan_log(
+                        synth_log,
+                        expected_commit=self.CONSUMER_COMMIT,
+                        claimed_targets=spec["targets_scanned"],
+                        claimed_vulns=0,
+                        require_source_identity=True,
+                        expected_command=spec["command"],
+                        expected_repository=self.REPO,
+                    )
+                else:
+                    st_p, errs_p = parse_runner_release_log(
+                        synth_log,
+                        expected_commit=self.CONSUMER_COMMIT,
+                        claimed_checks_passed=spec["checks_passed"],
+                        claimed_checks_failed=0,
+                        require_source_identity=True,
+                        expected_command=spec["command"],
+                        expected_repository=self.REPO,
+                        claimed_checks_not_applicable=spec["checks_na"],
+                    )
+                self.assertEqual(st_p, "VERIFIED", errs_p)
+
+                gate = _make_gate_for_spec(spec)
+                jobs_payload = {
+                    "jobs": [
+                        {
+                            "id": spec["job_id"],
+                            "run_id": 45310932802,
+                            "head_sha": self.CONSUMER_COMMIT,
+                            "name": spec["job_name"],
+                            "status": "completed",
+                            "conclusion": "success",
+                            "steps": [
+                                {"name": "Checkout Hub Repository", "conclusion": "success"},
+                                {"name": "Verify pull_request event source commit", "conclusion": "success"},
+                                {"name": spec["job_name"], "conclusion": "success"},
+                            ],
+                        }
+                    ]
+                }
+                with patch("urllib.request.urlopen", side_effect=self._mock_urlopen(run_payload, jobs_payload, synth_log)):
+                    st_g, errs_g = verify_consumer_ci_gate(self.REPO, gate, self.CONSUMER_COMMIT)
+                self.assertEqual(st_g, "VERIFIED", errs_g)
+
+        # 2) Verbatim 6-job disk replay (mandatory when STD024_REQUIRE_VERBATIM_REPLAY=1)
+        require_verbatim = os.environ.get("STD024_REQUIRE_VERBATIM_REPLAY") == "1"
+        replay_dir = ROOT / ".artifacts" / "acceptance" / "Std-024-consumer-ci-provenance-hardening" / "v3.0.2" / "hub_ci_replay"
+        if require_verbatim:
+            self.assertTrue(replay_dir.is_dir(), f"Missing mandatory 6-job replay directory: {replay_dir}")
+            self.assertTrue((replay_dir / "run_45310932802.json").is_file(), "Missing run_45310932802.json")
+            self.assertTrue((replay_dir / "jobs_45310932802.json").is_file(), "Missing jobs_45310932802.json")
+        if replay_dir.is_dir() and (replay_dir / "run_45310932802.json").is_file() and (replay_dir / "jobs_45310932802.json").is_file():
+            disk_run = json.loads((replay_dir / "run_45310932802.json").read_text(encoding="utf-8-sig"))
+            disk_jobs = json.loads((replay_dir / "jobs_45310932802.json").read_text(encoding="utf-8-sig"))
+            for spec in hub_jobs:
+                log_file = replay_dir / f"{spec['key']}_{spec['job_id']}.log"
+                if require_verbatim:
+                    self.assertTrue(log_file.is_file(), f"Missing mandatory replay log: {log_file}")
+                elif not log_file.is_file():
+                    continue
+                with self.subTest(mode="verbatim_replay", job=spec["key"]):
+                    raw_bytes = log_file.read_bytes()
+                    self.assertEqual(hashlib.sha256(raw_bytes).hexdigest(), spec["sha256"])
+                    raw_text = raw_bytes.decode("utf-8", errors="replace")
+                    if spec["evidence_type"] == "test_execution":
+                        st_vp, errs_vp = parse_runner_test_log(
+                            raw_text,
+                            expected_commit=self.CONSUMER_COMMIT,
+                            claimed_passed=spec["passed"],
+                            claimed_collected=spec["collected"],
+                            claimed_failed=0,
+                            claimed_skipped=spec["skipped"],
+                            require_source_identity=True,
+                            expected_command=spec["command"],
+                            expected_repository=self.REPO,
+                        )
+                    elif spec["evidence_type"] == "scan_execution":
+                        st_vp, errs_vp = parse_runner_scan_log(
+                            raw_text,
+                            expected_commit=self.CONSUMER_COMMIT,
+                            claimed_targets=spec["targets_scanned"],
+                            claimed_vulns=0,
+                            require_source_identity=True,
+                            expected_command=spec["command"],
+                            expected_repository=self.REPO,
+                        )
+                    else:
+                        st_vp, errs_vp = parse_runner_release_log(
+                            raw_text,
+                            expected_commit=self.CONSUMER_COMMIT,
+                            claimed_checks_passed=spec["checks_passed"],
+                            claimed_checks_failed=0,
+                            require_source_identity=True,
+                            expected_command=spec["command"],
+                            expected_repository=self.REPO,
+                            claimed_checks_not_applicable=spec["checks_na"],
+                        )
+                    self.assertEqual(st_vp, "VERIFIED", errs_vp)
+                    gate = _make_gate_for_spec(spec)
+                    with patch("urllib.request.urlopen", side_effect=self._mock_urlopen(disk_run, disk_jobs, raw_text)):
+                        st_vg, errs_vg = verify_consumer_ci_gate(self.REPO, gate, self.CONSUMER_COMMIT)
+                    self.assertEqual(st_vg, "VERIFIED", errs_vg)
+
+    def test_t14_missing_required_api_identity_fields_fail_closed(self) -> None:
+        from unittest.mock import patch
+
+        log_text = self._build_gha_log()
+        base_run = {
+            "id": 45310932802,
+            "event": "pull_request",
+            "repository": {"full_name": self.REPO},
+            "head_sha": self.CONSUMER_COMMIT,
+            "path": ".github/workflows/ci-governance.yml",
+            "status": "completed",
+            "conclusion": "success",
+        }
+        base_job = {
+            "id": 138166184154,
+            "run_id": 45310932802,
+            "head_sha": self.CONSUMER_COMMIT,
+            "name": "Unit & Contract Tests (Ubuntu)",
+            "status": "completed",
+            "conclusion": "success",
+            "steps": [
+                {"name": "Checkout repository", "conclusion": "success"},
+                {"name": "Verify event source commit", "conclusion": "success"},
+                {"name": "Run tests", "conclusion": "success"},
+            ],
+        }
+        cases = [
+            ("missing_run_id", {k: v for k, v in base_run.items() if k != "id"}, base_job, "FAILED", "CONSUMER_CI_RUN_ID_MISSING"),
+            ("missing_run_event", {k: v for k, v in base_run.items() if k != "event"}, base_job, "FAILED", "CONSUMER_CI_RUN_EVENT_MISSING"),
+            ("missing_job_run_id", base_run, {k: v for k, v in base_job.items() if k != "run_id"}, "FAILED", "CONSUMER_CI_JOB_RUN_ID_MISSING"),
+            ("missing_job_head_sha", base_run, {k: v for k, v in base_job.items() if k != "head_sha"}, "FAILED", "CONSUMER_CI_JOB_COMMIT_MISSING"),
+            ("missing_job_steps", base_run, {k: v for k, v in base_job.items() if k != "steps"}, "NOT_VERIFIABLE", "CONSUMER_CI_JOB_STEPS_METADATA_MISSING"),
+            ("empty_job_steps", base_run, dict(base_job, steps=[]), "NOT_VERIFIABLE", "CONSUMER_CI_JOB_STEPS_METADATA_MISSING"),
+        ]
+        for label, rp, jp, exp_st, exp_code in cases:
+            with self.subTest(case=label):
+                gate = self._build_gate()
+                if label == "missing_run_event":
+                    gate.pop("event", None)
+                with patch("urllib.request.urlopen", side_effect=self._mock_urlopen(rp, {"jobs": [jp]}, log_text)):
+                    st, errs = verify_consumer_ci_gate(self.REPO, gate, self.CONSUMER_COMMIT)
+                self.assertEqual(st, exp_st, f"{label}: {errs}")
+                self.assertNotEqual(st, "VERIFIED")
+                self.assertTrue(any(exp_code in e for e in errs), f"{label}: {errs}")
+
+    def test_t15_missing_or_skipped_checkout_identity_or_execution_steps_fail(self) -> None:
+        from unittest.mock import patch
+
+        run_payload = {
+            "id": 45310932802,
+            "event": "pull_request",
+            "repository": {"full_name": self.REPO},
+            "head_sha": self.CONSUMER_COMMIT,
+            "path": ".github/workflows/ci-governance.yml",
+            "status": "completed",
+            "conclusion": "success",
+        }
+        good_log = self._build_gha_log()
+        no_git_log = self._build_gha_log(checkout_ref=None, git_log_commit=None, expected_sha_env=None, include_identity_step=False)
+
+        # 1. Skipped checkout step -> FAILED
+        jobs_skip_co = {"jobs": [{"id": 138166184154, "run_id": 45310932802, "head_sha": self.CONSUMER_COMMIT, "name": "Unit & Contract Tests (Ubuntu)", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout repository", "conclusion": "skipped"}, {"name": "Run tests", "conclusion": "success"}]}]}
+        with patch("urllib.request.urlopen", side_effect=self._mock_urlopen(run_payload, jobs_skip_co, good_log)):
+            st1, e1 = verify_consumer_ci_gate(self.REPO, self._build_gate(), self.CONSUMER_COMMIT)
+        self.assertEqual(st1, "FAILED", e1)
+        self.assertTrue(any("CONSUMER_CI_CHECKOUT_STEP_NOT_SUCCESS" in x for x in e1), e1)
+
+        # 2. Skipped source identity verification step -> FAILED
+        jobs_skip_id = {"jobs": [{"id": 138166184154, "run_id": 45310932802, "head_sha": self.CONSUMER_COMMIT, "name": "Unit & Contract Tests (Ubuntu)", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout repository", "conclusion": "success"}, {"name": "Verify event source commit", "conclusion": "skipped"}, {"name": "Run tests", "conclusion": "success"}]}]}
+        with patch("urllib.request.urlopen", side_effect=self._mock_urlopen(run_payload, jobs_skip_id, good_log)):
+            st2, e2 = verify_consumer_ci_gate(self.REPO, self._build_gate(), self.CONSUMER_COMMIT)
+        self.assertEqual(st2, "FAILED", e2)
+        self.assertTrue(any("CONSUMER_CI_SOURCE_IDENTITY_STEP_NOT_SUCCESS" in x for x in e2), e2)
+
+        # 3. Missing checkout step AND no authoritative source commit in log -> NOT_VERIFIABLE
+        jobs_no_co = {"jobs": [{"id": 138166184154, "run_id": 45310932802, "head_sha": self.CONSUMER_COMMIT, "name": "Unit & Contract Tests (Ubuntu)", "status": "completed", "conclusion": "success", "steps": [{"name": "Run tests", "conclusion": "success"}]}]}
+        with patch("urllib.request.urlopen", side_effect=self._mock_urlopen(run_payload, jobs_no_co, no_git_log)):
+            st3, e3 = verify_consumer_ci_gate(self.REPO, self._build_gate(), self.CONSUMER_COMMIT)
+        self.assertEqual(st3, "NOT_VERIFIABLE", e3)
+        self.assertTrue(any("CONSUMER_CI_SOURCE_IDENTITY_MISSING" in x for x in e3), e3)
+
+        # 4. All execution steps skipped -> FAILED
+        jobs_skip_exec = {"jobs": [{"id": 138166184154, "run_id": 45310932802, "head_sha": self.CONSUMER_COMMIT, "name": "Unit & Contract Tests (Ubuntu)", "status": "completed", "conclusion": "success", "steps": [{"name": "Checkout repository", "conclusion": "success"}, {"name": "Verify event source commit", "conclusion": "success"}, {"name": "Run tests", "conclusion": "skipped"}]}]}
+        with patch("urllib.request.urlopen", side_effect=self._mock_urlopen(run_payload, jobs_skip_exec, good_log)):
+            st4, e4 = verify_consumer_ci_gate(self.REPO, self._build_gate(), self.CONSUMER_COMMIT)
+        self.assertEqual(st4, "FAILED", e4)
+        self.assertTrue(any("CONSUMER_CI_EXECUTION_STEPS_SKIPPED" in x for x in e4), e4)
+
+    def test_t16_checkout_wrong_repository_or_invalid_path_rejected(self) -> None:
+        from tools.standards_sync.core import parse_runner_test_log
+
+        # 1. Checkout points to a different repository
+        wrong_repo_log = "\n".join([
+            "Current runner version: '2.333.1'",
+            "##[group]Run actions/checkout@v4",
+            "with:",
+            "  repository: evil/other-repo",
+            "##[endgroup]",
+            "Syncing repository: evil/other-repo",
+            "[command]/usr/bin/git log -1 --format=%H",
+            self.CONSUMER_COMMIT,
+            "=== 12 passed in 0.5s ===",
+        ])
+        st_r, e_r = parse_runner_test_log(wrong_repo_log, self.CONSUMER_COMMIT, 12, 12, expected_repository=self.REPO)
+        self.assertEqual(st_r, "FAILED", e_r)
+        self.assertTrue(any("CONSUMER_CI_CHECKOUT_REPOSITORY_MISMATCH" in x for x in e_r), e_r)
+
+        # 2. Checkout points to traversal path or unused sub-path
+        traversal_log = "\n".join([
+            "Current runner version: '2.333.1'",
+            "##[group]Run actions/checkout@v4",
+            "with:",
+            "  path: ../escape-dir",
+            "##[endgroup]",
+            "[command]/usr/bin/git log -1 --format=%H",
+            self.CONSUMER_COMMIT,
+            "=== 12 passed in 0.5s ===",
+        ])
+        st_t, e_t = parse_runner_test_log(traversal_log, self.CONSUMER_COMMIT, 12, 12, expected_repository=self.REPO)
+        self.assertEqual(st_t, "FAILED", e_t)
+        self.assertTrue(any("CONSUMER_CI_CHECKOUT_INVALID_PATH" in x for x in e_t), e_t)
+
+        wrong_path_log = "\n".join([
+            "Current runner version: '2.333.1'",
+            "##[group]Run actions/checkout@v4",
+            "with:",
+            f"  repository: {self.REPO}",
+            "  path: unused-checkout-dir",
+            "##[endgroup]",
+            "[command]/usr/bin/git log -1 --format=%H",
+            self.CONSUMER_COMMIT,
+            "=== 12 passed in 0.5s ===",
+        ])
+        st_p, e_p = parse_runner_test_log(wrong_path_log, self.CONSUMER_COMMIT, 12, 12, expected_repository=self.REPO)
+        self.assertEqual(st_p, "FAILED", e_p)
+        self.assertTrue(any("CONSUMER_CI_CHECKOUT_PATH_MISMATCH" in x for x in e_p), e_p)
+
+        # 3. Only .standards auxiliary checkout (no primary repo checkout) cannot pass source identity
+        sub_only_log = "\n".join([
+            "Current runner version: '2.333.1'",
+            "##[group]Run actions/checkout@v4",
+            "with:",
+            "  path: .standards",
+            f"  ref: {self.CONSUMER_COMMIT}",
+            "##[endgroup]",
+            "[command]/usr/bin/git log -1 --format=%H",
+            self.CONSUMER_COMMIT,
+            "=== 12 passed in 0.5s ===",
+        ])
+        st_s, e_s = parse_runner_test_log(sub_only_log, self.CONSUMER_COMMIT, 12, 12, expected_repository=self.REPO)
+        self.assertEqual(st_s, "NOT_VERIFIABLE", e_s)
+        self.assertTrue(any("CONSUMER_CI_SOURCE_IDENTITY_MISSING" in x for x in e_s), e_s)
+
+    def test_t17_expected_sha_or_checkout_ref_without_actual_git_proof_not_verifiable(self) -> None:
+        from tools.standards_sync.core import parse_runner_test_log
+
+        ref_only_log = "\n".join([
+            "Current runner version: '2.333.1'",
+            "##[group]Run actions/checkout@v4",
+            "with:",
+            f"  ref: {self.CONSUMER_COMMIT}",
+            "##[endgroup]",
+            "=== 12 passed in 0.5s ===",
+        ])
+        st1, e1 = parse_runner_test_log(ref_only_log, self.CONSUMER_COMMIT, 12, 12, require_source_identity=True)
+        self.assertEqual(st1, "NOT_VERIFIABLE", e1)
+        self.assertTrue(any("CONSUMER_CI_SOURCE_IDENTITY_MISSING" in x for x in e1), e1)
+
+        env_only_log = "\n".join([
+            "Current runner version: '2.333.1'",
+            '##[group]Run test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"',
+            'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"',
+            "env:",
+            f"  EXPECTED_SHA: {self.CONSUMER_COMMIT}",
+            "##[endgroup]",
+            "=== 12 passed in 0.5s ===",
+        ])
+        st2, e2 = parse_runner_test_log(env_only_log, self.CONSUMER_COMMIT, 12, 12, require_source_identity=True)
+        self.assertEqual(st2, "NOT_VERIFIABLE", e2)
+        self.assertTrue(any("CONSUMER_CI_SOURCE_IDENTITY_MISSING" in x for x in e2), e2)
+
+    def test_t18_scan_and_release_strict_reconciliation_and_mixed_logs(self) -> None:
+        from tools.standards_sync.core import parse_runner_release_log, parse_runner_scan_log
+
+        # 1. Unrelated pytest success CANNOT satisfy a non-test scanner (pip-audit)
+        pytest_log_for_scan = self._build_gha_log(
+            exec_body=(
+                "##[group]Run python -m pytest tests/unit -v\n"
+                "python -m pytest tests/unit -v\n"
+                "##[endgroup]\n"
+                "collected 15 items\n"
+                "=== 15 passed in 0.25s ===\n"
+            )
+        )
+        st_s1, e_s1 = parse_runner_scan_log(
+            pytest_log_for_scan,
+            self.CONSUMER_COMMIT,
+            claimed_targets=15,
+            claimed_vulns=0,
+            expected_command="pip-audit",
+        )
+        self.assertNotEqual(st_s1, "VERIFIED", e_s1)
+
+        # 2. Security test suite counting skipped tests in targets_scanned MUST FAIL
+        sec_skip_log = self._build_gha_log(
+            exec_body=(
+                "##[group]Run python -m pytest tests/security -v\n"
+                "python -m pytest tests/security -v\n"
+                "##[endgroup]\n"
+                "collected 37 items\n"
+                "=== 36 passed, 1 skipped in 0.80s ===\n"
+            )
+        )
+        st_s2, e_s2 = parse_runner_scan_log(
+            sec_skip_log,
+            self.CONSUMER_COMMIT,
+            claimed_targets=37,
+            claimed_vulns=0,
+            expected_command="python -m pytest tests/security -v",
+        )
+        self.assertEqual(st_s2, "FAILED", e_s2)
+        self.assertTrue(any("CONSUMER_CI_GATE_SCAN_COUNT_MISMATCH" in x for x in e_s2), e_s2)
+
+        # 3. Scan zero targets / all skipped / mixed failure
+        all_skip_scan = self._build_gha_log(
+            exec_body=(
+                "##[group]Run python -m pytest tests/security -v\n"
+                "python -m pytest tests/security -v\n"
+                "##[endgroup]\n"
+                "collected 5 items\n"
+                "=== 0 passed, 5 skipped in 0.05s ===\n"
+            )
+        )
+        st_s3, _ = parse_runner_scan_log(all_skip_scan, self.CONSUMER_COMMIT, claimed_targets=5, expected_command="python -m pytest tests/security -v")
+        self.assertEqual(st_s3, "FAILED")
+
+        # 4. Release gate claiming checks_passed=12 when 2 are NOT_APPLICABLE MUST FAIL
+        g01_12_obj = {
+            "overall_status": "PASS",
+            "gates": [{"gate_id": f"G{i:02d}", "status": "PASS"} for i in (1, 2, 3, 4, 6, 7, 8, 9, 10, 11)]
+            + [
+                {"gate_id": "G05", "status": "NOT_APPLICABLE", "detail": {"note": "dev mode"}},
+                {"gate_id": "G12", "status": "NOT_APPLICABLE", "detail": {"note": "dev mode"}},
+            ],
+        }
+        rel_log = self._build_gha_log(
+            exec_body=(
+                "##[group]Run python scripts/ci/verify_delivery_contract.py --mode DEVELOPMENT --run-pytest\n"
+                "python scripts/ci/verify_delivery_contract.py --mode DEVELOPMENT --run-pytest\n"
+                "##[endgroup]\n"
+                + json.dumps(g01_12_obj, indent=2)
+            )
+        )
+        st_r1, e_r1 = parse_runner_release_log(
+            rel_log,
+            self.CONSUMER_COMMIT,
+            claimed_checks_passed=12,
+            claimed_checks_failed=0,
+            expected_command="python scripts/ci/verify_delivery_contract.py --mode DEVELOPMENT --run-pytest",
+        )
+        self.assertEqual(st_r1, "FAILED", e_r1)
+        self.assertTrue(any("CONSUMER_CI_GATE_RELEASE_COUNT_MISMATCH" in x for x in e_r1), e_r1)
+
+        # 5. Unjustified NOT_APPLICABLE or all NOT_APPLICABLE MUST FAIL
+        unjustified_na_log = self._build_gha_log(
+            exec_body=json.dumps({"overall_status": "PASS", "gates": [{"gate_id": "G01", "status": "PASS"}, {"gate_id": "G05", "status": "NOT_APPLICABLE"}]})
+        )
+        st_r2, e_r2 = parse_runner_release_log(unjustified_na_log, self.CONSUMER_COMMIT, claimed_checks_passed=1)
+        self.assertEqual(st_r2, "FAILED", e_r2)
+        self.assertTrue(any("CONSUMER_CI_GATE_RELEASE_UNJUSTIFIED_NA" in x for x in e_r2), e_r2)
+
+        all_na_log = self._build_gha_log(
+            exec_body=json.dumps({"overall_status": "PASS", "gates": [{"gate_id": "G05", "status": "NOT_APPLICABLE", "note": "skipped"}]})
+        )
+        st_r3, e_r3 = parse_runner_release_log(all_na_log, self.CONSUMER_COMMIT, claimed_checks_passed=1)
+        self.assertEqual(st_r3, "FAILED", e_r3)
+        self.assertTrue(any("CONSUMER_CI_GATE_RELEASE_ZERO_CHECKS" in x for x in e_r3), e_r3)
+
+        # 6. Bare OVERALL=PASS or unrelated pytest CANNOT pass release gate
+        st_r4, _ = parse_runner_release_log(self._build_gha_log(exec_body="OVERALL=PASS\n"), self.CONSUMER_COMMIT, claimed_checks_passed=5)
+        self.assertEqual(st_r4, "NOT_VERIFIABLE")
+        st_r5, _ = parse_runner_release_log(self._build_gha_log(exec_body="=== 5 passed in 0.1s ===\n"), self.CONSUMER_COMMIT, claimed_checks_passed=5)
+        self.assertEqual(st_r5, "NOT_VERIFIABLE")
+
+        # 7. Mixed PASS/FAIL summary in log MUST FAIL
+        mixed_log = self._build_gha_log(exec_body="=== 10 passed in 0.5s ===\n=== 2 passed, 1 failed in 0.1s ===\n")
+        st_m, _ = parse_runner_scan_log(mixed_log, self.CONSUMER_COMMIT, claimed_targets=10)
+        self.assertEqual(st_m, "FAILED")
+        st_mr, _ = parse_runner_release_log(mixed_log, self.CONSUMER_COMMIT, claimed_checks_passed=10)
+        self.assertEqual(st_mr, "FAILED")
+
+
+class Std024ConsumerBaselineHardeningTests(unittest.TestCase):
+    """T09, T10, T13: Consumer baseline scope isolation, multi-level Chinese links, and PR #15 compatibility."""
+
+    def _create_consumer_project(self, dst: Path, nested_chinese: bool = False) -> tuple[Path, bytes]:
+        head = _copy_minimal_valid_project(dst)
+        rel_ev_dir = dst / "docs" / "release-evidence"
+        if rel_ev_dir.exists():
+            shutil.rmtree(rel_ev_dir)
+        di_clean_p = dst / "docs" / "DOCUMENT-INDEX.md"
+        if di_clean_p.exists():
+            di_lines = [
+                ln for ln in di_clean_p.read_text(encoding="utf-8").splitlines()
+                if "./release-evidence/" not in ln
+            ]
+            di_clean_p.write_text("\n".join(di_lines) + "\n", encoding="utf-8")
+
+        manifest = yaml.safe_load((dst / "engineering-manifest.yaml").read_text(encoding="utf-8"))
+        manifest["project"]["id"] = "ai-engineering-hub"
+        manifest["project"]["name"] = "AI Engineering Hub"
+        manifest["project"]["repository"] = "xiefeifeihu/AI-Engineering-Hub"
+        manifest["project"]["purpose"] = "Consumer Governance Platform"
+        manifest["standards_validation"] = {
+            "schema_version": "1.0.0",
+            "required_ci_jobs": {
+                "unit_tests": {
+                    "workflow_path": ".github/workflows/ci-governance.yml",
+                    "job_name": "Unit Tests",
+                    "command": "pytest -q",
+                },
+                "integration_tests": {
+                    "workflow_path": ".github/workflows/ci-governance.yml",
+                    "job_name": "Integration Tests",
+                    "command": "pytest tests/integration",
+                },
+                "release_gates": {
+                    "workflow_path": ".github/workflows/ci-governance.yml",
+                    "job_name": "Release Gates",
+                    "command": "python tools/release_gates.py",
+                },
+                "security_scan": {
+                    "workflow_path": ".github/workflows/ci-governance.yml",
+                    "job_name": "Security Scan",
+                    "command": "pytest tests/security",
+                },
+                "business_api": {
+                    "workflow_path": ".github/workflows/ci-governance.yml",
+                    "job_name": "Business API",
+                    "command": "pytest tests/api",
+                },
+                "runtime_acceptance": {
+                    "workflow_path": ".github/workflows/ci-governance.yml",
+                    "job_name": "Runtime Acceptance",
+                    "command": "pytest tests/runtime",
+                },
+            },
+        }
+        (dst / "engineering-manifest.yaml").write_text(
+            yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        wf_dir = dst / ".github" / "workflows"
+        wf_dir.mkdir(parents=True, exist_ok=True)
+        (wf_dir / "ci-governance.yml").write_text("name: Consumer Governance CI\n", encoding="utf-8")
+
+        from tools.validate_approval_contract import compute_canonical_document_sha256
+
+        # Update project_id and source_commit in all copied docs cleanly
+        for md_file in sorted((dst / "docs").rglob("*.md")):
+            txt = re.sub(r'project_id:\s*"[^"]+"', 'project_id: "ai-engineering-hub"', md_file.read_text(encoding="utf-8"))
+            md_file.write_text(txt, encoding="utf-8")
+
+        if nested_chinese:
+            proto_src = dst / "docs" / "PROTOTYPE-UX.md"
+            proto_txt = proto_src.read_text(encoding="utf-8")
+            proto_txt = proto_txt.replace("../standards/14-ui-diagnostics/STD-018-ui-diagnostics-enum-presentation.md", "./PROTOTYPE-UX.md")
+            proto_txt = proto_txt.replace("# Prototype", "# 原型交互设计\n\n## 页面交互\n内容")
+            if "## 页面交互" not in proto_txt:
+                proto_txt += "\n## 页面交互\n页面交互详细说明\n"
+            proto_src.unlink()
+            proto_dst = dst / "docs" / "01-架构设计" / "原型" / "v0.21.1-调用诊断" / "PROTOTYPE-UX.md"
+            proto_dst.parent.mkdir(parents=True, exist_ok=True)
+
+            api_src = dst / "docs" / "API-CONTRACT.md"
+            api_txt = api_src.read_text(encoding="utf-8")
+            api_txt = (
+                api_txt.replace("../schemas/", "../../../schemas/")
+                .replace("../governance/", "../../../governance/")
+                .replace("./Standards消费端接入与工具使用协议.md", "../../Standards消费端接入与工具使用协议.md")
+            )
+            if "## 核心接口" not in api_txt:
+                api_txt += "\n## 核心接口\n核心接口契约说明\n"
+            api_src.unlink()
+            api_dst = dst / "docs" / "02-接口契约" / "核心" / "API-CONTRACT.md"
+            api_dst.parent.mkdir(parents=True, exist_ok=True)
+
+            pb_path = dst / "docs" / "PRODUCT-BASELINE.md"
+            pb_txt = pb_path.read_text(encoding="utf-8")
+            inserted_bullets = (
+                "\n## 产品概述\n产品核心能力说明\n\n"
+                "- 查看 [核心接口规范](02-%E6%8E%A5%E5%8F%A3%E5%A5%91%E7%BA%A6%2F%E6%A0%B8%E5%BF%83%2FAPI-CONTRACT.md#%E6%A0%B8%E5%BF%83%E6%8E%A5%E5%8F%A3)\n"
+                "- 跳转 [产品概述](#产品概述)\n"
+                "- 查看 [调用诊断原型](docs/01-架构设计/原型/v0.21.1-调用诊断/PROTOTYPE-UX.md#页面交互) 以及 `[忽略示例](./missing.md)`\n"
+            )
+            if "## 1. 当前正式交付能力清单" in pb_txt:
+                pb_txt = pb_txt.replace("## 1. 当前正式交付能力清单", f"{inserted_bullets}\n## 1. 当前正式交付能力清单", 1)
+            else:
+                pb_txt += inserted_bullets
+
+            dec_src = dst / "docs" / "DECISION-RECORD.md"
+            dec_txt = dec_src.read_text(encoding="utf-8")
+            dec_txt = dec_txt.replace("./migration/", "../../migration/")
+            dec_src.unlink()
+            dec_dst = dst / "docs" / "03-决策记录" / "ADR" / "DECISION-RECORD.md"
+            dec_dst.parent.mkdir(parents=True, exist_ok=True)
+
+            # Move to subdirectory relative to docs and fix doc index links
+            doc_index = dst / "docs" / "DOCUMENT-INDEX.md"
+            di_txt = doc_index.read_text(encoding="utf-8")
+            di_txt = (
+                di_txt.replace("./PROTOTYPE-UX.md", "./01-架构设计/原型/v0.21.1-调用诊断/PROTOTYPE-UX.md")
+                .replace("docs/PROTOTYPE-UX.md", "docs/01-架构设计/原型/v0.21.1-调用诊断/PROTOTYPE-UX.md")
+                .replace("./API-CONTRACT.md", "./02-接口契约/核心/API-CONTRACT.md")
+                .replace("docs/API-CONTRACT.md", "docs/02-接口契约/核心/API-CONTRACT.md")
+                .replace("./DECISION-RECORD.md", "./03-决策记录/ADR/DECISION-RECORD.md")
+                .replace("docs/DECISION-RECORD.md", "docs/03-决策记录/ADR/DECISION-RECORD.md")
+            )
+
+            handoff_p = dst / "docs" / "CROSS-SESSION-HANDOFF.md"
+            h_txt = handoff_p.read_text(encoding="utf-8")
+            h_txt = (
+                h_txt.replace("docs/PROTOTYPE-UX.md", "docs/01-架构设计/原型/v0.21.1-调用诊断/PROTOTYPE-UX.md")
+                .replace("docs/API-CONTRACT.md", "docs/02-接口契约/核心/API-CONTRACT.md")
+                .replace("docs/DECISION-RECORD.md", "docs/03-决策记录/ADR/DECISION-RECORD.md")
+            )
+
+            updates = [
+                (proto_dst, proto_txt),
+                (api_dst, api_txt),
+                (pb_path, pb_txt),
+                (dec_dst, dec_txt),
+                (doc_index, di_txt),
+                (handoff_p, h_txt),
+            ]
+            for target_p, raw_t in updates:
+                new_sha = compute_canonical_document_sha256(raw_t)
+                fixed_t = re.sub(r'content_sha256:\s*"[^"]+"', f'content_sha256: "{new_sha}"', raw_t)
+                target_p.write_text(fixed_t, encoding="utf-8")
+
+        subprocess.run(["git", "-C", str(dst), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(dst), "commit", "-m", "consumer fixture"], capture_output=True, check=True)
+        head = subprocess.run(["git", "-C", str(dst), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        for md_file in sorted((dst / "docs").rglob("*.md")):
+            raw_t = md_file.read_text(encoding="utf-8")
+            raw_t = re.sub(r'source_commit:\s*"[0-9a-f]{40}"', f'source_commit: "{head}"', raw_t)
+            new_sha = compute_canonical_document_sha256(raw_t)
+            raw_t = re.sub(r'content_sha256:\s*"[^"]+"', f'content_sha256: "{new_sha}"', raw_t)
+            md_file.write_text(raw_t, encoding="utf-8")
+        subprocess.run(["git", "-C", str(dst), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(dst), "commit", "-m", "sync source_commit"], capture_output=True, check=True)
+        dec_path = next((dst / "docs").rglob("DECISION-RECORD.md"))
+        return dec_path, dec_path.read_bytes()
+
+    def test_t09_consumer_scope_isolates_standards_internal_state_and_preserves_adrs(self) -> None:
+        from tools.generate_engineering_baseline import build_engineering_baseline
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            dec_path, orig_dec_bytes = self._create_consumer_project(dst, nested_chinese=False)
+            for scope_arg in (None, "consumer"):
+                with self.subTest(scope=scope_arg):
+                    ok, errs, payload, md = build_engineering_baseline(
+                        project_root=dst,
+                        standards_root=ROOT,
+                        observed_at="2026-11-24T06:00:00Z",
+                        scope=scope_arg,
+                    )
+                    self.assertTrue(ok, errs)
+                    assert payload is not None and md is not None
+                    ci_det = payload["recent_ci_facts"]["details"]
+                    self.assertEqual(payload["recent_ci_facts"]["source_path"], ".github/workflows/ci-governance.yml")
+                    self.assertEqual(payload["recent_ci_facts"]["verification_status"], "NOT_VERIFIABLE")
+                    self.assertEqual(ci_det["last_verified_ci_commit"], "NOT_VERIFIABLE")
+                    self.assertEqual(ci_det["workflow"], "ci-governance.yml")
+                    self.assertEqual(ci_det["historical_ci_runs"], [])
+                    self.assertNotIn("candidate_pr", ci_det)
+                    self.assertEqual(payload["open_issues"], [])
+                    self.assertEqual(payload["pending_approvals"], [])
+                    self.assertEqual(payload["architecture_boundaries"]["read_only_boundaries"], [])
+
+                    for forbidden in (
+                        "standards-ci.yml",
+                        "PR #8",
+                        "PR #9",
+                        "PR #10",
+                        "AIHUB-FIRST-CONSUMER-PILOT-001",
+                        "PR-REVIEW-STANDARDS-V3-001",
+                        "vtip-platform-catalog",
+                        "vtip-ai-sidecar",
+                        "PR9_HISTORICAL_RELEASE_EVIDENCE",
+                        "STD018_CURRENT_SNAPSHOT",
+                        "STD019_FINAL_RELEASE",
+                        "CURRENT_CANDIDATE_PR",
+                    ):
+                        self.assertNotIn(forbidden, md, f"Leaked '{forbidden}' into consumer baseline")
+                    self.assertEqual(dec_path.read_bytes(), orig_dec_bytes)
+
+    def test_t10_chinese_multilevel_encoded_and_anchored_relative_links_resolve(self) -> None:
+        from tools.generate_engineering_baseline import build_engineering_baseline
+        from tools.standards_sync.core import run_collection_validation
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp)
+            self._create_consumer_project(dst, nested_chinese=True)
+
+            # 1) Default output docs/当前权威基线.md
+            default_out = dst / "docs" / "当前权威基线.md"
+            ok, errs, payload, md = build_engineering_baseline(
+                project_root=dst,
+                standards_root=ROOT,
+                observed_at="2026-11-24T06:00:00Z",
+                scope="consumer",
+                output_path=default_out,
+            )
+            self.assertTrue(ok, errs)
+            assert md is not None
+            default_out.write_text(md, encoding="utf-8")
+
+            self.assertIn("(./01-架构设计/原型/v0.21.1-调用诊断/PROTOTYPE-UX.md)", md)
+            self.assertIn("(./02-接口契约/核心/API-CONTRACT.md)", md)
+            self.assertIn("(./02-接口契约/核心/API-CONTRACT.md#核心接口)", md)
+            self.assertIn("(./03-决策记录/ADR/DECISION-RECORD.md)", md)
+            self.assertIn("(./PRODUCT-BASELINE.md#产品概述)", md)
+            self.assertIn("(./01-架构设计/原型/v0.21.1-调用诊断/PROTOTYPE-UX.md#页面交互)", md)
+            self.assertIn("`[忽略示例](./missing.md)`", md)
+            self.assertNotIn("(./PROTOTYPE-UX.md)", md)
+            self.assertNotIn("docs/docs/", md)
+            self.assertNotIn("%E6%", md)
+
+            # Every non-code markdown link must resolve to an existing file on disk
+            cleaned = re.sub(r"`[^`]*`", "", md)
+            for match in re.finditer(r"\[[^\]]*\]\(([^)]+)\)", cleaned):
+                target = match.group(1).partition("#")[0]
+                if target:
+                    self.assertTrue((default_out.parent / target).is_file(), f"Broken link: {target}")
+
+            # Ensure source doc itself uses unencoded UTF-8 link when running collection validator on full tree
+            from tools.validate_approval_contract import compute_canonical_document_sha256
+            pb_p = dst / "docs" / "PRODUCT-BASELINE.md"
+            pb_plain = pb_p.read_text(encoding="utf-8").replace(
+                "02-%E6%8E%A5%E5%8F%A3%E5%A5%91%E7%BA%A6%2F%E6%A0%B8%E5%BF%83%2FAPI-CONTRACT.md#%E6%A0%B8%E5%BF%83%E6%8E%A5%E5%8F%A3",
+                "02-接口契约/核心/API-CONTRACT.md#核心接口",
+            )
+            pb_plain = re.sub(
+                r'content_sha256:\s*"[^"]+"',
+                f'content_sha256: "{compute_canonical_document_sha256(pb_plain)}"',
+                pb_plain,
+            )
+            pb_p.write_text(pb_plain, encoding="utf-8")
+
+            col_ok, col_errs = run_collection_validation(
+                project_root=dst,
+                schema_path=ROOT / "schemas" / "documentation-metadata.schema.json",
+                standards_root=ROOT,
+                check_templates=False,
+                verify_source_paths=False,
+            )
+            self.assertTrue(col_ok, f"Collection validation failed on nested Chinese links: {col_errs}")
+
+            # 2) Deeply nested --output docs/子目录/多级视图/基线视图.md via CLI
+            nested_rel = Path("docs") / "子目录" / "多级视图" / "基线视图.md"
+            cp = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "tools" / "generate_engineering_baseline.py"),
+                    "--project-root", str(dst),
+                    "--standards-root", str(ROOT),
+                    "--scope", "consumer",
+                    "--observed-at", "2026-11-24T06:00:00Z",
+                    "--output", str(nested_rel),
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+            self.assertEqual(cp.returncode, 0, f"{cp.stdout}\n{cp.stderr}")
+            nested_out = dst / nested_rel
+            nested_md = nested_out.read_text(encoding="utf-8")
+            self.assertIn("(../../01-架构设计/原型/v0.21.1-调用诊断/PROTOTYPE-UX.md)", nested_md)
+            self.assertIn("(../../02-接口契约/核心/API-CONTRACT.md#核心接口)", nested_md)
+            self.assertIn("(../../PRODUCT-BASELINE.md#产品概述)", nested_md)
+            self.assertNotIn("docs/docs/", nested_md)
+            nested_clean = re.sub(r"`[^`]*`", "", nested_md)
+            for match in re.finditer(r"\[[^\]]*\]\(([^)]+)\)", nested_clean):
+                target = match.group(1).partition("#")[0]
+                if target:
+                    self.assertTrue((nested_out.parent / target).is_file(), f"Broken nested link: {target}")
+
+    def test_t13_standards_release_scope_preserves_pr15_evidence_behavior(self) -> None:
+        from tools.generate_engineering_baseline import build_engineering_baseline, extract_scope_content
+
+        ok, errs, payload, md = build_engineering_baseline(
+            project_root=ROOT,
+            standards_root=ROOT,
+            observed_at="2026-11-24T06:00:00Z",
+            scope="standards-release",
+            final_evidence_path="docs/release-evidence/std019-final-release.json",
+        )
+        self.assertTrue(ok, errs)
+        assert payload is not None and md is not None
+        eb_schema = json.loads((ROOT / "schemas" / "engineering-baseline.schema.json").read_text(encoding="utf-8"))
+        import jsonschema
+        jsonschema.validate(instance=payload, schema=eb_schema)
+        for scope_name in ("PR9_HISTORICAL_RELEASE_EVIDENCE", "STD018_CURRENT_SNAPSHOT", "STD019_FINAL_RELEASE", "CURRENT_CANDIDATE_PR"):
+            _, s_errs = extract_scope_content(md, scope_name)
+            self.assertEqual(s_errs, [], f"{scope_name}: {s_errs}")
+
+
+class Std024PackagerOverwriteProtectionTests(unittest.TestCase):
+    """T11-T12: Historical Acceptance ZIP default overwrite guard & authorized overwrite audit tests."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name) / "repo"
+        self.repo.mkdir(parents=True, exist_ok=True)
+        (self.repo / "VERSION").write_text("3.0.1\n", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _seed_acceptance(self, task_id: str = "HIST-TASK", version: str = "v3.0.1", content: str = "REPORT-V1") -> tuple[Path, Path, Path, Path]:
+        acc_dir = self.repo / ".artifacts" / "acceptance" / task_id / version
+        acc_dir.mkdir(parents=True, exist_ok=True)
+        rpt = acc_dir / "acceptance_report.md"
+        rpt.write_text(f"# Acceptance\n{content}\n", encoding="utf-8")
+        data = rpt.read_bytes()
+        manifest = {
+            "task_id": task_id,
+            "version": version,
+            "run_id": f"run-{content}",
+            "created_at": "2026-11-24T06:00:00Z",
+            "status": "PASS",
+            "files": [{"path": "acceptance_report.md", "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}],
+        }
+        manifest_path = acc_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        pkg_dir = self.repo / ".artifacts" / "packages"
+        zip_path = pkg_dir / f"Acceptance-{task_id}-{version}.zip"
+        sha_path = pkg_dir / f"Acceptance-{task_id}-{version}.zip.sha256"
+        return acc_dir, manifest_path, zip_path, sha_path
+
+    def test_t11_existing_zip_sidecar_checksum_and_concurrent_race_blocked_by_default(self) -> None:
+        from scripts.package_acceptance import package_acceptance
+
+        _, manifest_path, zip_path, sha_path = self._seed_acceptance("HIST-TASK", "v3.0.1", "V1")
+        res1 = package_acceptance("HIST-TASK", version="3.0.1", run_id="run-1", repo_root=self.repo)
+        self.assertEqual(res1["status"], "PASS")
+        self.assertFalse(res1["overwritten"])
+
+        orig_zip = zip_path.read_bytes()
+        orig_sha = sha_path.read_bytes()
+        orig_man = manifest_path.read_bytes()
+
+        # Re-seed modified V2 report and try default overwrite -> MUST fail without mutating anything
+        self._seed_acceptance("HIST-TASK", "v3.0.1", "V2")
+        mod_man = manifest_path.read_bytes()
+        with self.assertRaises(FileExistsError) as ctx:
+            package_acceptance("HIST-TASK", version="3.0.1", run_id="run-2", repo_root=self.repo)
+        self.assertIn("ACCEPTANCE_PACKAGE_OVERWRITE_FORBIDDEN", str(ctx.exception))
+        self.assertEqual(zip_path.read_bytes(), orig_zip)
+        self.assertEqual(sha_path.read_bytes(), orig_sha)
+        self.assertEqual(manifest_path.read_bytes(), mod_man)
+        pkg_dir = self.repo / ".artifacts" / "packages"
+        self.assertEqual(list(pkg_dir.glob(".tmp_*")), [])
+        self.assertEqual(list(pkg_dir.glob(".bak_*")), [])
+        self.assertEqual(list(pkg_dir.glob(".tx_journal_*")), [])
+        self.assertNotEqual(orig_man, b"")
+
+        # Also block when ONLY .sha256 sidecar exists
+        zip_path.unlink()
+        with self.assertRaises(FileExistsError):
+            package_acceptance("HIST-TASK", version="3.0.1", run_id="run-2", repo_root=self.repo)
+        self.assertEqual(sha_path.read_bytes(), orig_sha)
+        self.assertFalse(zip_path.exists())
+
+        # Also block when ONLY CHECKSUMS.txt references the package filename
+        sha_path.unlink()
+        chk_path = pkg_dir / "CHECKSUMS.txt"
+        chk_path.write_text(f"{'a'*64}  Acceptance-HIST-TASK-v3.0.1.zip\n", encoding="utf-8")
+        orig_chk = chk_path.read_bytes()
+        with self.assertRaises(FileExistsError):
+            package_acceptance("HIST-TASK", version="3.0.1", run_id="run-2", repo_root=self.repo)
+        self.assertEqual(chk_path.read_bytes(), orig_chk)
+
+        # CLI invocation without --allow-overwrite on existing ZIP returns non-zero structured BLOCKED JSON
+        chk_path.unlink()
+        self._seed_acceptance("CLI-HIST", "v3.0.1", "V1")
+        package_acceptance("CLI-HIST", version="3.0.1", run_id="run-1", repo_root=self.repo)
+        cli_zip = pkg_dir / "Acceptance-CLI-HIST-v3.0.1.zip"
+        cli_orig = cli_zip.read_bytes()
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        cp = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "package_acceptance.py"),
+                "--task-id", "CLI-HIST",
+                "--version", "3.0.1",
+                "--run-id", "run-2",
+                "--repo-root", str(self.repo),
+            ],
+            cwd=str(ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(cp.returncode, 0, f"stdout={cp.stdout}\nstderr={cp.stderr}")
+        self.assertIn("ACCEPTANCE_PACKAGE_OVERWRITE_FORBIDDEN", cp.stdout, f"stdout={cp.stdout}\nstderr={cp.stderr}")
+        self.assertEqual(cli_zip.read_bytes(), cli_orig)
+
+        # Concurrent race under allow_overwrite=False: 2 processes race -> 1 passes, 1 blocked
+        self._seed_acceptance("RACE-TASK", "v3.0.1", "R1")
+        worker_code = f"""
+from pathlib import Path
+from scripts.package_acceptance import package_acceptance
+package_acceptance('RACE-TASK', version='3.0.1', run_id='race-run', repo_root=Path({repr(str(self.repo))}), lock_timeout=15.0)
+"""
+        p1 = subprocess.Popen([sys.executable, "-c", worker_code], cwd=str(ROOT), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        p2 = subprocess.Popen([sys.executable, "-c", worker_code], cwd=str(ROOT), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        _, e1 = p1.communicate(timeout=20)
+        _, e2 = p2.communicate(timeout=20)
+        rcs = sorted([p1.returncode, p2.returncode])
+        self.assertEqual(rcs[0], 0, f"One racer must succeed: {e1} / {e2}")
+        self.assertNotEqual(rcs[1], 0, "Second racer must be blocked without --allow-overwrite")
+        self.assertIn("ACCEPTANCE_PACKAGE_OVERWRITE_FORBIDDEN", e1 + e2)
+
+    def test_t12_authorized_overwrite_audits_hashes_and_incomplete_evidence_still_blocks(self) -> None:
+        from scripts.package_acceptance import package_acceptance
+
+        acc_dir, manifest_path, zip_path, sha_path = self._seed_acceptance("AUTH-TASK", "v3.0.1", "V1")
+        res1 = package_acceptance("AUTH-TASK", version="3.0.1", run_id="run-1", repo_root=self.repo)
+        v1_zip_bytes = zip_path.read_bytes()
+        v1_sha_bytes = sha_path.read_bytes()
+        v1_zip_sha = res1["zip_sha256"]
+
+        # Incomplete evidence MUST still fail even when allow_overwrite=True and never damage historical V1 ZIP
+        self._seed_acceptance("AUTH-TASK", "v3.0.1", "BAD-V2")
+        bad_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        bad_manifest["files"][0]["sha256"] = "0" * 64
+        manifest_path.write_text(json.dumps(bad_manifest, indent=2), encoding="utf-8")
+        bad_man_bytes = manifest_path.read_bytes()
+        with self.assertRaises(ValueError):
+            package_acceptance(
+                "AUTH-TASK",
+                version="3.0.1",
+                run_id="run-bad",
+                repo_root=self.repo,
+                allow_overwrite=True,
+                overwrite_reason="SHOULD_ROLL_BACK",
+            )
+        self.assertEqual(zip_path.read_bytes(), v1_zip_bytes)
+        self.assertEqual(sha_path.read_bytes(), v1_sha_bytes)
+        self.assertEqual(manifest_path.read_bytes(), bad_man_bytes)
+        self.assertFalse((self.repo / ".artifacts" / "packages" / "overwrite_audit.jsonl").exists())
+
+        # Valid authorized overwrite with explicit reason records previous & new SHA-256 without self-reference in manifest
+        self._seed_acceptance("AUTH-TASK", "v3.0.1", "V2")
+        res2 = package_acceptance(
+            "AUTH-TASK",
+            version="3.0.1",
+            run_id="run-2",
+            repo_root=self.repo,
+            allow_overwrite=True,
+            overwrite_reason="TASK-AUTH-STD-024-RESEAL",
+        )
+        self.assertEqual(res2["status"], "PASS")
+        self.assertTrue(res2["overwritten"])
+        audit = res2["overwrite_audit"]
+        self.assertEqual(audit["reason"], "TASK-AUTH-STD-024-RESEAL")
+        self.assertEqual(audit["previous_zip_sha256"], v1_zip_sha)
+        self.assertEqual(audit["new_zip_sha256"], res2["zip_sha256"])
+        self.assertNotEqual(audit["previous_zip_sha256"], audit["new_zip_sha256"])
+        audit_lines = (self.repo / ".artifacts" / "packages" / "overwrite_audit.jsonl").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(audit_lines), 1)
+        self.assertEqual(json.loads(audit_lines[0])["new_zip_sha256"], res2["zip_sha256"])
+        final_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertNotIn("zip_sha256", final_manifest)
+
+    def test_t19_authorized_overwrite_requires_real_non_default_reason(self) -> None:
+        from scripts.package_acceptance import package_acceptance
+
+        _, manifest_path, zip_path, sha_path = self._seed_acceptance("REASON-TASK", "v3.0.2", "V1")
+        package_acceptance("REASON-TASK", version="3.0.2", run_id="run-1", repo_root=self.repo)
+        orig_zip = zip_path.read_bytes()
+        orig_sha = sha_path.read_bytes()
+
+        self._seed_acceptance("REASON-TASK", "v3.0.2", "V2")
+        mod_man = manifest_path.read_bytes()
+        for bad_reason in (None, "", "   ", "EXPLICIT_ALLOW_OVERWRITE_FLAG", "--allow-overwrite", "short"):
+            with self.subTest(bad_reason=bad_reason):
+                with self.assertRaises(ValueError) as ctx:
+                    package_acceptance(
+                        "REASON-TASK",
+                        version="3.0.2",
+                        run_id="run-2",
+                        repo_root=self.repo,
+                        allow_overwrite=True,
+                        overwrite_reason=bad_reason,
+                    )
+                self.assertIn("ACCEPTANCE_PACKAGE_OVERWRITE_REASON_REQUIRED", str(ctx.exception))
+                self.assertEqual(zip_path.read_bytes(), orig_zip)
+                self.assertEqual(sha_path.read_bytes(), orig_sha)
+                self.assertEqual(manifest_path.read_bytes(), mod_man)
+
+        # CLI --allow-overwrite without --overwrite-reason must fail with non-zero JSON BLOCKED
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        cp = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "package_acceptance.py"),
+                "--task-id", "REASON-TASK",
+                "--version", "3.0.2",
+                "--run-id", "run-2",
+                "--repo-root", str(self.repo),
+                "--allow-overwrite",
+            ],
+            cwd=str(ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(cp.returncode, 0, cp.stdout)
+        self.assertIn("ACCEPTANCE_PACKAGE_OVERWRITE_REASON_REQUIRED", cp.stdout)
+        self.assertEqual(zip_path.read_bytes(), orig_zip)
+
+    def test_t20_audit_write_failure_and_replace_failure_preserve_historical_evidence(self) -> None:
+        from scripts.package_acceptance import package_acceptance, recover_incomplete_package_transactions
+
+        _, manifest_path, zip_path, sha_path = self._seed_acceptance("AUDIT-TX", "v3.0.2", "V1")
+        package_acceptance("AUDIT-TX", version="3.0.2", run_id="run-1", repo_root=self.repo)
+        pkg_dir = self.repo / ".artifacts" / "packages"
+
+        # Perform one authorized overwrite first so overwrite_audit.jsonl already exists with V1->V2 record
+        self._seed_acceptance("AUDIT-TX", "v3.0.2", "V2")
+        package_acceptance(
+            "AUDIT-TX",
+            version="3.0.2",
+            run_id="run-2",
+            repo_root=self.repo,
+            allow_overwrite=True,
+            overwrite_reason="AUTHORIZED-RESEAL-BASELINE-V2",
+        )
+        v2_man = manifest_path.read_bytes()
+        v2_zip = zip_path.read_bytes()
+        v2_sha = sha_path.read_bytes()
+        v2_audit = (pkg_dir / "overwrite_audit.jsonl").read_bytes()
+
+        # 1) Audit staging write failure -> zero damage to V2 ZIP/sidecar/manifest/audit, zero stray files
+        self._seed_acceptance("AUDIT-TX", "v3.0.2", "V3")
+        v3_man_staged = manifest_path.read_bytes()
+
+        def fail_audit_write(p: Path, data: bytes) -> None:
+            raise OSError("Injected audit disk write failure")
+
+        with self.assertRaises(OSError):
+            package_acceptance(
+                "AUDIT-TX",
+                version="3.0.2",
+                run_id="run-3",
+                repo_root=self.repo,
+                allow_overwrite=True,
+                overwrite_reason="AUTHORIZED-RESEAL-FAIL-AUDIT-STAGE",
+                audit_write_fn=fail_audit_write,
+            )
+        self.assertEqual(manifest_path.read_bytes(), v3_man_staged)
+        self.assertEqual(zip_path.read_bytes(), v2_zip)
+        self.assertEqual(sha_path.read_bytes(), v2_sha)
+        self.assertEqual((pkg_dir / "overwrite_audit.jsonl").read_bytes(), v2_audit)
+        self.assertEqual(list(pkg_dir.glob(".*")), [])
+
+        # 2) Audit atomic replace failure AFTER manifest/ZIP/sidecar already replaced -> full rollback restores all 4!
+        manifest_path.write_bytes(v2_man)
+        self._seed_acceptance("AUDIT-TX", "v3.0.2", "V3-REPLACE-FAIL")
+        v3_man_before_tx = manifest_path.read_bytes()
+
+        def fail_audit_replace(src: Path, dst: Path) -> None:
+            if dst.name == "overwrite_audit.jsonl" and ".tmp_audit_" in src.name:
+                raise PermissionError("Injected audit replace failure")
+            os.replace(src, dst)
+
+        with self.assertRaises(PermissionError):
+            package_acceptance(
+                "AUDIT-TX",
+                version="3.0.2",
+                run_id="run-3b",
+                repo_root=self.repo,
+                replace_fn=fail_audit_replace,
+                allow_overwrite=True,
+                overwrite_reason="AUTHORIZED-RESEAL-FAIL-AUDIT-REPLACE",
+            )
+        self.assertEqual(manifest_path.read_bytes(), v3_man_before_tx)
+        self.assertEqual(zip_path.read_bytes(), v2_zip)
+        self.assertEqual(sha_path.read_bytes(), v2_sha)
+        self.assertEqual((pkg_dir / "overwrite_audit.jsonl").read_bytes(), v2_audit)
+        self.assertEqual(list(pkg_dir.glob(".*")), [])
+
+        # 3) Crash recovery in COMMITTED_CLEANUP_PENDING verifies both original & new identities in audit
+        manifest_path.write_bytes(v2_man)
+        self._seed_acceptance("AUDIT-TX", "v3.0.2", "V4")
+        v4_res = package_acceptance(
+            "AUDIT-TX",
+            version="3.0.2",
+            run_id="run-4",
+            repo_root=self.repo,
+            allow_overwrite=True,
+            overwrite_reason="AUTHORIZED-RESEAL-V4-IDENTITY",
+        )
+        v4_audit_rec = v4_res["overwrite_audit"]
+        j_path = pkg_dir / ".tx_journal_AUDIT-TX_v3.0.2.json"
+        committed_journal = {
+            "tx_id": v4_audit_rec["tx_id"],
+            "task_id": "AUDIT-TX",
+            "version": "v3.0.2",
+            "run_id": "run-4",
+            "state": "COMMITTED_CLEANUP_PENDING",
+            "overwrite_authorized": True,
+            "overwrite_reason": v4_audit_rec["reason"],
+            "orig_existed": {"manifest": True, "zip": True, "sha": True, "audit": True},
+            "orig_sha256": {
+                "manifest": v4_audit_rec["previous_manifest_sha256"],
+                "zip": v4_audit_rec["previous_zip_sha256"],
+                "sha": v4_audit_rec["previous_sha256_sidecar_sha256"],
+                "audit": v4_audit_rec["previous_audit_sha256"],
+            },
+            "staged_sha256": {
+                "manifest": v4_audit_rec["new_manifest_sha256"],
+                "zip": v4_audit_rec["new_zip_sha256"],
+                "sha": v4_audit_rec["new_sha256_sidecar_sha256"],
+                "audit": hashlib.sha256((pkg_dir / "overwrite_audit.jsonl").read_bytes()).hexdigest(),
+            },
+            "targets": {
+                "manifest": ".artifacts/acceptance/AUDIT-TX/v3.0.2/manifest.json",
+                "zip": ".artifacts/packages/Acceptance-AUDIT-TX-v3.0.2.zip",
+                "sha": ".artifacts/packages/Acceptance-AUDIT-TX-v3.0.2.zip.sha256",
+                "audit": ".artifacts/packages/overwrite_audit.jsonl",
+            },
+            "backups": {
+                "manifest": f".artifacts/packages/.bak_manifest_AUDIT-TX_v3.0.2_{v4_audit_rec['tx_id']}.json",
+                "zip": f".artifacts/packages/.bak_Acceptance-AUDIT-TX-v3.0.2.zip_{v4_audit_rec['tx_id']}.zip",
+                "sha": f".artifacts/packages/.bak_Acceptance-AUDIT-TX-v3.0.2.zip_{v4_audit_rec['tx_id']}.sha256",
+                "audit": f".artifacts/packages/.bak_audit_AUDIT-TX_v3.0.2_{v4_audit_rec['tx_id']}.jsonl",
+            },
+        }
+        # Tampered previous_zip_sha256 in journal vs audit must BLOCK recovery
+        bad_j = dict(committed_journal, orig_sha256=dict(committed_journal["orig_sha256"], zip="0" * 64))
+        j_path.write_text(json.dumps(bad_j, indent=2), encoding="utf-8")
+        blk_rec = recover_incomplete_package_transactions(self.repo, task_id="AUDIT-TX", version="3.0.2")
+        self.assertEqual(blk_rec["status"], "BLOCKED", blk_rec)
+        self.assertIn("COMMITTED_AUDIT_IDENTITY_MISMATCH", blk_rec["reason"])
+
+        # Valid identities pass recovery and clean up journal cleanly
+        j_path.write_text(json.dumps(committed_journal, indent=2), encoding="utf-8")
+        ok_rec = recover_incomplete_package_transactions(self.repo, task_id="AUDIT-TX", version="3.0.2")
+        self.assertEqual(ok_rec["status"], "RECOVERED", ok_rec)
+        self.assertFalse(j_path.exists())
 
 
 if __name__ == "__main__":

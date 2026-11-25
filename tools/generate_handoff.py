@@ -912,24 +912,25 @@ def build_handoff_payload(
         elif anc_st == "NOT_VERIFIABLE" and not allow_offline:
             errors.extend(anc_errs)
 
+    # Collect known historical merge commits from prior versions so they can NEVER pollute the current candidate PR
     historical_merge_commits: set[str] = set()
-    if not is_current_version_released:
-        if evidence_data:
-            for hk in ("main_head", "peeled_commit"):
-                hv = str(evidence_data.get(hk) or "").strip()
-                if re.fullmatch(r"[0-9a-f]{40}", hv):
-                    historical_merge_commits.add(hv)
-        for hist_name in ("v3.0.0-reissue.json", "std018-current-snapshot.json", "std019-final-release.json"):
-            hp = project_root / "docs" / "release-evidence" / hist_name
-            if hp.is_file():
-                try:
-                    hdata = json.loads(hp.read_text(encoding="utf-8"))
+    if evidence_data and str(evidence_data.get("version", "")).lstrip("v") != resolved_version:
+        for hk in ("main_head", "peeled_commit"):
+            hv = str(evidence_data.get(hk) or "").strip()
+            if re.fullmatch(r"[0-9a-f]{40}", hv):
+                historical_merge_commits.add(hv)
+    for hist_name in ("v3.0.0-reissue.json", "std018-current-snapshot.json", "std019-final-release.json", "v3.0.1.json"):
+        hp = project_root / "docs" / "release-evidence" / hist_name
+        if hp.is_file():
+            try:
+                hdata = json.loads(hp.read_text(encoding="utf-8"))
+                if str(hdata.get("version", "")).lstrip("v") != resolved_version:
                     for hk in ("main_head", "peeled_commit"):
                         hv = str(hdata.get(hk) or "").strip()
                         if re.fullmatch(r"[0-9a-f]{40}", hv):
                             historical_merge_commits.add(hv)
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
     verified_merge_commit: Optional[str] = None
     verified_merged_by: Optional[str] = None
@@ -1219,6 +1220,8 @@ def build_handoff_payload(
     pr_label = f"PR #{eff_cand_pr_number}" if eff_cand_pr_number is not None else "当前候选 PR"
     if pending_verifications is not None:
         pending_text = pending_verifications
+    elif is_current_version_released:
+        pending_text = f"正式版本 v{resolved_version} 已发布并完成核验。"
     elif ci_run.get("verification_status") == "PASS":
         pending_text = f"{pr_label} CI 已通过，等待独立复核与 Owner 批准合入 main 后由 main CI 自动签发 v{resolved_version} Tag。"
     else:
@@ -1348,9 +1351,12 @@ def build_handoff_payload(
             _hok, _, _hev = load_release_evidence(project_root, _hp_019)
             if _hok:
                 _h_019_ev = _hev
-        _hok, _, _hev = load_release_evidence(project_root, resolve_release_evidence_path(project_root))
-        if _hok:
-            _h_act_ev = _hev
+        if final_evidence_path or release_evidence is not None:
+            _h_act_ev = evidence_data
+        else:
+            _hok, _, _hev = load_release_evidence(project_root, resolve_release_evidence_path(project_root))
+            if _hok:
+                _h_act_ev = _hev
 
     if project_id == "ai-engineering-standards" and _h_pr9_ev and _h_snap_ev and _h_019_ev:
         md_lines.extend([
@@ -1420,7 +1426,9 @@ def build_handoff_payload(
             f"- **旧 Tag 删除状态**：`OLD_TAG_DELETED={str(_h_019_ev.get('old_tag_deleted', True)).lower()}`",
             "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
         ])
+        emitted_std020 = False
         if _h_act_ev and str(_h_act_ev.get("version", "")).lstrip("v") != str(_h_019_ev.get("version", "")).lstrip("v"):
+            emitted_std020 = True
             md_lines.extend([
                 "",
                 "### 4.5 Std-020 最终发布证据与发布后收口 (STD020_FINAL_RELEASE)",
@@ -1442,11 +1450,17 @@ def build_handoff_payload(
                 f"- **发布流程状态 (`release_flow_status`)**：`{_h_act_ev.get('release_flow_status')}`",
                 "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
             ])
-        else:
+        if not is_current_version_released:
+            cand_heading_num = "4.6" if emitted_std020 else "4.5"
+            latest_rel_tag = (
+                _h_act_ev["release_tag"]
+                if (_h_act_ev and _h_act_ev.get("release_flow_status") == "RELEASED" and _h_act_ev.get("release_tag"))
+                else _h_019_ev["release_tag"]
+            )
             cand_pr_num_disp = str(eff_cand_pr_number) if eff_cand_pr_number is not None else "NOT_ASSIGNED"
             sec45_lines = [
                 "",
-                "### 4.5 当前发布候选状态与实时 PR 身份 (CURRENT_CANDIDATE_PR)",
+                f"### {cand_heading_num} 当前发布候选状态与实时 PR 身份 (CURRENT_CANDIDATE_PR)",
                 f"- **任务编号 (`task_id`)**：`{task_id}`",
                 f"- **候选版本 (`candidate_version`)**：`{resolved_version}`",
                 f"- **当前候选 PR 编号 (`candidate_pr_number`)**：`{cand_pr_num_disp}`",
@@ -1458,17 +1472,14 @@ def build_handoff_payload(
                 "- **实时 PR HEAD 核验方式 (`live_pr_head_verification`)**：`GITHUB_PR_API_REQUIRED`（实时 PR HEAD 与 PR 状态通过 GitHub PR API / Actions Event 在线核验，不自引用静态写入）",
                 "- **实时 CI 运行记录方式 (`ci_runtime_record`)**：`GITHUB_STEP_SUMMARY`（实时 PR HEAD 与 CI Run ID 由 CI Runtime 与 Step Summary 记录）",
                 f"- **状态快照观测时间 (`candidate_observed_at`)**：`{now_iso}`",
-                f"- **当前最新已发布正式 Tag (`LATEST_RELEASED_TAG`)**：`{_h_019_ev['release_tag']}`",
+                f"- **当前最新已发布正式 Tag (`LATEST_RELEASED_TAG`)**：`{latest_rel_tag}`",
             ]
             if effective_pr_status == "MERGED" and verified_merge_commit and verified_merged_by:
                 sec45_lines.extend([
                     f"- **当前候选 PR Merge Commit (`candidate_pr_merge_commit`)**：`{verified_merge_commit}`",
                     f"- **当前候选 PR 合并者 (`candidate_pr_merged_by`)**：`{verified_merged_by}`",
                 ])
-                if is_current_version_released:
-                    rel_desc = f"{pr_label} 已由 `{verified_merged_by}` 合入 main（Merge Commit: `{verified_merge_commit}`），正式 Tag `v{resolved_version}` 已签发"
-                else:
-                    rel_desc = f"{pr_label} 已由 `{verified_merged_by}` 合入 main（Merge Commit: `{verified_merge_commit}`），尚未创建正式 `v{resolved_version}` Tag，待 main CI 全绿后由官方工作流自动签发"
+                rel_desc = f"{pr_label} 已由 `{verified_merged_by}` 合入 main（Merge Commit: `{verified_merge_commit}`），尚未创建正式 `v{resolved_version}` Tag，待 main CI 全绿后由官方工作流自动签发"
             else:
                 rel_desc = f"待 {pr_label} 经独立审查与 Owner 批准合入 main 后由 main CI 自动签发 v{resolved_version} Tag"
             sec45_lines.append(
