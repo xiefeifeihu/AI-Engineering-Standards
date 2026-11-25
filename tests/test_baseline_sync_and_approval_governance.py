@@ -7054,9 +7054,12 @@ class HistoricalPrHeadEvolutionGovernanceTests(unittest.TestCase):
             blob_sha = hashlib.sha256(blob_bytes).hexdigest().lower()
             self.assertEqual(blob_sha, exp_sha, f"Historical evidence '{fname}' Git blob was modified!")
 
-            if fname == "std018-current-snapshot.json":
-                raw_sha = hashlib.sha256(raw_bytes).hexdigest().lower()
-                self.assertEqual(raw_sha, exp_sha, "std018-current-snapshot.json raw bytes were modified!")
+            porcelain = subprocess.check_output(
+                ["git", "-C", str(ROOT), "status", "--porcelain", "--", f"docs/release-evidence/{fname}"],
+                text=True,
+                encoding="utf-8",
+            ).strip()
+            self.assertEqual(porcelain, "", f"Historical evidence '{fname}' has uncommitted modifications: {porcelain}")
 
     def test_t10_four_official_release_evidence_files_still_pass(self) -> None:
         ev_dir = ROOT / "docs" / "release-evidence"
