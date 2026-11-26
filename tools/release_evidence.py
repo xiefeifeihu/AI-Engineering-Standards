@@ -1486,6 +1486,14 @@ def _extract_repo_from_pr_payload(pr_data: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+COMPARE_ANCESTRY_PASS_STATUSES: Tuple[str, ...] = ("identical", "ahead")
+COMPARE_ANCESTRY_FAIL_STATUSES: Tuple[str, ...] = ("behind", "diverged")
+COMPARE_ANCESTRY_SUPPORTED_STATUSES: Tuple[str, ...] = (
+    *COMPARE_ANCESTRY_PASS_STATUSES,
+    *COMPARE_ANCESTRY_FAIL_STATUSES,
+)
+
+
 def _query_compare_via_api_or_gh(
     repo: str,
     base_sha: str,
@@ -1494,6 +1502,7 @@ def _query_compare_via_api_or_gh(
 ) -> Tuple[bool, Optional[str], str]:
     """Query GitHub Compare API to check commit ancestry when remote head commit is not fetched locally."""
     tok = _get_github_token()
+    api_err = ""
     if tok:
         url = f"https://api.github.com/repos/{repo}/compare/{base_sha}...{head_sha}"
         headers = {
@@ -1506,12 +1515,23 @@ def _query_compare_via_api_or_gh(
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-            return True, str(data.get("status") or "").strip(), ""
+            if not isinstance(data, dict):
+                return False, None, "compare API response JSON is not an object"
+            raw_status = data.get("status")
+            if raw_status is None or not isinstance(raw_status, str) or not raw_status.strip():
+                return False, None, "compare API response missing or empty 'status'"
+            norm_status = raw_status.strip()
+            if norm_status not in COMPARE_ANCESTRY_SUPPORTED_STATUSES:
+                return False, None, f"compare API returned unsupported status '{norm_status}'"
+            return True, norm_status, ""
         except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return True, "diverged", "compare 404 (unrelated history)"
-        except Exception:
-            pass
+            api_err = _sanitize_error_message(f"HTTP {e.code}: {e.reason}", tok)
+        except Exception as e:
+            api_err = _sanitize_error_message(str(e), tok)
+    else:
+        api_err = "no GitHub token available"
+
+    gh_err = ""
     try:
         res = subprocess.run(
             ["gh", "api", f"repos/{repo}/compare/{base_sha}...{head_sha}", "--jq", ".status"],
@@ -1521,11 +1541,44 @@ def _query_compare_via_api_or_gh(
             errors="replace",
             timeout=timeout,
         )
-        if res.returncode == 0 and (res.stdout or "").strip():
-            return True, res.stdout.strip(), ""
+        if res.returncode == 0:
+            gh_status = (res.stdout or "").strip()
+            if gh_status in COMPARE_ANCESTRY_SUPPORTED_STATUSES:
+                return True, gh_status, ""
+            gh_err = f"gh compare returned missing or unsupported status '{gh_status}'"
+        else:
+            gh_err = _sanitize_error_message((res.stderr or res.stdout or "gh compare api failed").strip(), tok)
     except Exception as exc:
-        return False, None, _sanitize_error_message(str(exc), tok)
-    return False, None, "compare API unavailable"
+        gh_err = _sanitize_error_message(str(exc), tok)
+
+    combined_err = f"{api_err}; gh fallback: {gh_err}" if (api_err and gh_err) else (api_err or gh_err)
+    return False, None, combined_err or "compare API unavailable"
+
+
+def _classify_remote_compare_ancestry(
+    repository: str,
+    anc: str,
+    desc: str,
+    not_verifiable_code: str,
+    not_verifiable_context: str,
+) -> Tuple[str, List[str]]:
+    """Classify GitHub Compare API result strictly into PASS / FAIL / NOT_VERIFIABLE."""
+    cmp_ok, cmp_status, cmp_err = _query_compare_via_api_or_gh(repository, anc, desc)
+    if cmp_ok and isinstance(cmp_status, str):
+        norm_status = cmp_status.strip()
+        if norm_status in COMPARE_ANCESTRY_PASS_STATUSES:
+            return "PASS", []
+        if norm_status in COMPARE_ANCESTRY_FAIL_STATUSES:
+            return "FAIL", [
+                f"CANDIDATE_COMMIT_NOT_ANCESTOR_OF_PR_HEAD: remote compare '{anc}...{desc}' returned status='{norm_status}'"
+            ]
+        return "NOT_VERIFIABLE", [
+            f"{not_verifiable_code}: {not_verifiable_context} and remote compare returned unsupported status='{norm_status}'"
+        ]
+    clean_err = cmp_err or "compare API unavailable"
+    return "NOT_VERIFIABLE", [
+        f"{not_verifiable_code}: {not_verifiable_context} and compare API failed ({clean_err})"
+    ]
 
 
 def verify_commit_ancestry(
@@ -1550,16 +1603,13 @@ def verify_commit_ancestry(
 
     if not (project_root / ".git").exists():
         if allow_remote_compare and repository:
-            cmp_ok, cmp_status, cmp_err = _query_compare_via_api_or_gh(repository, anc, desc)
-            if cmp_ok and cmp_status is not None:
-                if cmp_status in ("identical", "ahead"):
-                    return "PASS", []
-                return "FAIL", [
-                    f"CANDIDATE_COMMIT_NOT_ANCESTOR_OF_PR_HEAD: remote compare '{anc}...{desc}' returned status='{cmp_status}'"
-                ]
-            return "NOT_VERIFIABLE", [
-                f"GIT_REPO_NOT_FOUND_AND_COMPARE_FAILED: '{project_root}' has no .git directory and compare API failed ({cmp_err})"
-            ]
+            return _classify_remote_compare_ancestry(
+                repository,
+                anc,
+                desc,
+                "GIT_REPO_NOT_FOUND_AND_COMPARE_FAILED",
+                f"'{project_root}' has no .git directory",
+            )
         return "NOT_VERIFIABLE", [f"GIT_REPO_NOT_FOUND: '{project_root}' has no .git directory to verify commit ancestry"]
 
     try:
@@ -1576,16 +1626,13 @@ def verify_commit_ancestry(
 
     if rc_anc_obj.returncode != 0:
         if allow_remote_compare and repository:
-            cmp_ok, cmp_status, cmp_err = _query_compare_via_api_or_gh(repository, anc, desc)
-            if cmp_ok and cmp_status is not None:
-                if cmp_status in ("identical", "ahead"):
-                    return "PASS", []
-                return "FAIL", [
-                    f"CANDIDATE_COMMIT_NOT_ANCESTOR_OF_PR_HEAD: remote compare '{anc}...{desc}' returned status='{cmp_status}'"
-                ]
-            return "NOT_VERIFIABLE", [
-                f"ANCESTOR_COMMIT_NOT_LOCAL_AND_COMPARE_FAILED: ancestor commit '{anc}' is not in local git objects and compare API failed ({cmp_err})"
-            ]
+            return _classify_remote_compare_ancestry(
+                repository,
+                anc,
+                desc,
+                "ANCESTOR_COMMIT_NOT_LOCAL_AND_COMPARE_FAILED",
+                f"ancestor commit '{anc}' is not in local git objects",
+            )
         return "FAIL", [f"CANDIDATE_COMMIT_NOT_FOUND: candidate_commit '{anc}' does not exist in Git repository"]
 
     try:
@@ -1602,16 +1649,13 @@ def verify_commit_ancestry(
 
     if rc_desc_obj.returncode != 0:
         if allow_remote_compare and repository:
-            cmp_ok, cmp_status, cmp_err = _query_compare_via_api_or_gh(repository, anc, desc)
-            if cmp_ok and cmp_status is not None:
-                if cmp_status in ("identical", "ahead"):
-                    return "PASS", []
-                return "FAIL", [
-                    f"CANDIDATE_COMMIT_NOT_ANCESTOR_OF_PR_HEAD: remote compare '{anc}...{desc}' returned status='{cmp_status}'"
-                ]
-            return "NOT_VERIFIABLE", [
-                f"PR_HEAD_COMMIT_NOT_LOCAL_AND_COMPARE_FAILED: PR head '{desc}' is not in local git objects and compare API failed ({cmp_err})"
-            ]
+            return _classify_remote_compare_ancestry(
+                repository,
+                anc,
+                desc,
+                "PR_HEAD_COMMIT_NOT_LOCAL_AND_COMPARE_FAILED",
+                f"PR head '{desc}' is not in local git objects",
+            )
         return "NOT_VERIFIABLE", [
             f"PR_HEAD_COMMIT_NOT_IN_LOCAL_GIT: actual PR head '{desc}' does not exist in local Git repository"
         ]
