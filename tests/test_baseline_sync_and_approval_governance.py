@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 from typing import Optional
 from unittest.mock import patch
 import jsonschema
@@ -46,6 +47,7 @@ from tools.generate_handoff import (
 )
 from tools.release_evidence import (
     _find_latest_official_fallback,
+    _query_compare_via_api_or_gh,
     _verify_local_git_tag_consistency,
     is_verified_released_evidence,
     load_release_evidence,
@@ -2326,8 +2328,12 @@ class TestBaselineSyncAndApprovalGovernance(unittest.TestCase):
         )
         self.assertIn(res["status"], ("PASS", "NOT_VERIFIABLE"))
         self.assertIn(res["remote_latest_status"], ("PASS", "NOT_VERIFIABLE"))
-        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0", "v3.0.1"))
-        if res["tag"] == "v3.0.1":
+        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0", "v3.0.1", "v3.0.2"))
+        if res["tag"] == "v3.0.2":
+            self.assertEqual(res["version"], "3.0.2")
+            self.assertEqual(res["peeled_commit"], "0c1b48a1a6ac2f205ca77b2c34665704f44044f6")
+            self.assertEqual(res["tag_object_sha"], "56578f1b790ea4356cb671cdf1e3348cbd85f9ca")
+        elif res["tag"] == "v3.0.1":
             self.assertEqual(res["version"], "3.0.1")
             self.assertEqual(res["peeled_commit"], "4facfdcd17a3003f04e7deaa3dbdcb320ff82afa")
             self.assertEqual(res["tag_object_sha"], "a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4")
@@ -3667,8 +3673,12 @@ COMMIT_HASH=4538b8ba29cb9413782c4197e73bddab64849d82
             ci_status_override="PASS",
         )
         self.assertIn(res["status"], ("PASS", "NOT_VERIFIABLE"))
-        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0", "v3.0.1"))
-        if res["tag"] == "v3.0.1":
+        self.assertIn(res["tag"], ("v2.11.0", "v3.0.0", "v3.0.1", "v3.0.2"))
+        if res["tag"] == "v3.0.2":
+            self.assertEqual(res["version"], "3.0.2")
+            self.assertEqual(res["peeled_commit"], "0c1b48a1a6ac2f205ca77b2c34665704f44044f6")
+            self.assertEqual(res["tag_object_sha"], "56578f1b790ea4356cb671cdf1e3348cbd85f9ca")
+        elif res["tag"] == "v3.0.1":
             self.assertEqual(res["version"], "3.0.1")
             self.assertEqual(res["peeled_commit"], "4facfdcd17a3003f04e7deaa3dbdcb320ff82afa")
             self.assertEqual(res["tag_object_sha"], "a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4")
@@ -6301,7 +6311,7 @@ class V301PostReleaseEvidenceCloseoutTests(unittest.TestCase):
     def test_v301_release_evidence_resolution_schema_and_tamper_rejection(self) -> None:
         ev_path = ROOT / "docs" / "release-evidence" / "v3.0.1.json"
         self.assertTrue(ev_path.is_file(), f"Missing v3.0.1 evidence: {ev_path}")
-        self.assertEqual(resolve_release_evidence_path(ROOT).resolve(), ev_path.resolve())
+        self.assertEqual(resolve_release_evidence_path(ROOT, version="3.0.1").resolve(), ev_path.resolve())
 
         ok_rel, errs_rel, data = is_verified_released_evidence(ROOT, ev_path, expected_version="3.0.1")
         self.assertTrue(ok_rel, f"v3.0.1.json verification failed: {errs_rel}")
@@ -6396,20 +6406,22 @@ class V301PostReleaseEvidenceCloseoutTests(unittest.TestCase):
 
     def test_v302_candidate_handoff_preserves_v301_released_and_emits_candidate_pr(self) -> None:
         cand_sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
-        ok_h, errs_h, _, md_h = build_handoff_payload(
-            project_root=ROOT,
-            task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
-            version="3.0.2",
-            status="IN_PROGRESS",
-            captured_at="2026-11-25T02:00:00Z",
-            source_commit_override=PROJECT_SOURCE_COMMIT,
-            candidate_commit_override=cand_sha,
-            candidate_pr_number=16,
-            candidate_pr_status="DRAFT",
-            candidate_pr_draft=True,
-            candidate_pr_base="main",
-            standards_root=ROOT,
-        )
+        v301_ev_path = ROOT / "docs" / "release-evidence" / "v3.0.1.json"
+        with patch("tools.generate_handoff.resolve_release_evidence_path", return_value=v301_ev_path):
+            ok_h, errs_h, _, md_h = build_handoff_payload(
+                project_root=ROOT,
+                task_id="Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+                version="3.0.2",
+                status="IN_PROGRESS",
+                captured_at="2026-11-25T02:00:00Z",
+                source_commit_override=PROJECT_SOURCE_COMMIT,
+                candidate_commit_override=cand_sha,
+                candidate_pr_number=16,
+                candidate_pr_status="DRAFT",
+                candidate_pr_draft=True,
+                candidate_pr_base="main",
+                standards_root=ROOT,
+            )
         self.assertTrue(ok_h, f"v3.0.2 candidate handoff failed: {errs_h}")
         assert md_h is not None
         std020_sec, std020_errs = extract_scope_content(md_h, "STD020_FINAL_RELEASE")
@@ -6419,6 +6431,1117 @@ class V301PostReleaseEvidenceCloseoutTests(unittest.TestCase):
         self.assertEqual(cand_errs, [], cand_errs)
         self.assertIn("`3.0.2`", cand_sec)
         self.assertIn("`v3.0.1`", cand_sec)
+
+
+class V302PostReleaseEvidenceCloseoutTests(unittest.TestCase):
+    """Std-026: Verify official v3.0.2 release evidence, tampering rejection, and RELEASED baseline/handoff rendering."""
+
+    def test_v302_release_evidence_resolution_schema_and_tamper_rejection(self) -> None:
+        ev_path = ROOT / "docs" / "release-evidence" / "v3.0.2.json"
+        self.assertTrue(ev_path.is_file(), f"Missing v3.0.2 evidence: {ev_path}")
+        self.assertEqual(resolve_release_evidence_path(ROOT).resolve(), ev_path.resolve())
+
+        ok_rel, errs_rel, data = is_verified_released_evidence(ROOT, ev_path, expected_version="3.0.2")
+        self.assertTrue(ok_rel, f"v3.0.2.json verification failed: {errs_rel}")
+        assert data is not None
+        self.assertEqual(data["release_flow_status"], "RELEASED")
+        self.assertEqual(data["pr_number"], 16)
+        self.assertEqual(str(data["main_ci_run_id"]), "45559795518")
+        self.assertEqual(data["tag_object_sha"], "56578f1b790ea4356cb671cdf1e3348cbd85f9ca")
+        self.assertEqual(data["peeled_commit"], "0c1b48a1a6ac2f205ca77b2c34665704f44044f6")
+        self.assertEqual(str(data["tag_publish_job"]), "139026054533")
+
+        schema = json.loads((SCHEMAS_DIR / "release-evidence.schema.json").read_text(encoding="utf-8"))
+        jsonschema.validate(instance=data, schema=schema)
+
+        for field, bad_val, expected_err in (
+            ("tag_object_sha", "f" * 40, "RELEASE_EVIDENCE_LOCAL_TAG_OBJECT_MISMATCH"),
+            ("peeled_commit", "e" * 40, "RELEASE_EVIDENCE_PEELED_MISMATCH"),
+            ("release_flow_status", "CANDIDATE", "RELEASE_EVIDENCE_NOT_RELEASED"),
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                bad_path = Path(tmp) / "v3.0.2.json"
+                bad_obj = dict(data)
+                bad_obj[field] = bad_val
+                bad_path.write_text(json.dumps(bad_obj), encoding="utf-8")
+                ok_bad, errs_bad, _ = is_verified_released_evidence(ROOT, bad_path, expected_version="3.0.2")
+                self.assertFalse(ok_bad, f"Tampered {field} should be rejected")
+                self.assertTrue(any(expected_err in e for e in errs_bad), f"Expected {expected_err}, got: {errs_bad}")
+
+    def test_v302_released_baseline_and_handoff_render_and_preserve_history(self) -> None:
+        pr16_merge = "0c1b48a1a6ac2f205ca77b2c34665704f44044f6"
+        pr16_cand = "ba39c93b4818e54b95b27e2c6565e36b3d676f0e"
+        merged_pr16_api = {
+            "number": 16,
+            "state": "closed",
+            "draft": False,
+            "merged": True,
+            "merged_by": {"login": "xiefeifeihu"},
+            "merge_commit_sha": pr16_merge,
+            "base": {"ref": "main", "repo": {"full_name": "xiefeifeihu/AI-Engineering-Standards"}},
+            "head": {"ref": "fix/std-024-consumer-ci-provenance-hardening", "sha": pr16_cand},
+        }
+        with patch("tools.generate_engineering_baseline.query_remote_main_head", return_value=pr16_merge), \
+             patch("tools.generate_handoff.query_remote_main_head", return_value=pr16_merge):
+            ok_b, errs_b, payload_b, md_b = build_engineering_baseline(
+                project_root=ROOT,
+                standards_root=ROOT,
+                observed_at="2026-11-25T08:06:40Z",
+                source_commit_override=PROJECT_SOURCE_COMMIT,
+                candidate_commit_override=pr16_cand,
+                candidate_pr_number=16,
+                candidate_pr_status="MERGED",
+                candidate_pr_base="main",
+                candidate_pr_merge_event=merged_pr16_api,
+                version_override="3.0.2",
+            )
+            self.assertTrue(ok_b, f"Released v3.0.2 baseline failed: {errs_b}")
+            assert payload_b is not None and md_b is not None
+            self.assertEqual(payload_b["recent_ci_facts"]["details"]["candidate_pr"]["release_status"], "RELEASED")
+
+            ok_h, errs_h, _, md_h = build_handoff_payload(
+                project_root=ROOT,
+                task_id="Std-026-v3-0-2-post-release-closeout",
+                version="3.0.2",
+                status="COMPLETED",
+                captured_at="2026-11-25T08:06:40Z",
+                source_commit_override=PROJECT_SOURCE_COMMIT,
+                candidate_commit_override=pr16_cand,
+                candidate_pr_number=16,
+                candidate_pr_status="MERGED",
+                candidate_pr_base="main",
+                candidate_pr_merge_event=merged_pr16_api,
+                standards_root=ROOT,
+            )
+            self.assertTrue(ok_h, f"Released v3.0.2 handoff failed: {errs_h}")
+            assert md_h is not None
+
+        self.assertNotIn("CURRENT_CANDIDATE_PR", md_h)
+        for label, doc_text in (("baseline", md_b), ("handoff", md_h)):
+            for scope_name in (
+                "PR9_HISTORICAL_RELEASE_EVIDENCE",
+                "STD018_CURRENT_SNAPSHOT",
+                "STD019_FINAL_RELEASE",
+                "V301_HISTORICAL_RELEASE",
+                "STD020_FINAL_RELEASE",
+            ):
+                sec_txt, sec_errs = extract_scope_content(doc_text, scope_name)
+                self.assertEqual(sec_errs, [], f"{label} missing scope {scope_name}: {sec_errs}")
+                if scope_name == "V301_HISTORICAL_RELEASE":
+                    self.assertIn("`v3.0.1`", sec_txt)
+                    self.assertIn("`a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4`", sec_txt)
+                    self.assertIn("`4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`", sec_txt)
+                if scope_name == "STD020_FINAL_RELEASE":
+                    self.assertIn("`v3.0.2`", sec_txt)
+                    self.assertIn("`RELEASED`", sec_txt)
+                    self.assertIn("`45559795518`", sec_txt)
+                    self.assertIn("`56578f1b790ea4356cb671cdf1e3348cbd85f9ca`", sec_txt)
+                    self.assertIn(f"`{pr16_merge}`", sec_txt)
+                    self.assertIn("`139026054533`", sec_txt)
+
+
+class HistoricalPrHeadEvolutionGovernanceTests(unittest.TestCase):
+    """Std-026 Review Remediation: Historical PR HEAD evolution ancestry & fail-closed regression suite (T01-T17)."""
+
+    CANONICAL_REPO = "xiefeifeihu/AI-Engineering-Standards"
+    WORKFLOW_PATH = ".github/workflows/standards-ci.yml"
+    FEATURE_BRANCH = "fix/std-016-merged-pr-run-evidence"
+    PUSH_RUN_ID = "42983601133"
+    PR_RUN_ID = "42983609802"
+    PR_NUMBER = 10
+
+    @staticmethod
+    def _git(repo_dir: Path, *args: str) -> str:
+        res = subprocess.run(
+            ["git", "-C", str(repo_dir), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        return res.stdout.strip()
+
+    def _create_temp_git_repo_with_history(self, base_tmp: Path) -> dict[str, Any]:
+        """Create a real temporary Git repository with branching/ancestry commit topology."""
+        repo_dir = base_tmp / "repo"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", str(repo_dir)], capture_output=True, check=True)
+        self._git(repo_dir, "config", "user.email", "test@standards.local")
+        self._git(repo_dir, "config", "user.name", "Standards Test")
+        self._git(repo_dir, "checkout", "-B", "main")
+
+        (repo_dir / "README.md").write_text("base\n", encoding="utf-8")
+        self._git(repo_dir, "add", "README.md")
+        self._git(repo_dir, "commit", "-m", "c1 base on main")
+        c1 = self._git(repo_dir, "rev-parse", "HEAD")
+
+        # Feature branch: c2 (historical run head) -> c3 -> c4 (current PR head, 2 commits ahead)
+        self._git(repo_dir, "checkout", "-b", self.FEATURE_BRANCH)
+        (repo_dir / "feature.txt").write_text("step 1\n", encoding="utf-8")
+        self._git(repo_dir, "add", "feature.txt")
+        self._git(repo_dir, "commit", "-m", "c2 historical run commit")
+        c2 = self._git(repo_dir, "rev-parse", "HEAD")
+
+        (repo_dir / "feature.txt").write_text("step 2\n", encoding="utf-8")
+        self._git(repo_dir, "add", "feature.txt")
+        self._git(repo_dir, "commit", "-m", "c3 intermediate commit")
+        c3 = self._git(repo_dir, "rev-parse", "HEAD")
+
+        (repo_dir / "feature.txt").write_text("step 3\n", encoding="utf-8")
+        self._git(repo_dir, "add", "feature.txt")
+        self._git(repo_dir, "commit", "-m", "c4 advanced PR head")
+        c4 = self._git(repo_dir, "rev-parse", "HEAD")
+
+        # Diverged branch from c1 (c2 is NOT an ancestor of c_unrelated)
+        self._git(repo_dir, "checkout", "-b", "feat/diverged", c1)
+        (repo_dir / "diverged.txt").write_text("unrelated\n", encoding="utf-8")
+        self._git(repo_dir, "add", "diverged.txt")
+        self._git(repo_dir, "commit", "-m", "c_unrelated diverged from c1")
+        c_unrelated = self._git(repo_dir, "rev-parse", "HEAD")
+
+        # Merge feature branch back into main to produce a real merge commit
+        self._git(repo_dir, "checkout", "main")
+        self._git(repo_dir, "merge", "--no-ff", self.FEATURE_BRANCH, "-m", "merge PR #10")
+        merge_commit = self._git(repo_dir, "rev-parse", "HEAD")
+
+        return {
+            "repo_dir": repo_dir,
+            "c1": c1,
+            "c2": c2,
+            "c3": c3,
+            "c4": c4,
+            "c_unrelated": c_unrelated,
+            "merge_commit": merge_commit,
+        }
+
+    def _make_push_run(self, head_sha: str, head_branch: str | None = None) -> dict[str, Any]:
+        br = head_branch or self.FEATURE_BRANCH
+        return {
+            "id": int(self.PUSH_RUN_ID),
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": head_sha,
+            "headSha": head_sha,
+            "event": "push",
+            "status": "completed",
+            "conclusion": "success",
+            "path": self.WORKFLOW_PATH,
+            "head_branch": br,
+            "headBranch": br,
+            "repository": {"full_name": self.CANONICAL_REPO},
+            "jobs": [
+                {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+            ],
+        }
+
+    def _make_pr_run(self, head_sha: str, head_branch: str | None = None, run_id: str | None = None) -> dict[str, Any]:
+        br = head_branch or self.FEATURE_BRANCH
+        rid = int(run_id or self.PR_RUN_ID)
+        return {
+            "id": rid,
+            "name": "Standards Schema Validation & Governance CI (STD-034)",
+            "head_sha": head_sha,
+            "headSha": head_sha,
+            "event": "pull_request",
+            "status": "completed",
+            "conclusion": "success",
+            "path": self.WORKFLOW_PATH,
+            "head_branch": br,
+            "headBranch": br,
+            "pull_requests": [],
+            "repository": {"full_name": self.CANONICAL_REPO},
+            "jobs": [
+                {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+            ],
+        }
+
+    def _make_pr_api(
+        self,
+        *,
+        pr_head_sha: str,
+        pr_head_ref: str | None = None,
+        base_ref: str = "main",
+        number: int = 10,
+        merged: bool = True,
+        merged_at: str | None = "2026-11-11T09:33:50Z",
+        merge_commit_sha: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "number": number,
+            "state": "closed" if merged else "open",
+            "draft": False,
+            "merged": merged,
+            "merged_at": merged_at,
+            "merged_by": {"login": "xiefeifeihu"} if merged else None,
+            "base": {"ref": base_ref, "repo": {"full_name": self.CANONICAL_REPO}},
+            "head": {"ref": pr_head_ref or self.FEATURE_BRANCH, "sha": pr_head_sha},
+        }
+        if merge_commit_sha:
+            payload["merge_commit_sha"] = merge_commit_sha
+        return payload
+
+    def _make_snapshot_evidence(self, ci_commit: str, *, candidate_commit: str | None = None, pr_status: str = "DRAFT") -> dict[str, Any]:
+        return {
+            "repository": self.CANONICAL_REPO,
+            "version": "3.0.0",
+            "task_id": "Std-018-V3-0-0-REISSUE-CURRENT-BASELINE-HANDOFF-ALIGNMENT",
+            "candidate_commit": candidate_commit or ci_commit,
+            "snapshot_commit": ci_commit,
+            "last_verified_ci_commit": ci_commit,
+            "push_run_id": self.PUSH_RUN_ID,
+            "push_head_branch": self.FEATURE_BRANCH,
+            "pr_run_id": self.PR_RUN_ID,
+            "ci_status": "PASS",
+            "test_count": 221,
+            "test_failed": 0,
+            "test_skipped": 0,
+            "windows_status": "PASS",
+            "ubuntu_status": "PASS",
+            "pr_number": self.PR_NUMBER,
+            "pr_status": pr_status,
+            "main_head": "3cd42b69049b148bceea1324d4f8212393cb96df",
+            "release_flow_status": "IN_PROGRESS",
+        }
+
+    def test_t01_historical_run_head_equals_current_pr_head_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            topo = self._create_temp_git_repo_with_history(Path(tmp))
+            st, errs, meta = verify_single_github_run(
+                repo=self.CANONICAL_REPO,
+                run_id=self.PR_RUN_ID,
+                expected_event="pull_request",
+                expected_head_sha=topo["c2"],
+                expected_head_branch=self.FEATURE_BRANCH,
+                expected_pr_number=self.PR_NUMBER,
+                expected_base_ref="main",
+                expected_pr_status="DRAFT",
+                simulate_data=self._make_pr_run(topo["c2"]),
+                simulate_pr_data=self._make_pr_api(pr_head_sha=topo["c2"]),
+                project_root=topo["repo_dir"],
+            )
+            self.assertEqual(st, "PASS", errs)
+            self.assertEqual(errs, [])
+            self.assertFalse(meta.get("historical_pr_head_advanced"))
+            self.assertEqual(meta.get("historical_pr_ancestry_status"), "EXACT_MATCH")
+
+    def test_t02_historical_run_head_is_ancestor_of_merged_pr_head_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            topo = self._create_temp_git_repo_with_history(Path(tmp))
+            ev = self._make_snapshot_evidence(topo["c2"], pr_status="DRAFT")
+            st, errs, details = verify_github_ci_runs(
+                ev,
+                project_root=topo["repo_dir"],
+                simulate_data_map={
+                    self.PUSH_RUN_ID: self._make_push_run(topo["c2"]),
+                    self.PR_RUN_ID: self._make_pr_run(topo["c2"]),
+                },
+                simulate_pr_data_map={
+                    str(self.PR_NUMBER): self._make_pr_api(pr_head_sha=topo["c4"], merged=True),
+                },
+            )
+            self.assertEqual(st, "PASS", errs)
+            self.assertEqual(errs, [])
+            self.assertTrue(details.get("pr_fallback_verified"))
+            self.assertTrue(details.get("historical_pr_head_advanced"))
+            self.assertEqual(details.get("historical_pr_ancestry_status"), "PASS")
+            self.assertTrue(details["pr_run"].get("historical_pr_head_advanced"))
+            self.assertEqual(details["pr_run"].get("actual_head_sha"), topo["c2"])
+            self.assertEqual(details["pr_run"].get("actual_pr_head_sha"), topo["c4"])
+
+            # Also passes for OPEN historical snapshot when ancestry holds
+            st_open, errs_open, meta_open = verify_single_github_run(
+                repo=self.CANONICAL_REPO,
+                run_id=self.PR_RUN_ID,
+                expected_event="pull_request",
+                expected_head_sha=topo["c2"],
+                expected_head_branch=self.FEATURE_BRANCH,
+                expected_pr_number=self.PR_NUMBER,
+                expected_base_ref="main",
+                expected_pr_status="OPEN",
+                simulate_data=self._make_pr_run(topo["c2"]),
+                simulate_pr_data=self._make_pr_api(pr_head_sha=topo["c4"], merged=False, merged_at=None),
+                project_root=topo["repo_dir"],
+            )
+            self.assertEqual(st_open, "PASS", errs_open)
+            self.assertTrue(meta_open.get("historical_pr_head_advanced"))
+
+    def test_t03_historical_run_head_not_ancestor_of_pr_head_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            topo = self._create_temp_git_repo_with_history(Path(tmp))
+            # Diverged branch commit: c2 is NOT an ancestor of c_unrelated
+            st_div, errs_div, meta_div = verify_single_github_run(
+                repo=self.CANONICAL_REPO,
+                run_id=self.PR_RUN_ID,
+                expected_event="pull_request",
+                expected_head_sha=topo["c2"],
+                expected_head_branch=self.FEATURE_BRANCH,
+                expected_pr_number=self.PR_NUMBER,
+                expected_base_ref="main",
+                expected_pr_status="DRAFT",
+                simulate_data=self._make_pr_run(topo["c2"]),
+                simulate_pr_data=self._make_pr_api(pr_head_sha=topo["c_unrelated"], merged=True),
+                project_root=topo["repo_dir"],
+            )
+            self.assertEqual(st_div, "FAIL")
+            self.assertEqual(meta_div.get("historical_pr_ancestry_status"), "FAIL")
+            self.assertFalse(meta_div.get("historical_pr_head_advanced"))
+            self.assertTrue(any("not an ancestor" in e.lower() for e in errs_div), errs_div)
+
+            # Reversed/rolled-back PR head: c4 is NOT an ancestor of c2
+            st_rev, errs_rev, _ = verify_single_github_run(
+                repo=self.CANONICAL_REPO,
+                run_id=self.PR_RUN_ID,
+                expected_event="pull_request",
+                expected_head_sha=topo["c4"],
+                expected_head_branch=self.FEATURE_BRANCH,
+                expected_pr_number=self.PR_NUMBER,
+                expected_base_ref="main",
+                expected_pr_status="DRAFT",
+                simulate_data=self._make_pr_run(topo["c4"]),
+                simulate_pr_data=self._make_pr_api(pr_head_sha=topo["c2"], merged=True),
+                project_root=topo["repo_dir"],
+            )
+            self.assertEqual(st_rev, "FAIL")
+            self.assertTrue(any("not an ancestor" in e.lower() for e in errs_rev), errs_rev)
+
+    def test_t04_historical_run_head_sha_mismatch_with_candidate_commit_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            topo = self._create_temp_git_repo_with_history(Path(tmp))
+            # Case A: Run head_sha (c3) != evidence last_verified_ci_commit / candidate_commit (c2)
+            ev = self._make_snapshot_evidence(topo["c2"], pr_status="DRAFT")
+            st_a, errs_a, _ = verify_github_ci_runs(
+                ev,
+                project_root=topo["repo_dir"],
+                simulate_data_map={
+                    self.PUSH_RUN_ID: self._make_push_run(topo["c2"]),
+                    self.PR_RUN_ID: self._make_pr_run(topo["c3"]),
+                },
+                simulate_pr_data_map={
+                    str(self.PR_NUMBER): self._make_pr_api(pr_head_sha=topo["c4"], merged=True),
+                },
+            )
+            self.assertEqual(st_a, "FAIL")
+            self.assertTrue(any("head_sha mismatch" in e.lower() for e in errs_a), errs_a)
+
+            # Case B: Evidence candidate_commit (c2) != last_verified_ci_commit (c3) even if runs match c3
+            ev_b = self._make_snapshot_evidence(topo["c3"], candidate_commit=topo["c2"], pr_status="DRAFT")
+            st_b, errs_b, _ = verify_github_ci_runs(
+                ev_b,
+                project_root=topo["repo_dir"],
+                simulate_data_map={
+                    self.PUSH_RUN_ID: self._make_push_run(topo["c3"]),
+                    self.PR_RUN_ID: self._make_pr_run(topo["c3"]),
+                },
+                simulate_pr_data_map={
+                    str(self.PR_NUMBER): self._make_pr_api(pr_head_sha=topo["c4"], merged=True),
+                },
+            )
+            self.assertEqual(st_b, "FAIL")
+            self.assertTrue(any("EVIDENCE_CANDIDATE_CI_COMMIT_MISMATCH" in e for e in errs_b), errs_b)
+
+    def test_t05_current_pr_base_not_main_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            topo = self._create_temp_git_repo_with_history(Path(tmp))
+            st, errs, _ = verify_single_github_run(
+                repo=self.CANONICAL_REPO,
+                run_id=self.PR_RUN_ID,
+                expected_event="pull_request",
+                expected_head_sha=topo["c2"],
+                expected_head_branch=self.FEATURE_BRANCH,
+                expected_pr_number=self.PR_NUMBER,
+                expected_base_ref="main",
+                expected_pr_status="DRAFT",
+                simulate_data=self._make_pr_run(topo["c2"]),
+                simulate_pr_data=self._make_pr_api(pr_head_sha=topo["c4"], base_ref="develop", merged=True),
+                project_root=topo["repo_dir"],
+            )
+            self.assertEqual(st, "FAIL")
+            self.assertTrue(any("base ref mismatch" in e.lower() for e in errs), errs)
+
+    def test_t06_current_pr_head_ref_mismatch_with_historical_run_head_branch_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            topo = self._create_temp_git_repo_with_history(Path(tmp))
+            st, errs, _ = verify_single_github_run(
+                repo=self.CANONICAL_REPO,
+                run_id=self.PR_RUN_ID,
+                expected_event="pull_request",
+                expected_head_sha=topo["c2"],
+                expected_head_branch=self.FEATURE_BRANCH,
+                expected_pr_number=self.PR_NUMBER,
+                expected_base_ref="main",
+                expected_pr_status="DRAFT",
+                simulate_data=self._make_pr_run(topo["c2"]),
+                simulate_pr_data=self._make_pr_api(pr_head_sha=topo["c4"], pr_head_ref="feat/tampered-branch", merged=True),
+                project_root=topo["repo_dir"],
+            )
+            self.assertEqual(st, "FAIL")
+            self.assertTrue(any("head.ref mismatch" in e.lower() for e in errs), errs)
+
+    def test_t07_compare_api_unavailable_and_local_git_cannot_verify_returns_not_verifiable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            topo = self._create_temp_git_repo_with_history(tmp_path)
+            missing_desc_sha = "f" * 40
+            no_git_dir = tmp_path / "no-git-dir"
+            no_git_dir.mkdir(parents=True, exist_ok=True)
+
+            with patch("tools.release_evidence._query_compare_via_api_or_gh", return_value=(False, None, "compare API unavailable")):
+                # (a) Local repo has c2, lacks remote head commit, and compare API is unavailable -> NOT_VERIFIABLE
+                st_missing_desc, errs_missing_desc, meta_missing_desc = verify_single_github_run(
+                    repo=self.CANONICAL_REPO,
+                    run_id=self.PR_RUN_ID,
+                    expected_event="pull_request",
+                    expected_head_sha=topo["c2"],
+                    expected_head_branch=self.FEATURE_BRANCH,
+                    expected_pr_number=self.PR_NUMBER,
+                    expected_base_ref="main",
+                    expected_pr_status="DRAFT",
+                    simulate_data=self._make_pr_run(topo["c2"]),
+                    simulate_pr_data=self._make_pr_api(pr_head_sha=missing_desc_sha, merged=True),
+                    project_root=topo["repo_dir"],
+                )
+                self.assertEqual(st_missing_desc, "NOT_VERIFIABLE", errs_missing_desc)
+                self.assertNotEqual(st_missing_desc, "PASS")
+                self.assertEqual(meta_missing_desc.get("historical_pr_ancestry_status"), "NOT_VERIFIABLE")
+                self.assertFalse(meta_missing_desc.get("historical_pr_head_advanced"))
+
+                # (b) No .git directory and compare API unavailable -> NOT_VERIFIABLE
+                st_no_git, errs_no_git, meta_no_git = verify_single_github_run(
+                    repo=self.CANONICAL_REPO,
+                    run_id=self.PR_RUN_ID,
+                    expected_event="pull_request",
+                    expected_head_sha=topo["c2"],
+                    expected_head_branch=self.FEATURE_BRANCH,
+                    expected_pr_number=self.PR_NUMBER,
+                    expected_base_ref="main",
+                    expected_pr_status="DRAFT",
+                    simulate_data=self._make_pr_run(topo["c2"]),
+                    simulate_pr_data=self._make_pr_api(pr_head_sha=topo["c4"], merged=True),
+                    project_root=no_git_dir,
+                )
+                self.assertEqual(st_no_git, "NOT_VERIFIABLE", errs_no_git)
+                self.assertNotEqual(st_no_git, "PASS")
+                self.assertEqual(meta_no_git.get("historical_pr_ancestry_status"), "NOT_VERIFIABLE")
+
+    def test_t08_released_pr_head_mismatch_with_candidate_commit_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            topo = self._create_temp_git_repo_with_history(Path(tmp))
+            rel_tag = "v3.0.9"
+            tag_obj_sha = "a" * 40
+            merge_sha = topo["merge_commit"]
+            main_run_id = "45559795518"
+            pr_run_id = "45556433037"
+
+            # Even though c2 IS a real Git ancestor of c4, RELEASED requires exact PR HEAD == candidate_commit!
+            released_ev = {
+                "repository": self.CANONICAL_REPO,
+                "version": "3.0.9",
+                "pr_number": 16,
+                "pr_status": "MERGED",
+                "pr_merged": True,
+                "pr_merged_by": "xiefeifeihu",
+                "main_head": merge_sha,
+                "candidate_commit": topo["c2"],
+                "snapshot_commit": merge_sha,
+                "last_verified_ci_commit": merge_sha,
+                "push_run_id": main_run_id,
+                "main_ci_run_id": main_run_id,
+                "push_head_branch": "main",
+                "pr_run_id": pr_run_id,
+                "ci_status": "PASS",
+                "test_count": 359,
+                "test_failed": 0,
+                "test_skipped": 0,
+                "windows_status": "PASS",
+                "ubuntu_status": "PASS",
+                "tag_publish_status": "PASS",
+                "release_tag": rel_tag,
+                "tag_object_sha": tag_obj_sha,
+                "peeled_commit": merge_sha,
+                "release_flow_status": "RELEASED",
+            }
+            main_run_sim = {
+                "id": int(main_run_id),
+                "head_sha": merge_sha,
+                "headSha": merge_sha,
+                "event": "push",
+                "status": "completed",
+                "conclusion": "success",
+                "path": self.WORKFLOW_PATH,
+                "head_branch": "main",
+                "headBranch": "main",
+                "repository": {"full_name": self.CANONICAL_REPO},
+                "jobs": [
+                    {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                    {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+                    {"name": "Publish Standards Tag after main CI", "status": "completed", "conclusion": "success"},
+                ],
+            }
+            pr_run_sim = {
+                "id": int(pr_run_id),
+                "head_sha": topo["c4"],
+                "headSha": topo["c4"],
+                "event": "pull_request",
+                "status": "completed",
+                "conclusion": "success",
+                "path": self.WORKFLOW_PATH,
+                "head_branch": self.FEATURE_BRANCH,
+                "headBranch": self.FEATURE_BRANCH,
+                "pull_requests": [],
+                "repository": {"full_name": self.CANONICAL_REPO},
+                "jobs": [
+                    {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                    {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+                ],
+            }
+            pr_api_sim = self._make_pr_api(
+                pr_head_sha=topo["c4"],
+                number=16,
+                merged=True,
+                merge_commit_sha=merge_sha,
+            )
+            ls_remote = f"{tag_obj_sha}\trefs/tags/{rel_tag}\n{merge_sha}\trefs/tags/{rel_tag}^{{}}\n"
+            st_rel, errs_rel, _ = verify_github_ci_runs(
+                released_ev,
+                project_root=topo["repo_dir"],
+                simulate_data_map={
+                    main_run_id: main_run_sim,
+                    pr_run_id: pr_run_sim,
+                    "ls_remote": ls_remote,
+                },
+                simulate_pr_data_map={"16": pr_api_sim},
+            )
+            self.assertEqual(st_rel, "FAIL")
+            self.assertTrue(any("PR_HEAD_CANDIDATE_MISMATCH" in e for e in errs_rel), errs_rel)
+
+            # Direct verify_single_github_run with expected_pr_status=MERGED also refuses head.sha advancement
+            st_single, errs_single, _ = verify_single_github_run(
+                repo=self.CANONICAL_REPO,
+                run_id=pr_run_id,
+                expected_event="pull_request",
+                expected_head_sha=topo["c2"],
+                expected_head_branch=self.FEATURE_BRANCH,
+                expected_pr_number=16,
+                expected_base_ref="main",
+                expected_pr_status="MERGED",
+                simulate_data=self._make_pr_run(topo["c2"], run_id=pr_run_id),
+                simulate_pr_data=pr_api_sim,
+                project_root=topo["repo_dir"],
+            )
+            self.assertEqual(st_single, "FAIL")
+            self.assertTrue(any("PR head.sha mismatch" in e for e in errs_single), errs_single)
+
+    def test_t09_std018_and_historical_evidence_files_remain_byte_identical(self) -> None:
+        import hashlib
+
+        expected_canonical_hashes = {
+            "std018-current-snapshot.json": "74f05b0d525bf2f9a6d9e7e811a080f6e14f71053c59baab5f651ff1a1c95276",
+            "std019-final-release.json": "adc34420015d57f856f3d0eb1608b585937f6032d1224bcd6ca752c3e9fe2b20",
+            "v3.0.0-reissue.json": "5453aa93037b1c9f17bfbd274e69b86c0293edf76bb6e03ef3540a876d7422ad",
+            "v3.0.1.json": "a39a35dcd3061409bfa004a452d6e0bcd1cb0354a3497db963288ddb11f8ed2b",
+            "v3.0.2.json": "6a6f052cad04a467c8fa897678a7c6799c7529f4a53deac4a12ba914be7ef3ea",
+        }
+        ev_dir = ROOT / "docs" / "release-evidence"
+        for fname, exp_sha in expected_canonical_hashes.items():
+            fpath = ev_dir / fname
+            self.assertTrue(fpath.is_file(), f"Missing historical release evidence: {fpath}")
+            raw_bytes = fpath.read_bytes()
+            lf_sha = hashlib.sha256(raw_bytes.replace(b"\r\n", b"\n")).hexdigest().lower()
+            self.assertEqual(lf_sha, exp_sha, f"Historical evidence '{fname}' LF-normalized content was modified!")
+
+            blob_bytes = subprocess.check_output(
+                ["git", "-C", str(ROOT), "show", f"HEAD:docs/release-evidence/{fname}"]
+            )
+            blob_sha = hashlib.sha256(blob_bytes).hexdigest().lower()
+            self.assertEqual(blob_sha, exp_sha, f"Historical evidence '{fname}' Git blob was modified!")
+
+            porcelain = subprocess.check_output(
+                ["git", "-C", str(ROOT), "status", "--porcelain", "--", f"docs/release-evidence/{fname}"],
+                text=True,
+                encoding="utf-8",
+            ).strip()
+            self.assertEqual(porcelain, "", f"Historical evidence '{fname}' has uncommitted modifications: {porcelain}")
+
+    def test_t10_four_official_release_evidence_files_still_pass(self) -> None:
+        ev_dir = ROOT / "docs" / "release-evidence"
+        official_specs = [
+            ("std019-final-release.json", True, "a6d3284e14c609d8284f2812c206e913a00a0c07", "fix/std-016-merged-pr-run-evidence"),
+            ("v3.0.0-reissue.json", False, "336114861b2c720106a6076956eef08c9cd6ded7", "feat/standards-baseline-sync-governance"),
+            ("v3.0.1.json", True, "4bffd3b280002e54c15ba2731fc2a3e144962319", "fix/std-021-mainline-snapshot-first-parent"),
+            ("v3.0.2.json", True, "ba39c93b4818e54b95b27e2c6565e36b3d676f0e", "fix/std-024-consumer-ci-provenance-hardening"),
+        ]
+        for fname, is_released, pr_head_sha, pr_head_ref in official_specs:
+            with self.subTest(evidence=fname):
+                ev_path = ev_dir / fname
+                ok_load, errs_load, ev = load_release_evidence(ROOT, ev_path)
+                self.assertTrue(ok_load, f"Failed to load {fname}: {errs_load}")
+                assert ev is not None
+
+                if is_released:
+                    ok_rel, errs_rel, _ = is_verified_released_evidence(ROOT, ev_path, expected_version=ev["version"])
+                    self.assertTrue(ok_rel, f"{fname} failed is_verified_released_evidence: {errs_rel}")
+
+                pr_num = int(ev["pr_number"])
+                pr_id = str(ev["pr_run_id"])
+                push_id = str(ev.get("main_ci_run_id") or ev["push_run_id"])
+                sim_data_map: dict[str, Any] = {
+                    push_id: {
+                        "id": int(push_id),
+                        "head_sha": ev["last_verified_ci_commit"],
+                        "headSha": ev["last_verified_ci_commit"],
+                        "event": "push",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "path": self.WORKFLOW_PATH,
+                        "head_branch": ev["push_head_branch"],
+                        "headBranch": ev["push_head_branch"],
+                        "repository": {"full_name": self.CANONICAL_REPO},
+                        "jobs": [
+                            {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                            {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+                        ]
+                        + (
+                            [{"name": "Publish Standards Tag after main CI", "status": "completed", "conclusion": "success"}]
+                            if is_released
+                            else []
+                        ),
+                    },
+                    pr_id: {
+                        "id": int(pr_id),
+                        "head_sha": pr_head_sha,
+                        "headSha": pr_head_sha,
+                        "event": "pull_request",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "path": self.WORKFLOW_PATH,
+                        "head_branch": pr_head_ref,
+                        "headBranch": pr_head_ref,
+                        "pull_requests": [],
+                        "repository": {"full_name": self.CANONICAL_REPO},
+                        "jobs": [
+                            {"name": "Validate (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                            {"name": "Validate (windows-latest)", "status": "completed", "conclusion": "success"},
+                        ],
+                    },
+                }
+                pr_api_payload: dict[str, Any] = {
+                    "number": pr_num,
+                    "state": "closed",
+                    "draft": False,
+                    "merged": True,
+                    "merged_at": "2026-11-25T06:19:53Z",
+                    "merged_by": {"login": "xiefeifeihu"},
+                    "base": {"ref": "main", "repo": {"full_name": self.CANONICAL_REPO}},
+                    "head": {"ref": pr_head_ref, "sha": pr_head_sha},
+                }
+                if is_released:
+                    pr_api_payload["merge_commit_sha"] = ev["peeled_commit"]
+                    sim_data_map["ls_remote"] = (
+                        f"{ev['tag_object_sha']}\trefs/tags/{ev['release_tag']}\n"
+                        f"{ev['peeled_commit']}\trefs/tags/{ev['release_tag']}^{{}}\n"
+                    )
+
+                st, errs, det = verify_github_ci_runs(
+                    ev,
+                    project_root=ROOT,
+                    simulate_data_map=sim_data_map,
+                    simulate_pr_data_map={str(pr_num): pr_api_payload},
+                )
+                self.assertEqual(st, "PASS", f"{fname} failed verify_github_ci_runs: {errs}")
+                self.assertEqual(errs, [])
+                if is_released:
+                    self.assertFalse(det["pr_ci_run"].get("historical_pr_head_advanced"))
+                else:
+                    self.assertFalse(det.get("historical_pr_head_advanced"))
+
+    def _create_remote_only_commit(self, base_tmp: Path, name: str = "remote_only_repo") -> str:
+        """Create a real commit in a separate temp Git repo so its SHA is absent from topo['repo_dir']."""
+        remote_dir = base_tmp / name
+        remote_dir.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", str(remote_dir)], capture_output=True, check=True)
+        self._git(remote_dir, "config", "user.email", "test@standards.local")
+        self._git(remote_dir, "config", "user.name", "Standards Test")
+        (remote_dir / "remote.txt").write_text(f"remote commit in {name}\n", encoding="utf-8")
+        self._git(remote_dir, "add", "remote.txt")
+        self._git(remote_dir, "commit", "-m", f"remote commit {name}")
+        return self._git(remote_dir, "rev-parse", "HEAD")
+
+    @staticmethod
+    def _selective_subprocess_run_factory(
+        *,
+        gh_returncode: int = 1,
+        gh_stdout: str = "",
+        gh_stderr: str = "gh: Not Found (HTTP 404)",
+    ):
+        """Wrap real subprocess.run so git commands execute normally while gh CLI calls are controlled."""
+        real_run = subprocess.run
+
+        def _wrapped(cmd, *args, **kwargs):
+            if isinstance(cmd, (list, tuple)) and cmd and str(cmd[0]) == "gh":
+                return subprocess.CompletedProcess(
+                    args=cmd,
+                    returncode=gh_returncode,
+                    stdout=gh_stdout,
+                    stderr=gh_stderr,
+                )
+            return real_run(cmd, *args, **kwargs)
+
+        return _wrapped
+
+    def test_t11_compare_api_http_404_returns_not_verifiable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            topo = self._create_temp_git_repo_with_history(tmp_path)
+            remote_only_sha = self._create_remote_only_commit(tmp_path)
+            sub_run_404 = self._selective_subprocess_run_factory(
+                gh_returncode=1, gh_stdout="", gh_stderr="gh: Not Found (HTTP 404)"
+            )
+
+            def _raise_http_error(code: int, reason: str):
+                def _opener(req, timeout=10):
+                    url = getattr(req, "full_url", str(req))
+                    raise urllib.error.HTTPError(url, code, reason, hdrs=None, fp=None)
+
+                return _opener
+
+            with (
+                patch("tools.release_evidence._get_github_token", return_value="test-token"),
+                patch("tools.release_evidence.urllib.request.urlopen", side_effect=_raise_http_error(404, "Not Found")),
+                patch("tools.release_evidence.subprocess.run", side_effect=sub_run_404),
+            ):
+                cmp_ok, cmp_status, cmp_err = _query_compare_via_api_or_gh(
+                    self.CANONICAL_REPO, topo["c2"], remote_only_sha
+                )
+                self.assertFalse(cmp_ok)
+                self.assertIsNone(cmp_status)
+                self.assertIn("404", cmp_err)
+
+                anc_st, anc_errs = verify_commit_ancestry(
+                    topo["repo_dir"],
+                    topo["c2"],
+                    remote_only_sha,
+                    repository=self.CANONICAL_REPO,
+                    allow_remote_compare=True,
+                )
+                self.assertEqual(anc_st, "NOT_VERIFIABLE", anc_errs)
+                self.assertNotEqual(anc_st, "FAIL")
+                self.assertNotEqual(anc_st, "PASS")
+
+                st_run, errs_run, meta_run = verify_single_github_run(
+                    repo=self.CANONICAL_REPO,
+                    run_id=self.PR_RUN_ID,
+                    expected_event="pull_request",
+                    expected_head_sha=topo["c2"],
+                    expected_head_branch=self.FEATURE_BRANCH,
+                    expected_pr_number=self.PR_NUMBER,
+                    expected_base_ref="main",
+                    expected_pr_status="DRAFT",
+                    simulate_data=self._make_pr_run(topo["c2"]),
+                    simulate_pr_data=self._make_pr_api(pr_head_sha=remote_only_sha, merged=True),
+                    project_root=topo["repo_dir"],
+                )
+                self.assertEqual(st_run, "NOT_VERIFIABLE", errs_run)
+                self.assertEqual(meta_run.get("historical_pr_ancestry_status"), "NOT_VERIFIABLE")
+                self.assertFalse(meta_run.get("historical_pr_head_advanced"))
+
+            # Also verify HTTP 403, HTTP 429, and network URLError map to NOT_VERIFIABLE when gh fallback fails
+            for label, exc_to_raise in (
+                ("http_403", urllib.error.HTTPError("https://api.github.com/compare", 403, "Forbidden", hdrs=None, fp=None)),
+                ("http_429", urllib.error.HTTPError("https://api.github.com/compare", 429, "Too Many Requests", hdrs=None, fp=None)),
+                ("url_error", urllib.error.URLError("network down")),
+            ):
+                with self.subTest(case=label):
+                    with (
+                        patch("tools.release_evidence._get_github_token", return_value="test-token"),
+                        patch("tools.release_evidence.urllib.request.urlopen", side_effect=exc_to_raise),
+                        patch("tools.release_evidence.subprocess.run", side_effect=sub_run_404),
+                    ):
+                        anc_st_err, anc_errs_err = verify_commit_ancestry(
+                            topo["repo_dir"],
+                            topo["c2"],
+                            remote_only_sha,
+                            repository=self.CANONICAL_REPO,
+                            allow_remote_compare=True,
+                        )
+                        self.assertEqual(anc_st_err, "NOT_VERIFIABLE", anc_errs_err)
+
+    def test_t12_compare_api_http_200_missing_status_returns_not_verifiable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            topo = self._create_temp_git_repo_with_history(tmp_path)
+            remote_only_sha = self._create_remote_only_commit(tmp_path)
+            sub_run_fail = self._selective_subprocess_run_factory(gh_returncode=1, gh_stdout="", gh_stderr="unavailable")
+
+            for payload in ({}, {"status": ""}, {"status": None}):
+                with self.subTest(payload=payload):
+                    with (
+                        patch("tools.release_evidence._get_github_token", return_value="test-token"),
+                        patch("tools.release_evidence.urllib.request.urlopen", return_value=FakeResponse(payload)),
+                        patch("tools.release_evidence.subprocess.run", side_effect=sub_run_fail),
+                    ):
+                        anc_st, anc_errs = verify_commit_ancestry(
+                            topo["repo_dir"],
+                            topo["c2"],
+                            remote_only_sha,
+                            repository=self.CANONICAL_REPO,
+                            allow_remote_compare=True,
+                        )
+                        self.assertEqual(anc_st, "NOT_VERIFIABLE", anc_errs)
+                        self.assertNotEqual(anc_st, "FAIL")
+                        self.assertNotEqual(anc_st, "PASS")
+
+            with (
+                patch("tools.release_evidence._get_github_token", return_value="test-token"),
+                patch("tools.release_evidence.urllib.request.urlopen", return_value=FakeResponse({})),
+                patch("tools.release_evidence.subprocess.run", side_effect=sub_run_fail),
+            ):
+                st_run, errs_run, meta_run = verify_single_github_run(
+                    repo=self.CANONICAL_REPO,
+                    run_id=self.PR_RUN_ID,
+                    expected_event="pull_request",
+                    expected_head_sha=topo["c2"],
+                    expected_head_branch=self.FEATURE_BRANCH,
+                    expected_pr_number=self.PR_NUMBER,
+                    expected_base_ref="main",
+                    expected_pr_status="DRAFT",
+                    simulate_data=self._make_pr_run(topo["c2"]),
+                    simulate_pr_data=self._make_pr_api(pr_head_sha=remote_only_sha, merged=True),
+                    project_root=topo["repo_dir"],
+                )
+                self.assertEqual(st_run, "NOT_VERIFIABLE", errs_run)
+                self.assertEqual(meta_run.get("historical_pr_ancestry_status"), "NOT_VERIFIABLE")
+
+    def test_t13_compare_api_unknown_status_returns_not_verifiable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            topo = self._create_temp_git_repo_with_history(tmp_path)
+            remote_only_sha = self._create_remote_only_commit(tmp_path)
+            sub_run_fail = self._selective_subprocess_run_factory(gh_returncode=1, gh_stdout="", gh_stderr="unavailable")
+
+            with (
+                patch("tools.release_evidence._get_github_token", return_value="test-token"),
+                patch(
+                    "tools.release_evidence.urllib.request.urlopen",
+                    return_value=FakeResponse({"status": "unknown_state"}),
+                ),
+                patch("tools.release_evidence.subprocess.run", side_effect=sub_run_fail),
+            ):
+                anc_st, anc_errs = verify_commit_ancestry(
+                    topo["repo_dir"],
+                    topo["c2"],
+                    remote_only_sha,
+                    repository=self.CANONICAL_REPO,
+                    allow_remote_compare=True,
+                )
+                self.assertEqual(anc_st, "NOT_VERIFIABLE", anc_errs)
+                self.assertNotEqual(anc_st, "FAIL")
+                self.assertNotEqual(anc_st, "PASS")
+
+                st_run, errs_run, meta_run = verify_single_github_run(
+                    repo=self.CANONICAL_REPO,
+                    run_id=self.PR_RUN_ID,
+                    expected_event="pull_request",
+                    expected_head_sha=topo["c2"],
+                    expected_head_branch=self.FEATURE_BRANCH,
+                    expected_pr_number=self.PR_NUMBER,
+                    expected_base_ref="main",
+                    expected_pr_status="DRAFT",
+                    simulate_data=self._make_pr_run(topo["c2"]),
+                    simulate_pr_data=self._make_pr_api(pr_head_sha=remote_only_sha, merged=True),
+                    project_root=topo["repo_dir"],
+                )
+                self.assertEqual(st_run, "NOT_VERIFIABLE", errs_run)
+                self.assertEqual(meta_run.get("historical_pr_ancestry_status"), "NOT_VERIFIABLE")
+
+            # Defense-in-depth: even if _query_compare_via_api_or_gh returned an unknown status, classify as NOT_VERIFIABLE
+            with (
+                patch(
+                    "tools.release_evidence._query_compare_via_api_or_gh",
+                    return_value=(True, "unsupported_state", ""),
+                ),
+                patch("tools.release_evidence.subprocess.run", side_effect=sub_run_fail),
+            ):
+                anc_st_def, anc_errs_def = verify_commit_ancestry(
+                    topo["repo_dir"],
+                    topo["c2"],
+                    remote_only_sha,
+                    repository=self.CANONICAL_REPO,
+                    allow_remote_compare=True,
+                )
+                self.assertEqual(anc_st_def, "NOT_VERIFIABLE", anc_errs_def)
+
+    def test_t14_compare_api_behind_returns_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            topo = self._create_temp_git_repo_with_history(tmp_path)
+            remote_only_sha = self._create_remote_only_commit(tmp_path)
+            sub_run_fail = self._selective_subprocess_run_factory()
+
+            with (
+                patch("tools.release_evidence._get_github_token", return_value="test-token"),
+                patch("tools.release_evidence.urllib.request.urlopen", return_value=FakeResponse({"status": "behind"})),
+                patch("tools.release_evidence.subprocess.run", side_effect=sub_run_fail),
+            ):
+                anc_st, anc_errs = verify_commit_ancestry(
+                    topo["repo_dir"],
+                    topo["c2"],
+                    remote_only_sha,
+                    repository=self.CANONICAL_REPO,
+                    allow_remote_compare=True,
+                )
+                self.assertEqual(anc_st, "FAIL", anc_errs)
+                self.assertTrue(any("behind" in e for e in anc_errs), anc_errs)
+
+                st_run, errs_run, meta_run = verify_single_github_run(
+                    repo=self.CANONICAL_REPO,
+                    run_id=self.PR_RUN_ID,
+                    expected_event="pull_request",
+                    expected_head_sha=topo["c2"],
+                    expected_head_branch=self.FEATURE_BRANCH,
+                    expected_pr_number=self.PR_NUMBER,
+                    expected_base_ref="main",
+                    expected_pr_status="DRAFT",
+                    simulate_data=self._make_pr_run(topo["c2"]),
+                    simulate_pr_data=self._make_pr_api(pr_head_sha=remote_only_sha, merged=True),
+                    project_root=topo["repo_dir"],
+                )
+                self.assertEqual(st_run, "FAIL", errs_run)
+                self.assertEqual(meta_run.get("historical_pr_ancestry_status"), "FAIL")
+                self.assertFalse(meta_run.get("historical_pr_head_advanced"))
+
+    def test_t15_compare_api_diverged_returns_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            topo = self._create_temp_git_repo_with_history(tmp_path)
+            remote_only_sha = self._create_remote_only_commit(tmp_path)
+            sub_run_fail = self._selective_subprocess_run_factory()
+
+            with (
+                patch("tools.release_evidence._get_github_token", return_value="test-token"),
+                patch("tools.release_evidence.urllib.request.urlopen", return_value=FakeResponse({"status": "diverged"})),
+                patch("tools.release_evidence.subprocess.run", side_effect=sub_run_fail),
+            ):
+                anc_st, anc_errs = verify_commit_ancestry(
+                    topo["repo_dir"],
+                    topo["c2"],
+                    remote_only_sha,
+                    repository=self.CANONICAL_REPO,
+                    allow_remote_compare=True,
+                )
+                self.assertEqual(anc_st, "FAIL", anc_errs)
+                self.assertTrue(any("diverged" in e for e in anc_errs), anc_errs)
+
+                st_run, errs_run, meta_run = verify_single_github_run(
+                    repo=self.CANONICAL_REPO,
+                    run_id=self.PR_RUN_ID,
+                    expected_event="pull_request",
+                    expected_head_sha=topo["c2"],
+                    expected_head_branch=self.FEATURE_BRANCH,
+                    expected_pr_number=self.PR_NUMBER,
+                    expected_base_ref="main",
+                    expected_pr_status="DRAFT",
+                    simulate_data=self._make_pr_run(topo["c2"]),
+                    simulate_pr_data=self._make_pr_api(pr_head_sha=remote_only_sha, merged=True),
+                    project_root=topo["repo_dir"],
+                )
+                self.assertEqual(st_run, "FAIL", errs_run)
+                self.assertEqual(meta_run.get("historical_pr_ancestry_status"), "FAIL")
+                self.assertFalse(meta_run.get("historical_pr_head_advanced"))
+
+    def test_t16_compare_api_ahead_returns_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            topo = self._create_temp_git_repo_with_history(tmp_path)
+            remote_only_sha = self._create_remote_only_commit(tmp_path)
+            sub_run_fail = self._selective_subprocess_run_factory()
+
+            with (
+                patch("tools.release_evidence._get_github_token", return_value="test-token"),
+                patch("tools.release_evidence.urllib.request.urlopen", return_value=FakeResponse({"status": "ahead"})),
+                patch("tools.release_evidence.subprocess.run", side_effect=sub_run_fail),
+            ):
+                anc_st, anc_errs = verify_commit_ancestry(
+                    topo["repo_dir"],
+                    topo["c2"],
+                    remote_only_sha,
+                    repository=self.CANONICAL_REPO,
+                    allow_remote_compare=True,
+                )
+                self.assertEqual(anc_st, "PASS", anc_errs)
+                self.assertEqual(anc_errs, [])
+
+                st_run, errs_run, meta_run = verify_single_github_run(
+                    repo=self.CANONICAL_REPO,
+                    run_id=self.PR_RUN_ID,
+                    expected_event="pull_request",
+                    expected_head_sha=topo["c2"],
+                    expected_head_branch=self.FEATURE_BRANCH,
+                    expected_pr_number=self.PR_NUMBER,
+                    expected_base_ref="main",
+                    expected_pr_status="DRAFT",
+                    simulate_data=self._make_pr_run(topo["c2"]),
+                    simulate_pr_data=self._make_pr_api(pr_head_sha=remote_only_sha, merged=True),
+                    project_root=topo["repo_dir"],
+                )
+                self.assertEqual(st_run, "PASS", errs_run)
+                self.assertEqual(errs_run, [])
+                self.assertEqual(meta_run.get("historical_pr_ancestry_status"), "PASS")
+                self.assertTrue(meta_run.get("historical_pr_head_advanced"))
+
+    def test_t17_compare_api_identical_returns_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            topo = self._create_temp_git_repo_with_history(tmp_path)
+            remote_only_sha = self._create_remote_only_commit(tmp_path)
+            empty_repo_dir = tmp_path / "empty_git_repo"
+            empty_repo_dir.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init", str(empty_repo_dir)], capture_output=True, check=True)
+            sub_run_fail = self._selective_subprocess_run_factory()
+
+            with (
+                patch("tools.release_evidence._get_github_token", return_value="test-token"),
+                patch("tools.release_evidence.urllib.request.urlopen", return_value=FakeResponse({"status": "identical"})),
+                patch("tools.release_evidence.subprocess.run", side_effect=sub_run_fail),
+            ):
+                anc_st, anc_errs = verify_commit_ancestry(
+                    topo["repo_dir"],
+                    topo["c2"],
+                    remote_only_sha,
+                    repository=self.CANONICAL_REPO,
+                    allow_remote_compare=True,
+                )
+                self.assertEqual(anc_st, "PASS", anc_errs)
+                self.assertEqual(anc_errs, [])
+
+                # Also verify when neither commit exists in an empty real Git repo
+                anc_st_empty, anc_errs_empty = verify_commit_ancestry(
+                    empty_repo_dir,
+                    topo["c2"],
+                    remote_only_sha,
+                    repository=self.CANONICAL_REPO,
+                    allow_remote_compare=True,
+                )
+                self.assertEqual(anc_st_empty, "PASS", anc_errs_empty)
+                self.assertEqual(anc_errs_empty, [])
+
+                st_run, errs_run, meta_run = verify_single_github_run(
+                    repo=self.CANONICAL_REPO,
+                    run_id=self.PR_RUN_ID,
+                    expected_event="pull_request",
+                    expected_head_sha=topo["c2"],
+                    expected_head_branch=self.FEATURE_BRANCH,
+                    expected_pr_number=self.PR_NUMBER,
+                    expected_base_ref="main",
+                    expected_pr_status="DRAFT",
+                    simulate_data=self._make_pr_run(topo["c2"]),
+                    simulate_pr_data=self._make_pr_api(pr_head_sha=remote_only_sha, merged=True),
+                    project_root=topo["repo_dir"],
+                )
+                self.assertEqual(st_run, "PASS", errs_run)
+                self.assertEqual(errs_run, [])
+                self.assertEqual(meta_run.get("historical_pr_ancestry_status"), "PASS")
+                self.assertTrue(meta_run.get("historical_pr_head_advanced"))
 
 
 if __name__ == "__main__":

@@ -9,12 +9,12 @@ approval_scope: "AI_APPROVABLE"
 approval_evidence_ref: null
 source_commit: "9687f961b22df612c4311961e06fc1c1fd508c37"
 applies_to_release: "v3.0.0"
-last_updated: "2026-11-23"
+last_updated: "2026-11-25"
 supersedes: null
-change_summary: "v3.0.1 正式发布后更新发布证据索引与文档生命周期治理待审清单（保留 IN_REVIEW，不自批晋升 ACTIVE）。"
+change_summary: "v3.0.2 正式发布后更新发布证据索引与文档生命周期治理待审清单（保留 v3.0.1 历史记录与 14 份 IN_REVIEW 文档不自批晋升 ACTIVE）。"
 history_reference: "CHANGELOG.md"
 primary_entrypoint: true
-content_sha256: null
+content_sha256: "sha256:7e47cca379895cb912ebd26e05bc6b828f7bf72d8a300c92985e03908bf6df84"
 ---
 
 
@@ -45,7 +45,7 @@ content_sha256: null
 
 ---
 
-> **生命周期核验（Std-023 发布后核验）**：本表逐项反映各文件 Frontmatter 当前的真实 `status`，不因 `v3.0.0` / `v3.0.1` 已正式发布或 PR #13 / PR #14 已成功合入而自动提升为 `ACTIVE`。目前 12 类正式主入口文档（以及 2 份 `IN_REVIEW` 补充文档）均保持 `IN_REVIEW` 且尚缺与目标 `source_commit` + `content_sha256` 绑定的正式文档审批事件（`approval_evidence_ref: null`）；根据 `STD-035` §2、§3 与 `D2`，未经对应审批不得自批晋升。以上属于待闭环文档治理缺口，不影响已由 GitHub Actions `main` CI 签发的不可变 `v3.0.0` 与 `v3.0.1` 正式 Tag 的历史与发布事实。
+> **生命周期核验（Std-026 发布后核验）**：本表逐项反映各文件 Frontmatter 当前的真实 `status`，不因 `v3.0.0` / `v3.0.1` / `v3.0.2` 已正式发布或 PR #13 / PR #14 / PR #16 已成功合入而自动提升为 `ACTIVE`。目前 12 类正式主入口文档（以及 2 份 `IN_REVIEW` 补充文档）均保持 `IN_REVIEW` 且尚缺与目标 `source_commit` + `content_sha256` 绑定的正式文档审批事件（`approval_evidence_ref: null`）；根据 `STD-035` §2、§3 与 `D2`，未经对应审批不得自批晋升。以上属于待闭环文档治理缺口，不影响已由 GitHub Actions `main` CI 签发的不可变 `v3.0.0`、`v3.0.1` 与 `v3.0.2` 正式 Tag 的历史与发布事实。
 
 ### 1.1 待 Owner 审定清单 (Document Lifecycle Governance Gap, `OWNER_APPROVAL_REQUIRED`)
 
@@ -70,7 +70,8 @@ content_sha256: null
 
 ## 2. 补充规范、发布证据、接入协议与迁移资料（`primary_entrypoint: false`）
 
-- [`docs/release-evidence/v3.0.1.json`](./release-evidence/v3.0.1.json)：Standards `v3.0.1` 正式发布凭证（PR #13 候选来源 + PR #14 最终修复与合并来源，Main CI Run `45099701154` 全绿，Tag Object `a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4` / Peeled `4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`）。
+- [`docs/release-evidence/v3.0.2.json`](./release-evidence/v3.0.2.json)：Standards `v3.0.2` 正式发布凭证（PR #16 合并，HEAD `ba39c93b4818e54b95b27e2c6565e36b3d676f0e`，Merge Commit `0c1b48a1a6ac2f205ca77b2c34665704f44044f6`，Main CI Run `45559795518` 双平台 359/359 全绿，Tag Publish Job `139026054533` PASS，Tag Object `56578f1b790ea4356cb671cdf1e3348cbd85f9ca` / Peeled `0c1b48a1a6ac2f205ca77b2c34665704f44044f6`；PR #15 已按 `CLOSED / SUPERSEDED / NOT_MERGED` 关闭）。
+- [`docs/release-evidence/v3.0.1.json`](./release-evidence/v3.0.1.json)：Standards `v3.0.1` 正式发布凭证（保留历史不可变，PR #13 候选来源 + PR #14 最终修复与合并来源，Main CI Run `45099701154` 全绿，Tag Object `a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4` / Peeled `4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`）。
 - [`docs/release-evidence/std019-final-release.json`](./release-evidence/std019-final-release.json)：Standards `v3.0.0` 正式发布凭证（保留历史不可变，PR #10 合并，Main CI Run `42996232217` 全绿，Tag Object `8256bb384e62894219db0992a2cb57e16d4fa8cd` / Peeled `8b223019c254e0edeb94576b94af46c1e48b0316`）。
 - [`docs/release-evidence/std018-current-snapshot.json`](./release-evidence/std018-current-snapshot.json) 与 [`docs/release-evidence/v3.0.0-reissue.json`](./release-evidence/v3.0.0-reissue.json)：`v3.0.0` 历史工程快照与 PR #9 发布过程凭证（保留历史不可变）。
 - [`docs/Standards消费端接入与工具使用协议.md`](./Standards消费端接入与工具使用协议.md)：共享工具、模板、版本锁定、CI 接入及升级回滚的消费端统一协议。

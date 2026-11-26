@@ -76,7 +76,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python tools/generate_handoff.py --project-root . --task-id Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION --verify-only --require-live-pr
+          python tools/generate_handoff.py --project-root . --task-id Std-026-v3-0-2-post-release-closeout --verify-only --require-live-pr
 
       - name: Record Live Runtime PR & CI Facts to Step Summary (F13 / F14)
         if: always()

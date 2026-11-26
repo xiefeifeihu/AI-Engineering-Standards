@@ -827,11 +827,13 @@ def verify_single_github_run(
     simulate_pr_data: Optional[Dict[str, Any]] = None,
     simulate_pr_error: Optional[str] = None,
     require_tag_publish: bool = False,
+    project_root: Optional[Path] = None,
 ) -> Tuple[str, List[str], Dict[str, Any]]:
     """Verify an individual GitHub Actions run against all authenticity requirements.
     Never outputs tokens. Returns status: 'PASS', 'FAIL', or 'NOT_VERIFIABLE'.
     """
     errors: List[str] = []
+    ancestry_not_verifiable_errors: List[str] = []
     run_meta: Dict[str, Any] = {
         "run_id": str(run_id),
         "expected_event": expected_event,
@@ -1030,14 +1032,18 @@ def verify_single_github_run(
                 actual_pr_num = pr_data.get("number")
                 run_meta["actual_pr_number"] = actual_pr_num
                 run_meta["fallback_pr_number"] = actual_pr_num
-                if str(actual_pr_num) != str(expected_pr_number):
+                if actual_pr_num is None:
+                    errors.append(f"Run {run_id} PR number missing from PR API response (expected {expected_pr_number})")
+                elif str(actual_pr_num) != str(expected_pr_number):
                     errors.append(f"Run {run_id} PR number mismatch: expected {expected_pr_number}, got {actual_pr_num}")
 
                 # 2. PR base.ref=main。
                 target_base_ref = expected_base_ref or "main"
                 actual_pr_base_ref = pr_data.get("base", {}).get("ref") if isinstance(pr_data.get("base"), dict) else None
                 run_meta["actual_base_ref"] = actual_pr_base_ref
-                if actual_pr_base_ref != target_base_ref:
+                if not actual_pr_base_ref:
+                    errors.append(f"Run {run_id} PR base ref is missing (expected '{target_base_ref}')")
+                elif actual_pr_base_ref != target_base_ref:
                     errors.append(f"Run {run_id} PR base ref mismatch: expected '{target_base_ref}', got '{actual_pr_base_ref}'")
 
                 # 3. PR head.ref 与历史 Run head_branch 一致。
@@ -1046,17 +1052,55 @@ def verify_single_github_run(
                 run_meta["actual_head_ref"] = actual_pr_head_ref
                 if not run_head_branch:
                     errors.append(f"Run {run_id} is missing head_branch for PR fallback verification")
+                elif not actual_pr_head_ref:
+                    errors.append(f"Run {run_id} PR head.ref is missing (expected '{run_head_branch}')")
                 elif actual_pr_head_ref != run_head_branch:
                     errors.append(f"Run {run_id} PR head.ref mismatch: expected '{run_head_branch}', got '{actual_pr_head_ref}'")
 
-                # 4. PR head.sha 与历史 Run head_sha 一致。
+                # 4. PR head.sha 与历史 Run head_sha 一致；对 DRAFT/OPEN 历史快照允许合法 PR 演进，但必须通过真实 Git ancestry 证明。
                 run_head_sha = run_data.get("headSha") or run_data.get("head_sha")
                 actual_pr_head_sha = pr_data.get("head", {}).get("sha") if isinstance(pr_data.get("head"), dict) else None
                 run_meta["actual_pr_head_sha"] = actual_pr_head_sha
+                run_meta["historical_pr_head_advanced"] = False
                 if not run_head_sha:
                     errors.append(f"Run {run_id} is missing head_sha for PR fallback verification")
-                elif actual_pr_head_sha != run_head_sha:
-                    errors.append(f"Run {run_id} PR head.sha mismatch: expected '{run_head_sha}', got '{actual_pr_head_sha}'")
+                elif not actual_pr_head_sha:
+                    errors.append(f"Run {run_id} PR head.sha is missing for PR fallback verification")
+                elif actual_pr_head_sha == run_head_sha:
+                    run_meta["historical_pr_ancestry_status"] = "EXACT_MATCH"
+                else:
+                    exp_pr_status_norm = str(expected_pr_status or "").strip().upper()
+                    if exp_pr_status_norm in ("DRAFT", "OPEN"):
+                        anc_root = Path(project_root).resolve() if project_root is not None else Path(".").resolve()
+                        anc_st, anc_errs = verify_commit_ancestry(
+                            anc_root,
+                            str(run_head_sha).strip(),
+                            str(actual_pr_head_sha).strip(),
+                            repository=repo,
+                            allow_remote_compare=True,
+                        )
+                        run_meta["historical_pr_ancestry_status"] = anc_st
+                        run_meta["historical_pr_ancestry_ancestor"] = str(run_head_sha).strip()
+                        run_meta["historical_pr_ancestry_descendant"] = str(actual_pr_head_sha).strip()
+                        if anc_st == "PASS":
+                            run_meta["historical_pr_head_advanced"] = True
+                        elif anc_st == "NOT_VERIFIABLE":
+                            run_meta["historical_pr_ancestry_errors"] = list(anc_errs)
+                            ancestry_not_verifiable_errors.extend(
+                                anc_errs
+                                or [
+                                    f"Run {run_id} historical PR ancestry not verifiable for '{run_head_sha}' -> '{actual_pr_head_sha}'"
+                                ]
+                            )
+                        else:
+                            run_meta["historical_pr_ancestry_errors"] = list(anc_errs)
+                            errors.append(
+                                f"Run {run_id} PR head.sha mismatch and historical ancestry check failed "
+                                f"(historical run head_sha='{run_head_sha}' is not an ancestor of current PR head.sha='{actual_pr_head_sha}'): "
+                                + "; ".join(anc_errs)
+                            )
+                    else:
+                        errors.append(f"Run {run_id} PR head.sha mismatch: expected '{run_head_sha}', got '{actual_pr_head_sha}'")
 
                 # 5. PR merged=true（当 release evidence 的 pr_status=MERGED 时）。
                 is_merged = pr_data.get("merged")
@@ -1079,6 +1123,12 @@ def verify_single_github_run(
         run_meta["verification_status"] = "FAIL"
         run_meta["errors"] = errors
         return "FAIL", errors, run_meta
+
+    if ancestry_not_verifiable_errors:
+        run_meta["verification_status"] = "NOT_VERIFIABLE"
+        run_meta["reason"] = "HISTORICAL_PR_ANCESTRY_NOT_VERIFIABLE"
+        run_meta["errors"] = ancestry_not_verifiable_errors
+        return "NOT_VERIFIABLE", ancestry_not_verifiable_errors, run_meta
 
     run_meta["verification_status"] = "PASS"
     return "PASS", [], run_meta
@@ -1141,10 +1191,12 @@ def verify_github_ci_runs(
         sim_pr_err = simulate_data_map.get(f"pr_error_{pr_number}")
 
     if evidence.get("release_flow_status") == "RELEASED":
+        root = Path(project_root or ".").resolve()
         repo_owner = repo.split("/")[0] if "/" in repo else repo
         peeled_commit = str(evidence["peeled_commit"])
         rel_tag = str(evidence["release_tag"])
         tag_obj_sha = str(evidence["tag_object_sha"])
+        evidence_candidate_commit = str(evidence.get("candidate_commit") or "").strip()
 
         # =====================================================================
         # Chain C: PR Merge Authenticity & PR API Data Extraction
@@ -1241,6 +1293,18 @@ def verify_github_ci_runs(
                 pr_head_ref = pr_data["head"].get("ref")
                 pr_head_sha = pr_data["head"].get("sha")
 
+            # Strict RELEASED check: when candidate_commit represents the PR head (candidate_commit != peeled_commit),
+            # PR HEAD must match candidate_commit exactly.
+            if evidence_candidate_commit and evidence_candidate_commit != peeled_commit:
+                if not pr_head_sha:
+                    pr_merge_errors.append(
+                        f"PR_HEAD_CANDIDATE_MISSING: PR #{pr_number} head.sha missing (expected candidate_commit '{evidence_candidate_commit}')"
+                    )
+                elif pr_head_sha != evidence_candidate_commit:
+                    pr_merge_errors.append(
+                        f"PR_HEAD_CANDIDATE_MISMATCH: PR #{pr_number} head.sha '{pr_head_sha}' != evidence candidate_commit '{evidence_candidate_commit}'"
+                    )
+
         # =====================================================================
         # Chain B: PR CI Run Independent Verification
         # =====================================================================
@@ -1263,11 +1327,13 @@ def verify_github_ci_runs(
                 expected_head_branch=pr_head_ref,
                 expected_pr_number=pr_number,
                 expected_base_ref="main",
+                expected_pr_status=evidence.get("pr_status") or "MERGED",
                 expected_workflow_path=".github/workflows/standards-ci.yml",
                 timeout=timeout,
                 simulate_data=sim_pr,
                 simulate_pr_data=pr_data,
                 require_tag_publish=False,
+                project_root=root,
             )
             pr_ci_errors.extend(pr_ci_errs)
 
@@ -1292,7 +1358,6 @@ def verify_github_ci_runs(
         # =====================================================================
         # Tag Remote Verification
         # =====================================================================
-        root = Path(project_root or ".").resolve()
         sim_ls_remote = simulate_data_map.get("ls_remote") if simulate_data_map else None
         sim_tag_net_err = bool(simulate_data_map.get("tag_network_error")) if simulate_data_map else False
 
@@ -1342,6 +1407,13 @@ def verify_github_ci_runs(
 
         return "PASS", [], details
 
+    candidate_commit = str(evidence.get("candidate_commit") or "").strip()
+    evidence_binding_errors: List[str] = []
+    if candidate_commit and candidate_commit != head_sha:
+        evidence_binding_errors.append(
+            f"EVIDENCE_CANDIDATE_CI_COMMIT_MISMATCH: candidate_commit '{candidate_commit}' != last_verified_ci_commit '{head_sha}'"
+        )
+
     push_st, push_errs, push_meta = verify_single_github_run(
         repo=repo,
         run_id=push_id,
@@ -1367,9 +1439,10 @@ def verify_github_ci_runs(
         simulate_data=sim_pr,
         simulate_pr_data=sim_pr_api,
         simulate_pr_error=sim_pr_err,
+        project_root=project_root,
     )
 
-    all_errors = push_errs + pr_errs
+    all_errors = evidence_binding_errors + push_errs + pr_errs
     details = {
         "push_run": push_meta,
         "pr_run": pr_meta,
@@ -1380,9 +1453,11 @@ def verify_github_ci_runs(
         "pr_status": evidence.get("pr_status"),
         "base_ref": "main",
         "pr_fallback_verified": pr_meta.get("pr_fallback_verified", False),
+        "historical_pr_head_advanced": pr_meta.get("historical_pr_head_advanced", False),
+        "historical_pr_ancestry_status": pr_meta.get("historical_pr_ancestry_status"),
     }
 
-    if push_st == "FAIL" or pr_st == "FAIL":
+    if evidence_binding_errors or push_st == "FAIL" or pr_st == "FAIL":
         return "FAIL", all_errors, details
 
     if push_st == "NOT_VERIFIABLE" or pr_st == "NOT_VERIFIABLE":
@@ -1411,6 +1486,14 @@ def _extract_repo_from_pr_payload(pr_data: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+COMPARE_ANCESTRY_PASS_STATUSES: Tuple[str, ...] = ("identical", "ahead")
+COMPARE_ANCESTRY_FAIL_STATUSES: Tuple[str, ...] = ("behind", "diverged")
+COMPARE_ANCESTRY_SUPPORTED_STATUSES: Tuple[str, ...] = (
+    *COMPARE_ANCESTRY_PASS_STATUSES,
+    *COMPARE_ANCESTRY_FAIL_STATUSES,
+)
+
+
 def _query_compare_via_api_or_gh(
     repo: str,
     base_sha: str,
@@ -1419,6 +1502,7 @@ def _query_compare_via_api_or_gh(
 ) -> Tuple[bool, Optional[str], str]:
     """Query GitHub Compare API to check commit ancestry when remote head commit is not fetched locally."""
     tok = _get_github_token()
+    api_err = ""
     if tok:
         url = f"https://api.github.com/repos/{repo}/compare/{base_sha}...{head_sha}"
         headers = {
@@ -1431,12 +1515,23 @@ def _query_compare_via_api_or_gh(
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-            return True, str(data.get("status") or "").strip(), ""
+            if not isinstance(data, dict):
+                return False, None, "compare API response JSON is not an object"
+            raw_status = data.get("status")
+            if raw_status is None or not isinstance(raw_status, str) or not raw_status.strip():
+                return False, None, "compare API response missing or empty 'status'"
+            norm_status = raw_status.strip()
+            if norm_status not in COMPARE_ANCESTRY_SUPPORTED_STATUSES:
+                return False, None, f"compare API returned unsupported status '{norm_status}'"
+            return True, norm_status, ""
         except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return True, "diverged", "compare 404 (unrelated history)"
-        except Exception:
-            pass
+            api_err = _sanitize_error_message(f"HTTP {e.code}: {e.reason}", tok)
+        except Exception as e:
+            api_err = _sanitize_error_message(str(e), tok)
+    else:
+        api_err = "no GitHub token available"
+
+    gh_err = ""
     try:
         res = subprocess.run(
             ["gh", "api", f"repos/{repo}/compare/{base_sha}...{head_sha}", "--jq", ".status"],
@@ -1446,11 +1541,44 @@ def _query_compare_via_api_or_gh(
             errors="replace",
             timeout=timeout,
         )
-        if res.returncode == 0 and (res.stdout or "").strip():
-            return True, res.stdout.strip(), ""
+        if res.returncode == 0:
+            gh_status = (res.stdout or "").strip()
+            if gh_status in COMPARE_ANCESTRY_SUPPORTED_STATUSES:
+                return True, gh_status, ""
+            gh_err = f"gh compare returned missing or unsupported status '{gh_status}'"
+        else:
+            gh_err = _sanitize_error_message((res.stderr or res.stdout or "gh compare api failed").strip(), tok)
     except Exception as exc:
-        return False, None, _sanitize_error_message(str(exc), tok)
-    return False, None, "compare API unavailable"
+        gh_err = _sanitize_error_message(str(exc), tok)
+
+    combined_err = f"{api_err}; gh fallback: {gh_err}" if (api_err and gh_err) else (api_err or gh_err)
+    return False, None, combined_err or "compare API unavailable"
+
+
+def _classify_remote_compare_ancestry(
+    repository: str,
+    anc: str,
+    desc: str,
+    not_verifiable_code: str,
+    not_verifiable_context: str,
+) -> Tuple[str, List[str]]:
+    """Classify GitHub Compare API result strictly into PASS / FAIL / NOT_VERIFIABLE."""
+    cmp_ok, cmp_status, cmp_err = _query_compare_via_api_or_gh(repository, anc, desc)
+    if cmp_ok and isinstance(cmp_status, str):
+        norm_status = cmp_status.strip()
+        if norm_status in COMPARE_ANCESTRY_PASS_STATUSES:
+            return "PASS", []
+        if norm_status in COMPARE_ANCESTRY_FAIL_STATUSES:
+            return "FAIL", [
+                f"CANDIDATE_COMMIT_NOT_ANCESTOR_OF_PR_HEAD: remote compare '{anc}...{desc}' returned status='{norm_status}'"
+            ]
+        return "NOT_VERIFIABLE", [
+            f"{not_verifiable_code}: {not_verifiable_context} and remote compare returned unsupported status='{norm_status}'"
+        ]
+    clean_err = cmp_err or "compare API unavailable"
+    return "NOT_VERIFIABLE", [
+        f"{not_verifiable_code}: {not_verifiable_context} and compare API failed ({clean_err})"
+    ]
 
 
 def verify_commit_ancestry(
@@ -1474,6 +1602,14 @@ def verify_commit_ancestry(
         return "FAIL", [f"CANDIDATE_PR_INVALID_HEAD: '{desc}' must be a non-zero 40-hex commit SHA"]
 
     if not (project_root / ".git").exists():
+        if allow_remote_compare and repository:
+            return _classify_remote_compare_ancestry(
+                repository,
+                anc,
+                desc,
+                "GIT_REPO_NOT_FOUND_AND_COMPARE_FAILED",
+                f"'{project_root}' has no .git directory",
+            )
         return "NOT_VERIFIABLE", [f"GIT_REPO_NOT_FOUND: '{project_root}' has no .git directory to verify commit ancestry"]
 
     try:
@@ -1489,6 +1625,14 @@ def verify_commit_ancestry(
         return "NOT_VERIFIABLE", [f"GIT_ANCESTRY_ERROR: failed inspecting candidate commit '{anc}': {exc}"]
 
     if rc_anc_obj.returncode != 0:
+        if allow_remote_compare and repository:
+            return _classify_remote_compare_ancestry(
+                repository,
+                anc,
+                desc,
+                "ANCESTOR_COMMIT_NOT_LOCAL_AND_COMPARE_FAILED",
+                f"ancestor commit '{anc}' is not in local git objects",
+            )
         return "FAIL", [f"CANDIDATE_COMMIT_NOT_FOUND: candidate_commit '{anc}' does not exist in Git repository"]
 
     try:
@@ -1505,16 +1649,13 @@ def verify_commit_ancestry(
 
     if rc_desc_obj.returncode != 0:
         if allow_remote_compare and repository:
-            cmp_ok, cmp_status, cmp_err = _query_compare_via_api_or_gh(repository, anc, desc)
-            if cmp_ok and cmp_status is not None:
-                if cmp_status in ("identical", "ahead"):
-                    return "PASS", []
-                return "FAIL", [
-                    f"CANDIDATE_COMMIT_NOT_ANCESTOR_OF_PR_HEAD: remote compare '{anc}...{desc}' returned status='{cmp_status}'"
-                ]
-            return "NOT_VERIFIABLE", [
-                f"PR_HEAD_COMMIT_NOT_LOCAL_AND_COMPARE_FAILED: PR head '{desc}' is not in local git objects and compare API failed ({cmp_err})"
-            ]
+            return _classify_remote_compare_ancestry(
+                repository,
+                anc,
+                desc,
+                "PR_HEAD_COMMIT_NOT_LOCAL_AND_COMPARE_FAILED",
+                f"PR head '{desc}' is not in local git objects",
+            )
         return "NOT_VERIFIABLE", [
             f"PR_HEAD_COMMIT_NOT_IN_LOCAL_GIT: actual PR head '{desc}' does not exist in local Git repository"
         ]
@@ -2396,6 +2537,14 @@ if __name__ == "__main__":
         if args.check_ci:
             st, ci_errs, details = verify_github_ci_runs(ev, project_root=root)
             print(f"CI Authenticity Status ({ev_path.name}): {st}")
+            pr_meta = details.get("pr_run") if isinstance(details.get("pr_run"), dict) else {}
+            if pr_meta.get("historical_pr_head_advanced") is True:
+                print(
+                    f"  [INFO] historical_pr_head_advanced=true, "
+                    f"ancestry={pr_meta.get('historical_pr_ancestry_status')}, "
+                    f"run_head_sha={pr_meta.get('actual_head_sha')}, "
+                    f"current_pr_head_sha={pr_meta.get('actual_pr_head_sha')}"
+                )
             if ci_errs:
                 for e in ci_errs:
                     print(f"  - {e}")

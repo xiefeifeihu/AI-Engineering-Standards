@@ -4,11 +4,14 @@ All notable changes to the AI Engineering Standards baseline are documented in t
 
 ## [Unreleased]
 
-## [3.0.2] - 2026-11-25 (CANDIDATE — NOT RELEASED)
+## [3.0.2] - 2026-11-25
 
-> RELEASE_STATUS=NOT_RELEASED | CANDIDATE_RELEASE=v3.0.2 | OFFICIAL_CURRENT_TAG=v3.0.1 | TAG_OBJECT_SHA=a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4 | PEELED_COMMIT=4facfdcd17a3003f04e7deaa3dbdcb320ff82afa | TARGET_PR=16 (Draft)
+> RELEASE_STATUS=RELEASED | VERSION=3.0.2 | TAG=v3.0.2 | PEELED_COMMIT=0c1b48a1a6ac2f205ca77b2c34665704f44044f6 | TAG_OBJECT_SHA=56578f1b790ea4356cb671cdf1e3348cbd85f9ca | MAIN_CI=PASS (Run 45559795518, 359 tests)
 >
-> **v3.0.2 发布候选说明（尚未正式发布）**：本工作分支（PR #16, Draft）声明 `VERSION=3.0.2` 作为修复发布候选，用于在合入 `main` 并通过双平台 Main CI 后由官方工作流自动签发不可变 Annotated Tag `v3.0.2`。在 Owner 批准合入 `main`、Main CI 全绿并完成 Tag 签发之前，`RELEASE_STATUS=NOT_RELEASED`，当前官方已正式发布版本仍为 `v3.0.1`（`standards.lock.json` 与 `engineering-manifest.yaml` 保持锁定于已正式发布的 `v3.0.1`，不提前填入 `v3.0.2` Tag 哈希或晋升锁定）。本候选整合了 `Std-023`（PR #15 受控发布后收口与 `v3.0.1` 发布凭证）及 `Std-024`（F20/F21/F22 消费端 CI 溯源、指标对账与验收包覆盖事务加固）全部整改内容。
+> **v3.0.2 正式发布 (PR #16 已由 Owner 合入 `main`，Main CI 双平台全绿，Annotated Tag `v3.0.2` 成功发布)**：
+> - **PR #16 (`fix/std-024-consumer-ci-provenance-hardening`) — 候选实现与发布合并来源 (`Std-024` / `Std-025`)**：最终候选 HEAD `ba39c93b4818e54b95b27e2c6565e36b3d676f0e`（Push Run `45556424416` [Ubuntu `139009455513` / Windows `139009455910`] PASS，PR Run `45556433037` [Ubuntu `139009481738` / Windows `139009481907`] PASS，359 tests PASS），已由 Owner (`xiefeifeihu`) 于 `2026-11-25T06:19:53Z` 合入 `main`（Merge Commit: `0c1b48a1a6ac2f205ca77b2c34665704f44044f6`）。原草稿 PR #15 (`docs/std-023-v3-0-1-post-release-closeout`, HEAD `a0b2de23d007754c5551c17de4c77872e1d8212a`) 在完成 13/13 路径覆盖与语义核对后已按 `CLOSED / SUPERSEDED / NOT_MERGED` 关闭。
+> - **Main CI 与官方 Tag 签发**：Main CI Run `45559795518` 双平台全绿（Ubuntu Job `139020496211` PASS, Windows Job `139020496643` PASS, 359/359 测试全量通过，0 failed, 0 skipped），Tag Publish Job `139026054533` 于 `2026-11-25T06:33:43Z` 成功签发不可变 Annotated Tag `v3.0.2`（Tag Object SHA: `56578f1b790ea4356cb671cdf1e3348cbd85f9ca`，Peeled Commit: `0c1b48a1a6ac2f205ca77b2c34665704f44044f6`）；历史 `v3.0.0` 与 `v3.0.1` Annotated Tag 及发布凭证保持不可变。
+> - **Std-026 发布后资料与证据收口**：新增独立正式发布凭证 [`docs/release-evidence/v3.0.2.json`](./docs/release-evidence/v3.0.2.json)，将 Standards 自身锁定（`standards.lock.json` 与 `engineering-manifest.yaml`）同步推进至已正式发布的 `v3.0.2`（在 `previous_locks` 完整保留 `v2.10.0` / `v2.11.0` / `v3.0.0` / `v3.0.1`），并刷新 `README.md`、`CHANGELOG.md`、`docs/DOCUMENT-INDEX.md`、`docs/当前权威基线.md`、`docs/CROSS-SESSION-HANDOFF.md` 及 `Std-025`/`Std-026` 任务交接快照（保留全部 14 份受控文档 `IN_REVIEW` 状态不变）。
 
 ### Fixed & Hardened (`Std-024` / F19–F22)
 - **F20 六维真实 Hub CI 回归与门禁契约补齐 (`tools/standards_sync/core.py`)**：补齐 Hub Run `45310932802` 第 6 维 `release_gates`（Job `138166184132`, `python scripts/ci/verify_delivery_contract.py --mode DEVELOPMENT --run-pytest`）真实重放与结构化 `G01–G12` 校验（10 `PASS` + 2 合法 `NOT_APPLICABLE`），确保六维证据分别使用真实 `test_execution` / `scan_execution` / `release_execution` 类型并严格对账实际执行数。

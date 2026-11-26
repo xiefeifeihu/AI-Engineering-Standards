@@ -840,7 +840,9 @@ def build_handoff_payload(
         else:
             evidence_data = final_loaded
     elif evidence_data is None:
-        ev_ok, ev_errors, ev_loaded = load_release_evidence(project_root, release_evidence_path)
+        _cand_ev_p = resolve_release_evidence_path(project_root, version=version) if (not release_evidence_path and version) else None
+        _eff_ev_p = _cand_ev_p if (_cand_ev_p is not None and _cand_ev_p.is_file()) else release_evidence_path
+        ev_ok, ev_errors, ev_loaded = load_release_evidence(project_root, _eff_ev_p)
         if ev_ok and ev_loaded:
             evidence_data = ev_loaded
         elif release_evidence_path:
@@ -919,7 +921,7 @@ def build_handoff_payload(
             hv = str(evidence_data.get(hk) or "").strip()
             if re.fullmatch(r"[0-9a-f]{40}", hv):
                 historical_merge_commits.add(hv)
-    for hist_name in ("v3.0.0-reissue.json", "std018-current-snapshot.json", "std019-final-release.json", "v3.0.1.json"):
+    for hist_name in ("v3.0.0-reissue.json", "std018-current-snapshot.json", "std019-final-release.json", "v3.0.1.json", "v3.0.2.json"):
         hp = project_root / "docs" / "release-evidence" / hist_name
         if hp.is_file():
             try:
@@ -1354,7 +1356,9 @@ def build_handoff_payload(
         if final_evidence_path or release_evidence is not None:
             _h_act_ev = evidence_data
         else:
-            _hok, _, _hev = load_release_evidence(project_root, resolve_release_evidence_path(project_root))
+            _cand_h_p = resolve_release_evidence_path(project_root, version=version) if version else None
+            _eff_h_p = _cand_h_p if (_cand_h_p is not None and _cand_h_p.is_file()) else resolve_release_evidence_path(project_root)
+            _hok, _, _hev = load_release_evidence(project_root, _eff_h_p)
             if _hok:
                 _h_act_ev = _hev
 
@@ -1426,10 +1430,30 @@ def build_handoff_payload(
             f"- **旧 Tag 删除状态**：`OLD_TAG_DELETED={str(_h_019_ev.get('old_tag_deleted', True)).lower()}`",
             "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
         ])
+        _hp_v301 = project_root / "docs" / "release-evidence" / "v3.0.1.json"
+        if _hp_v301.exists():
+            _hok_301, _, _hev_301 = load_release_evidence(project_root, _hp_v301)
+            if _hok_301 and _hev_301 and _h_act_ev and str(_h_act_ev.get("version", "")).lstrip("v") != "3.0.1":
+                md_lines.extend([
+                    "",
+                    "### 4.4.1 v3.0.1 历史正式发布证据 (V301_HISTORICAL_RELEASE)",
+                    "- **核验状态 (`verification_status`)**：`PASS`",
+                    f"- **任务编号 (`task_id`)**：`{_hev_301.get('task_id', 'Std-023-POST-RELEASE-EVIDENCE-CLOSEOUT')}`",
+                    f"- **正式发布 Tag (`release_tag`)**：`{_hev_301['release_tag']}`",
+                    f"- **Tag Object SHA (`tag_object_sha`)**：`{_hev_301['tag_object_sha']}`",
+                    f"- **Peeled Commit (`peeled_commit`)**：`{_hev_301['peeled_commit']}`",
+                    f"- **代码候选 Commit (`candidate_commit`)**：`{_hev_301['candidate_commit']}`",
+                    f"- **Main CI Run ID**：`{_hev_301.get('main_ci_run_id') or _hev_301['push_run_id']}`",
+                    f"- **PR 编号与状态**：PR #{_hev_301['pr_number']}（状态：`{_hev_301['pr_status']}`，合并者：`{_hev_301.get('pr_merged_by')}`）",
+                    f"- **测试用例数**：`{_hev_301['test_count']} tests PASS`",
+                    f"- **Tag 发布作业 ID (`tag_publish_job`)**：`{_hev_301.get('tag_publish_job')}`",
+                    f"- **发布流程状态 (`release_flow_status`)**：`{_hev_301['release_flow_status']}`",
+                    "- **证据引用 (`evidence_ref`)**：`docs/release-evidence/v3.0.1.json`",
+                ])
         emitted_std020 = False
         if _h_act_ev and str(_h_act_ev.get("version", "")).lstrip("v") != str(_h_019_ev.get("version", "")).lstrip("v"):
             emitted_std020 = True
-            md_lines.extend([
+            std020_h_lines = [
                 "",
                 "### 4.5 Std-020 最终发布证据与发布后收口 (STD020_FINAL_RELEASE)",
                 "- **核验状态 (`verification_status`)**：`PASS`",
@@ -1448,8 +1472,17 @@ def build_handoff_payload(
                 f"- **测试用例数**：`{_h_act_ev['test_count']} tests PASS`",
                 f"- **Tag 发布状态 (`tag_publish_status`)**：`{_h_act_ev.get('tag_publish_status')}`",
                 f"- **发布流程状态 (`release_flow_status`)**：`{_h_act_ev.get('release_flow_status')}`",
-                "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
-            ])
+            ]
+            if _h_act_ev.get("tag_publish_job"):
+                std020_h_lines.append(
+                    f"- **Tag 发布作业 ID (`tag_publish_job`)**：`{_h_act_ev['tag_publish_job']}`"
+                )
+            if _h_act_ev.get("ubuntu_job") and _h_act_ev.get("windows_job"):
+                std020_h_lines.append(
+                    f"- **Main CI 平台作业**：Ubuntu `{_h_act_ev['ubuntu_job']}` / Windows `{_h_act_ev['windows_job']}`"
+                )
+            std020_h_lines.append("- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`")
+            md_lines.extend(std020_h_lines)
         if not is_current_version_released:
             cand_heading_num = "4.6" if emitted_std020 else "4.5"
             latest_rel_tag = (
@@ -1878,6 +1911,8 @@ def main() -> None:
             "STANDARDS-BASELINE-SYNC-GOVERNANCE-IMPLEMENTATION-001",
             "Std-019-V3-0-0-POST-RELEASE-CLOSEOUT",
             "Std-020-CONSUMER-FEEDBACK-TOOLCHAIN-REMEDIATION",
+            "Std-023-POST-RELEASE-EVIDENCE-CLOSEOUT",
+            "Std-026-v3-0-2-post-release-closeout",
         ):
             expected_task_id = args.task_id
         else:

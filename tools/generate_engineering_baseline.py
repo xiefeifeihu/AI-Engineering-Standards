@@ -1278,7 +1278,9 @@ def build_engineering_baseline(
         else:
             evidence_data = final_loaded
     elif evidence_data is None and (is_standards_release_scope or release_evidence_path):
-        ev_ok, ev_errors, ev_loaded = load_release_evidence(project_root, release_evidence_path)
+        _cand_ev_p = resolve_release_evidence_path(project_root, version=version_override) if (not release_evidence_path and version_override) else None
+        _eff_ev_p = _cand_ev_p if (_cand_ev_p is not None and _cand_ev_p.is_file()) else release_evidence_path
+        ev_ok, ev_errors, ev_loaded = load_release_evidence(project_root, _eff_ev_p)
         if ev_ok and ev_loaded:
             evidence_data = ev_loaded
         elif release_evidence_path:
@@ -1329,7 +1331,7 @@ def build_engineering_baseline(
             hv = str(evidence_data.get(hk) or "").strip()
             if re.fullmatch(r"[0-9a-f]{40}", hv):
                 historical_merge_commits.add(hv)
-    for hist_name in ("v3.0.0-reissue.json", "std018-current-snapshot.json", "std019-final-release.json", "v3.0.1.json"):
+    for hist_name in ("v3.0.0-reissue.json", "std018-current-snapshot.json", "std019-final-release.json", "v3.0.1.json", "v3.0.2.json"):
         hp = project_root / "docs" / "release-evidence" / hist_name
         if hp.is_file():
             try:
@@ -1960,8 +1962,10 @@ def build_engineering_baseline(
         if final_evidence_path or release_evidence is not None:
             std_active_ev = evidence_data
         else:
+            _cand_ver_ev = resolve_release_evidence_path(project_root, version=version_override) if version_override else None
+            _target_ev = _cand_ver_ev if (_cand_ver_ev is not None and _cand_ver_ev.is_file()) else resolve_release_evidence_path(project_root)
             _ok_a, _, _ev_a = load_release_evidence(
-                project_root, resolve_release_evidence_path(project_root)
+                project_root, _target_ev
             )
             if _ok_a and _ev_a:
                 std_active_ev = _ev_a
@@ -2128,8 +2132,28 @@ def build_engineering_baseline(
             "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
             f"- **事实说明**：PR #{std_019_ev['pr_number']} 已由 {std_019_ev['pr_merged_by']} 合入 main，main CI Run {std_019_ev.get('main_ci_run_id') or std_019_ev['push_run_id']} 双平台全绿（{std_019_ev['test_count']} tests PASS），Tag Publish Job 成功发布正式 Annotated Tag {std_019_ev['release_tag']}",
         ])
+        _p_v301 = project_root / "docs" / "release-evidence" / "v3.0.1.json"
+        if _p_v301.exists():
+            _ok_301, _, _ev_301 = load_release_evidence(project_root, _p_v301)
+            if _ok_301 and _ev_301 and std_active_ev and str(std_active_ev.get("version", "")).lstrip("v") != "3.0.1":
+                md_lines.extend([
+                    "",
+                    "### 9.3.1 v3.0.1 历史正式发布证据 (V301_HISTORICAL_RELEASE)",
+                    "- **核验状态 (`verification_status`)**：`PASS`",
+                    f"- **任务编号 (`task_id`)**：`{_ev_301.get('task_id', 'Std-023-POST-RELEASE-EVIDENCE-CLOSEOUT')}`",
+                    f"- **正式发布 Tag (`release_tag`)**：`{_ev_301['release_tag']}`",
+                    f"- **Tag Object SHA (`tag_object_sha`)**：`{_ev_301['tag_object_sha']}`",
+                    f"- **Peeled Commit (`peeled_commit`)**：`{_ev_301['peeled_commit']}`",
+                    f"- **代码候选 Commit (`candidate_commit`)**：`{_ev_301['candidate_commit']}`",
+                    f"- **Main CI Run ID**：`{_ev_301.get('main_ci_run_id') or _ev_301['push_run_id']}`",
+                    f"- **PR 编号与状态**：PR #{_ev_301['pr_number']}（状态：`{_ev_301['pr_status']}`，合并者：`{_ev_301.get('pr_merged_by')}`）",
+                    f"- **测试用例数**：`{_ev_301['test_count']} tests PASS`",
+                    f"- **Tag 发布作业 ID (`tag_publish_job`)**：`{_ev_301.get('tag_publish_job')}`",
+                    f"- **发布流程状态 (`release_flow_status`)**：`{_ev_301['release_flow_status']}`",
+                    "- **证据引用 (`evidence_ref`)**：`docs/release-evidence/v3.0.1.json`",
+                ])
         if std_active_ev and str(std_active_ev.get("version", "")).lstrip("v") != str(std_019_ev.get("version", "")).lstrip("v"):
-            md_lines.extend([
+            std020_lines = [
                 "",
                 "### 9.4 Std-020 最终发布证据 (STD020_FINAL_RELEASE)",
                 "- **核验状态 (`verification_status`)**：`PASS`",
@@ -2148,8 +2172,13 @@ def build_engineering_baseline(
                 f"- **测试用例数**：`{std_active_ev['test_count']} tests PASS`",
                 f"- **Tag 发布状态 (`tag_publish_status`)**：`{std_active_ev.get('tag_publish_status')}`",
                 f"- **发布流程状态 (`release_flow_status`)**：`{std_active_ev['release_flow_status']}`",
-                "- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`",
-            ])
+            ]
+            if std_active_ev.get("tag_publish_job"):
+                std020_lines.append(
+                    f"- **Tag 发布作业 ID (`tag_publish_job`)**：`{std_active_ev['tag_publish_job']}`"
+                )
+            std020_lines.append("- **证据引用 (`evidence_ref`)**：`.github/workflows/standards-ci.yml`")
+            md_lines.extend(std020_lines)
     md_lines.extend([
         "",
         "## 10. 最近 Build 事实 (`recent_build_facts`)",

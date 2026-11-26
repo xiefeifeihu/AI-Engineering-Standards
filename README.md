@@ -2,10 +2,10 @@
 
 跨工程共享的架构、研发、测试、文档、发布、证据与运行契约权威源。首个消费端试点为 `AI-Engineering-Hub`；其他工程是否接入由各工程后续决策。
 
-本项目是跨工程架构、研发、测试、文档、发布、证据和运行契约的**唯一规范权威源（Single Source of Truth）**。`VERSION` 表示当前工作分支声明的基线版本；正式发布版本以官方 `main` 上的 Annotated Tag、Tag Object SHA、Peeled Commit 和 main CI 为准。当前官方正式发布版本为 [`v3.0.1`](./docs/release-evidence/v3.0.1.json)（Tag Object SHA: `a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4`，Peeled Commit: `4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`，main CI Run `45099701154` 双平台 336 项测试全绿；`v3.0.0` 历史正式 Tag 保持不可变）。
+本项目是跨工程架构、研发、测试、文档、发布、证据和运行契约的**唯一规范权威源（Single Source of Truth）**。`VERSION` 表示当前工作分支声明的基线版本；正式发布版本以官方 `main` 上的 Annotated Tag、Tag Object SHA、Peeled Commit 和 main CI 为准。当前官方正式发布版本为 [`v3.0.2`](./docs/release-evidence/v3.0.2.json)（Tag Object SHA: `56578f1b790ea4356cb671cdf1e3348cbd85f9ca`，Peeled Commit: `0c1b48a1a6ac2f205ca77b2c34665704f44044f6`，main CI Run `45559795518` 双平台 359 项测试全绿，Tag Publish Job `139026054533` PASS；历史正式版本 [`v3.0.1`](./docs/release-evidence/v3.0.1.json)（Tag Object SHA: `a712e1689dbd62dc87ecb166e60cc17b6c7fa1c4`，Peeled Commit: `4facfdcd17a3003f04e7deaa3dbdcb320ff82afa`，main CI Run `45099701154` 336 项测试全绿）与 `v3.0.0` 保持不可变）。
 
 **版本锁定区分说明**：
-- **Standards 自身的正式 Lock**：位于本仓库根目录 [`standards.lock.json`](./standards.lock.json)，已同步锁定至最新正式发布的版本与四元组，历史锁定记录保留在 `previous_locks` 中；机器可核验正式发布凭证位于 [`docs/release-evidence/`](./docs/release-evidence/v3.0.1.json)。
+- **Standards 自身的正式 Lock**：位于本仓库根目录 [`standards.lock.json`](./standards.lock.json)，已同步锁定至最新正式发布的版本与四元组，历史锁定记录保留在 `previous_locks` 中；机器可核验正式发布凭证位于 [`docs/release-evidence/`](./docs/release-evidence/v3.0.2.json)（含 [`v3.0.1`](./docs/release-evidence/v3.0.1.json) 历史凭证）。
 - **消费端各自的 Lock**：各下游消费工程（如首个试点 `AI-Engineering-Hub`）各自持有独立的 `standards.lock.json`。Standards 的正式发布不代表消费端已自动升级；消费端升级必须遵循 `STD-034` 的 11 步受控升级状态机，经独立 CI 验证和消费端 Owner 批准后方可变更。
 
 - **文档总入口**：[`docs/DOCUMENT-INDEX.md`](./docs/DOCUMENT-INDEX.md)
